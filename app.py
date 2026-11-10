@@ -388,7 +388,17 @@ def get_rank_html(val, rank, max_rank):
     return f"<span style='{color}'>{val:.2f}{sup}</span>"
 
 def tbl(headers, rows):
-    css = """<style>.dib-container{overflow-x:auto;width:100%;margin-bottom:20px}.dib-table{width:100%;border-collapse:collapse;text-align:center;font-size:12px;table-layout:auto}.dib-table th,.dib-table td{padding:6px 4px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.2}.dib-table th{background-color:rgba(128,128,128,0.1);font-weight:600}.dib-table td.sep{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}.dib-table td.sep-avb{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}</style>"""
+    # AQUI ESTÁ O AJUSTE DA FONTE: font-size passou de 12px para 15px, padding aumentou um pouco
+    css = """
+    <style>
+    .dib-container{overflow-x:auto;width:100%;margin-bottom:20px}
+    .dib-table{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto}
+    .dib-table th,.dib-table td{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}
+    .dib-table th{background-color:rgba(128,128,128,0.1);font-weight:600}
+    .dib-table td.sep{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}
+    .dib-table td.sep-avb{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}
+    </style>
+    """
     out = []
     for row in rows:
         if len(row) == 1 and "<hr" in str(row[0]): out.append(f"<tr><td class='sep' colspan='{len(headers)}'></td></tr>"); continue
@@ -456,7 +466,6 @@ def tabela_avb(lista, titulo):
     for i, (V, D, prob, star) in enumerate(lista):
         if i > 0: rows.append(["<hr>"])
         
-        # Pre-compute V and D pairs
         ov_v, ov_d = fmt_pair(V['overall'], D['overall'], False, 1)
         cat_v, cat_d = fmt_pair(V['cat'], D['cat'], False, 1)
         sp_v, sp_d = fmt_pair(V['split'], D['split'], True, 2)
@@ -467,9 +476,8 @@ def tabela_avb(lista, titulo):
         r_v, r_d = fmt_pair(V['ritmo'], D['ritmo'], True, 2)
         rec_v, rec_d = fmt_pair(V['rec'], D['rec'], False, 1, True)
 
-        prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:15px;'><span style='color:#00ff00'>{prob:.1f}%</span></td>"
+        prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#00ff00'>{prob:.1f}%</span></td>"
         
-        # Linha do Vencedor (16 colunas)
         rows.append([
             f"{'⭐ ' if star else ''}{trap_label(V)} - {html.escape(V['name'])}", 
             ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]),
@@ -477,7 +485,6 @@ def tabela_avb(lista, titulo):
             prob_cell
         ])
         
-        # Linha do Desafiante (15 colunas, pois a Probabilidade pega 2 linhas)
         rows.append([
             f"{trap_label(D)} - {html.escape(D['name'])}", 
             ov_d, cat_d, D['perfil'], "-".join((r["grade"] or "?") for r in D["runs"]),
