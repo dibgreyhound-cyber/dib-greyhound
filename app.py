@@ -9,13 +9,42 @@ import pandas as pd
 import requests
 import streamlit as st
 
+# =====================================================================
+# DICIONÁRIO DE REMARKS (TABELA DO MARKO)
+# =====================================================================
+DICIONARIO_REMARKS = {
+    "ald": "Liderou Sempre", "awk": "Desajeitado", "blk": "Trombada Forte",
+    "bmp": "Trombou na Curva", "chl": "Desafiado na Curva", "clrrn": "Corrida Limpa",
+    "crd": "Truncado na Curva", "crdnrln": "Truncado no Final", "crdrnln": "Truncado na Reta",
+    "crdrnup": "Truncado no Início", "crmp": "Espaço Apertado", "disp": "Disputou",
+    "dsp": "Disputou na Curva", "dis pld": "Liderou com Disputa", "ep": "Ritmo Acelerado",
+    "evch": "Evitou Choque", "fcd": "Forçado a Algo", "fcdck": "Forçado na Curva",
+    "fell": "Caiu", "hldon": "Posição Mantida", "imp": "Impedido", "jmp": "Saltou",
+    "jmplate": "Saltou Atrasado", "ko": "Derrubado", "lame": "Manco", "ld": "Liderou a Curva",
+    "ldnrln": "Liderou na Reta", "in": "Linha de Chegada", "mid": "Corre pelo Meio",
+    "msdbrk": "Passou Reto", "on": "Até o Final", "qaw": "Largada Rápida", "rls": "Corre por Dentro",
+    "rnln": "Reta Linha", "rnon": "Manteve Galope", "rnonwll": "Galope até o Final",
+    "rnup": "Distância Trap 1", "saw": "Largada Lenta", "snled": "Liderou desde o Início",
+    "stmb": "Tropeçou", "strfn": "Chegada Forte", "stt": "Início", "struck": "Atingido",
+    "styd": "Ficou", "turnedin trps": "Ficou na Trap", "vsaw": "Largada Muito Lenta",
+    "vw": "Corredor Aberto", "w": "Curva Ampla"
+}
+
+# =====================================================================
+# CONFIGURAÇÃO GLOBAL (DIB 2.8)
+# =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
-    "PERFIL_PTS": {"Limpo": 3.0, "Irregular": 2.0, "Trombador": 1.0},
+    
+    # NOVOS PESOS DO PERFIL
+    "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
+    
     "REMARKS_PTS": {"early": 1.0, "slowaway": -1.0, "firstbend": -1.0},
     "TRAP_VAZIA": 1.0, "TRAFEGO_SEVERO": -2.0, "CONF_MIN_VENCEDOR": 60.0,
-    "VEL_PTS": {"tadj": 80, "mtime": 60, "msplit": 30, "ritmo": 30},
+    
+    # NOVOS PESOS DE VELOCIDADE (200 pts total)
+    "VEL_PTS": {"tadj": 60, "mtime": 40, "msplit": 60, "ritmo": 40},
     "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 20,
 }
 
@@ -40,6 +69,10 @@ HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
     "Referer": "https://greyhoundbet.racingpost.com/",
 }
+
+# NOVAS REGEX DE TRÁFEGO (INCLUINDO TERMOS DO MARKO)
+RE_TRAF = re.compile(r"(awk|blk|bmp|crmp|evch|fcd|fell|ko|msdbrk|saw|stmb|struck|vsaw|crd|imp|lame)")
+RE_NOFREE = re.compile(r"(awk|blk|bmp|crmp|evch|fcd|fell|ko|msdbrk|saw|stmb|struck|vsaw|crd|imp|lame|baulk)")
 
 def pick(d, keys, default=None):
     for k in keys:
@@ -83,9 +116,6 @@ def parse_date(s):
         try: return datetime.strptime(s, fmt)
         except Exception: pass
     return None
-
-RE_TRAF = re.compile(r"(crd|bmp|blk)")
-RE_NOFREE = re.compile(r"(crd|bmp|blk|baulk|fcd-?ck|evch|mvdoff)")
 
 def parts_of(rem):
     for tok in re.split(r"[,\s]+", str(rem or "").lower()):
@@ -317,6 +347,14 @@ def analisar_galgo(dog, ctx):
     d["early_cnt"] = sum(1 for r in R if any(re.match(r"^(ep|ald|snld|ld)", t) for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
     d["saw_cnt"] = sum(1 for r in R if any(t.startswith("saw") or t.startswith("vsaw") for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
     d["fbt_cnt"] = sum(1 for r in R if first_bend_traffic(r["remarks"]))
+    
+    # Tradutor de Remarks
+    d["remarks_translated"] = []
+    for r in R:
+        for token in re.split(r"[,\s]+", str(r["remarks"]).lower()):
+            if token in DICIONARIO_REMARKS:
+                d["remarks_translated"].append(DICIONARIO_REMARKS[token])
+                
     return d
 
 def finalizar(ds, ctx):
@@ -334,17 +372,26 @@ def finalizar(ds, ctx):
 
     for d in ok:
         pts_cat, pts_perfil = d["cat"] * 2, CFG["PERFIL_PTS"][d["perfil"]]
-        vel = (pts_prop("tadj", 80, d) + pts_prop("mtime", 60, d) + pts_prop("msplit", 30, d) + pts_prop("ritmo", 30, d))
+        vel = (pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) + 
+               pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) + 
+               pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d) + 
+               pts_prop("ritmo", CFG["VEL_PTS"]["ritmo"], d))
+        
         f = []
-        if d["early_cnt"] > 0: f.append(("Early Pace", d["early_cnt"] * 1.0))
-        if d["saw_cnt"] > 0: f.append(("Slow Away", d["saw_cnt"] * -1.0))
-        if d["fbt_cnt"] > 0: f.append(("First Bend Traffic", d["fbt_cnt"] * -1.0))
-        if any(abs(d["trap"] - v) == 1 for v in vac): f.append(("Trap Vazia", 1.0))
+        # Novo Bônus de Early Pace: Só se for Limpo
+        if d["early_cnt"] > 0 and d["perfil"] == "Limpo": 
+            f.append(("Ritmo Acelerado", d["early_cnt"] * 1.0))
+        if d["saw_cnt"] > 0: 
+            f.append(("Largada Lenta", d["saw_cnt"] * -1.0))
+        if d["fbt_cnt"] > 0: 
+            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -1.0))
+        if any(abs(d["trap"] - v) == 1 for v in vac): 
+            f.append(("Trap Vazia", 1.0))
         if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
             f.append(("Tráfego Severo", -2.0))
             
         d["fatores"] = f
-        d["overall"] = vel + pts_cat + pts_perfil + pts_prop("sd", 30, d, True) + pts_prop("pico", 20, d, True) + pts_prop("rec", 20, d, False) + sum(v for _, v in f)
+        d["overall"] = vel + pts_cat + pts_perfil + pts_prop("sd", CFG["CONSIST_PTS"], d, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_prop("rec", CFG["RECUP_PTS"], d, False) + sum(v for _, v in f)
 
     ok.sort(key=lambda x: -x["overall"])
     for i, d in enumerate(ok, 1):
@@ -361,18 +408,36 @@ def calc_prob(V, D, ctx):
     if any(abs(V["trap"] - v) == 1 for v in ctx["vazias"]): t_V -= 0.03
     if V["perfil"] == "Trombador" and V["trap"] in [1,2,3,4,5] and V["name"] not in ctx["top3_ms"]: t_V += 0.05
     z = (t_D - t_V) / math.sqrt(max(V["sd"], 0.05)**2 + max(D["sd"], 0.05)**2)
-    return 0.5 * (1 + math.erf(z / math.sqrt(2))) * 100
+    prob = 0.5 * (1 + math.erf(z / math.sqrt(2))) * 100
+    
+    # NOVO: Teto de 85% e Piso de 15%
+    return max(15.0, min(85.0, prob))
 
 def montar_avbs(rank, ctx):
     elig = [d for d in rank if d["elegivel"]]
     s1, s2, s3 = [], [], []
-    elite_pairs = set((elig[k]["name"], rank[pos-1]["name"]) for k, slots in enumerate([(3,4), (4,5), (5,6)]) if k < len(elig) for pos in slots if pos <= len(rank) and rank[pos-1]["elegivel"])
+
+    # NOVO RANKING DE ELITE: Baseado no Tempo Ajustado (tadj) e Média Time
+    rank_elite = sorted([d for d in elig if d.get("tadj") is not None], key=lambda x: (x["tadj"], x["mtime"]))
+    
+    elite_pairs = set()
+    for k, slots in enumerate([(3,4), (4,5), (5,6)]):
+        if k < len(rank_elite):
+            V_elite = rank_elite[k]
+            for pos in slots:
+                if pos <= len(rank_elite):
+                    D_elite = rank_elite[pos-1]
+                    if D_elite["name"] != V_elite["name"]:
+                        elite_pairs.add((V_elite["name"], D_elite["name"]))
 
     for V in elig:
         for D in elig:
             if V["name"] == D["name"] or V.get("tadj") is None or D.get("tadj") is None: continue
             prob = calc_prob(V, D, ctx)
-            if prob < 55.0 or V["overall"] <= D["overall"] or V["name"] not in ctx["top3_ms"]: continue
+            if prob < 55.0 or V["overall"] <= D["overall"]: continue
+            
+            # TRAVA DE FALSO FAVORITO
+            if V["name"] not in ctx["top3_ms"]: continue
             if V["tadj"] > D["tadj"] - 0.03 or V["mtime"] > D["mtime"] - 0.03 or V["ritmo"] > D["ritmo"] or V["rec"] < D["rec"]: continue
             
             is_star = (V["name"], D["name"]) in elite_pairs
@@ -388,17 +453,7 @@ def get_rank_html(val, rank, max_rank):
     return f"<span style='{color}'>{val:.2f}{sup}</span>"
 
 def tbl(headers, rows):
-    # AQUI ESTÁ O AJUSTE DA FONTE: font-size passou de 12px para 15px, padding aumentou um pouco
-    css = """
-    <style>
-    .dib-container{overflow-x:auto;width:100%;margin-bottom:20px}
-    .dib-table{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto}
-    .dib-table th,.dib-table td{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}
-    .dib-table th{background-color:rgba(128,128,128,0.1);font-weight:600}
-    .dib-table td.sep{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}
-    .dib-table td.sep-avb{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}
-    </style>
-    """
+    css = """<style>.dib-container{overflow-x:auto;width:100%;margin-bottom:20px}.dib-table{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto}.dib-table th,.dib-table td{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}.dib-table th{background-color:rgba(128,128,128,0.1);font-weight:600}.dib-table td.sep{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}.dib-table td.sep-avb{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}</style>"""
     out = []
     for row in rows:
         if len(row) == 1 and "<hr" in str(row[0]): out.append(f"<tr><td class='sep' colspan='{len(headers)}'></td></tr>"); continue
@@ -430,8 +485,15 @@ def tabela_projecao(ds):
         if d["nd"]:
             rows.append([trap_label(d), nome_marcado(d)] + ["-"] * 15); continue
         fat = "<br>".join(f"{k} ({v:+.1f})" for k, v in d["fatores"]) or "-"
+        # Se houver remarks traduzidos, adiciona na coluna de fatores
+        if d.get("remarks_translated"):
+            rem_txt = ", ".join(set(d["remarks_translated"]))
+            fat += f"<br><small style='color:#aaa'>{rem_txt}</small>"
+            
         perfil_e = {"Limpo": "✅", "Irregular": "⚠️", "Trombador": "🔴"}[d["perfil"]]
-        dias_txt = f"{d['dias']} ⚠️" if d['dias'] > 10 else str(d['dias'])
+        # NOVO ALERTA DE DIAS (> 21)
+        dias_txt = f"{d['dias']} ⚠️" if d['dias'] > 21 else str(d['dias'])
+        
         rows.append([
             trap_label(d), nome_marcado(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}",
             f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", fat, f"{perfil_e} {d['perfil']}",
@@ -495,8 +557,8 @@ def tabela_avb(lista, titulo):
     st.markdown(tbl(heads, rows), unsafe_allow_html=True)
 
 def main():
-    st.set_page_config(page_title="DIB GREYHOUND", layout="wide")
-    st.title("🐾 DIB GREYHOUND")
+    st.set_page_config(page_title="DIB GREYHOUND 2.8", layout="wide")
+    st.title("🐾 DIB GREYHOUND 2.8")
 
     url_alvo = st.text_input("Link", placeholder="Cole o link da corrida aqui...", label_visibility="collapsed")
 
