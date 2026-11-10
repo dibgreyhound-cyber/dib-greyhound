@@ -31,19 +31,19 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 2.8)
+# CONFIGURAÇÃO GLOBAL (DIB 2.9 - MATCHMAKING TOTAL)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     
-    # NOVOS PESOS DO PERFIL
+    # Pesos do Perfil
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
     
     "REMARKS_PTS": {"early": 1.0, "slowaway": -1.0, "firstbend": -1.0},
     "TRAP_VAZIA": 1.0, "TRAFEGO_SEVERO": -2.0, "CONF_MIN_VENCEDOR": 60.0,
     
-    # NOVOS PESOS DE VELOCIDADE (200 pts total)
+    # Pesos de Velocidade
     "VEL_PTS": {"tadj": 60, "mtime": 40, "msplit": 60, "ritmo": 40},
     "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 20,
 }
@@ -70,7 +70,6 @@ HEADERS = {
     "Referer": "https://greyhoundbet.racingpost.com/",
 }
 
-# NOVAS REGEX DE TRÁFEGO (INCLUINDO TERMOS DO MARKO)
 RE_TRAF = re.compile(r"(awk|blk|bmp|crmp|evch|fcd|fell|ko|msdbrk|saw|stmb|struck|vsaw|crd|imp|lame)")
 RE_NOFREE = re.compile(r"(awk|blk|bmp|crmp|evch|fcd|fell|ko|msdbrk|saw|stmb|struck|vsaw|crd|imp|lame|baulk)")
 
@@ -348,7 +347,6 @@ def analisar_galgo(dog, ctx):
     d["saw_cnt"] = sum(1 for r in R if any(t.startswith("saw") or t.startswith("vsaw") for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
     d["fbt_cnt"] = sum(1 for r in R if first_bend_traffic(r["remarks"]))
     
-    # Tradutor de Remarks
     d["remarks_translated"] = []
     for r in R:
         for token in re.split(r"[,\s]+", str(r["remarks"]).lower()):
@@ -378,7 +376,6 @@ def finalizar(ds, ctx):
                pts_prop("ritmo", CFG["VEL_PTS"]["ritmo"], d))
         
         f = []
-        # Novo Bônus de Early Pace: Só se for Limpo
         if d["early_cnt"] > 0 and d["perfil"] == "Limpo": 
             f.append(("Ritmo Acelerado", d["early_cnt"] * 1.0))
         if d["saw_cnt"] > 0: 
@@ -410,41 +407,39 @@ def calc_prob(V, D, ctx):
     z = (t_D - t_V) / math.sqrt(max(V["sd"], 0.05)**2 + max(D["sd"], 0.05)**2)
     prob = 0.5 * (1 + math.erf(z / math.sqrt(2))) * 100
     
-    # NOVO: Teto de 85% e Piso de 15%
-    return max(15.0, min(85.0, prob))
+    # Teto e piso de segurança
+    return max(10.0, min(90.0, prob))
 
+# =====================================================================
+# NOVA FUNÇÃO DE AVB (TODAS AS COMBINAÇÕES DO TOP 4)
+# =====================================================================
 def montar_avbs(rank, ctx):
     elig = [d for d in rank if d["elegivel"]]
-    s1, s2, s3 = [], [], []
-
-    # NOVO RANKING DE ELITE: Baseado no Tempo Ajustado (tadj) e Média Time
-    rank_elite = sorted([d for d in elig if d.get("tadj") is not None], key=lambda x: (x["tadj"], x["mtime"]))
+    if len(elig) < 2: return [], [], []
     
-    elite_pairs = set()
-    for k, slots in enumerate([(3,4), (4,5), (5,6)]):
-        if k < len(rank_elite):
-            V_elite = rank_elite[k]
-            for pos in slots:
-                if pos <= len(rank_elite):
-                    D_elite = rank_elite[pos-1]
-                    if D_elite["name"] != V_elite["name"]:
-                        elite_pairs.add((V_elite["name"], D_elite["name"]))
-
-    for V in elig:
-        for D in elig:
-            if V["name"] == D["name"] or V.get("tadj") is None or D.get("tadj") is None: continue
-            prob = calc_prob(V, D, ctx)
-            if prob < 55.0 or V["overall"] <= D["overall"]: continue
+    top4 = elig[:4]
+    s1, s2 = [], []
+    
+    # Gera todas as combinações possíveis entre o Top 4
+    for i in range(len(top4)):
+        for j in range(i+1, len(top4)):
+            A, B = top4[i], top4[j]
             
-            # TRAVA DE FALSO FAVORITO
-            if V["name"] not in ctx["top3_ms"]: continue
-            if V["tadj"] > D["tadj"] - 0.03 or V["mtime"] > D["mtime"] - 0.03 or V["ritmo"] > D["ritmo"] or V["rec"] < D["rec"]: continue
+            # Calcula a probabilidade de A bater B
+            prob_A = calc_prob(A, B, ctx)
             
-            is_star = (V["name"], D["name"]) in elite_pairs
-            if D["alvo"] and prob >= 65.0: s1.append((V, D, prob, is_star))
-            elif not D["alvo"] and prob >= 65.0: s2.append((V, D, prob, False))
-            elif not D["alvo"] and 55.0 <= prob < 65.0: s3.append((V, D, prob, False))
-    return sorted(s1, key=lambda x: -x[2]), sorted(s2, key=lambda x: -x[2]), sorted(s3, key=lambda x: -x[2])
+            if prob_A >= 50.0:
+                V, D, prob = A, B, prob_A
+            else:
+                V, D, prob = B, A, 100.0 - prob_A
+                
+            # Organiza nas tabelas com base na probabilidade
+            if prob >= 60.0:
+                s1.append((V, D, prob, True))
+            else:
+                s2.append((V, D, prob, True))
+                
+    return sorted(s1, key=lambda x: -x[2]), sorted(s2, key=lambda x: -x[2]), []
 
 def get_rank_html(val, rank, max_rank):
     if val is None or rank is None: return "-"
@@ -485,13 +480,11 @@ def tabela_projecao(ds):
         if d["nd"]:
             rows.append([trap_label(d), nome_marcado(d)] + ["-"] * 15); continue
         fat = "<br>".join(f"{k} ({v:+.1f})" for k, v in d["fatores"]) or "-"
-        # Se houver remarks traduzidos, adiciona na coluna de fatores
         if d.get("remarks_translated"):
             rem_txt = ", ".join(set(d["remarks_translated"]))
             fat += f"<br><small style='color:#aaa'>{rem_txt}</small>"
             
         perfil_e = {"Limpo": "✅", "Irregular": "⚠️", "Trombador": "🔴"}[d["perfil"]]
-        # NOVO ALERTA DE DIAS (> 21)
         dias_txt = f"{d['dias']} ⚠️" if d['dias'] > 21 else str(d['dias'])
         
         rows.append([
@@ -557,8 +550,8 @@ def tabela_avb(lista, titulo):
     st.markdown(tbl(heads, rows), unsafe_allow_html=True)
 
 def main():
-    st.set_page_config(page_title="DIB GREYHOUND 2.8", layout="wide")
-    st.title("🐾 DIB GREYHOUND 2.8")
+    st.set_page_config(page_title="DIB GREYHOUND 2.9", layout="wide")
+    st.title("🐾 DIB GREYHOUND 2.9")
 
     url_alvo = st.text_input("Link", placeholder="Cole o link da corrida aqui...", label_visibility="collapsed")
 
@@ -588,9 +581,8 @@ def main():
             st.markdown("**Classificação:** " + " > ".join(f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {TRAP_EMOJI[d['trap']]} {d['trap']}" for d in rank))
             
             s1, s2, s3 = montar_avbs(rank, ctx)
-            tabela_avb(s1, "1ª Planilha — AVB do Alvo 🎯 (Prob ≥ 65%)")
-            tabela_avb(s2, "2ª Planilha — AVB Principal (Prob ≥ 65%)")
-            tabela_avb(s3, "3ª Planilha — AVB Secundário (Prob 55% - 64.9%)")
+            tabela_avb(s1, "1ª Planilha — AVB Principal (Prob ≥ 60%)")
+            tabela_avb(s2, "2ª Planilha — AVB Secundário (Prob < 60%)")
 
 if __name__ == "__main__":
     main()
