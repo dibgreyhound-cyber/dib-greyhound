@@ -41,10 +41,6 @@ HEADERS = {
     "Referer": "https://greyhoundbet.racingpost.com/",
 }
 
-@st.cache_data(ttl=300)
-def obter_corridas_do_dia():
-    return []
-
 def pick(d, keys, default=None):
     for k in keys:
         if isinstance(d, dict) and k in d and d[k] not in (None, ""):
@@ -459,28 +455,42 @@ def tabela_avb(lista, titulo):
     rows = []
     for i, (V, D, prob, star) in enumerate(lista):
         if i > 0: rows.append(["<hr>"])
+        
+        # Pre-compute V and D pairs
+        ov_v, ov_d = fmt_pair(V['overall'], D['overall'], False, 1)
+        cat_v, cat_d = fmt_pair(V['cat'], D['cat'], False, 1)
+        sp_v, sp_d = fmt_pair(V['split'], D['split'], True, 2)
+        t_v, t_d = fmt_pair(V['time'], D['time'], True, 2)
+        ta_v, ta_d = fmt_pair(V['tadj'], D['tadj'], True, 2)
+        ms_v, ms_d = fmt_pair(V['msplit'], D['msplit'], True, 2)
+        mt_v, mt_d = fmt_pair(V['mtime'], D['mtime'], True, 2)
+        r_v, r_d = fmt_pair(V['ritmo'], D['ritmo'], True, 2)
+        rec_v, rec_d = fmt_pair(V['rec'], D['rec'], False, 1, True)
+
+        prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:15px;'><span style='color:#00ff00'>{prob:.1f}%</span></td>"
+        
+        # Linha do Vencedor (16 colunas)
         rows.append([
-            f"{'⭐ ' if star else ''}{trap_label(V)} - {html.escape(V['name'])}", *fmt_pair(V['overall'], D['overall'], False, 1),
-            *fmt_pair(V['cat'], D['cat'], False, 1), V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]),
-            f"{V['peso']:.1f}", f"{V['dias']}", *fmt_pair(V['split'], D['split'], True, 2), *fmt_pair(V['time'], D['time'], True, 2),
-            *fmt_pair(V['tadj'], D['tadj'], True, 2), *fmt_pair(V['msplit'], D['msplit'], True, 2), *fmt_pair(V['mtime'], D['mtime'], True, 2),
-            *fmt_pair(V['ritmo'], D['ritmo'], True, 2), *fmt_pair(V['rec'], D['rec'], False, 1, True), f"{V['conf']:.0f}%",
-            f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:15px;'><span style='color:#00ff00'>{prob:.1f}%</span></td>"
+            f"{'⭐ ' if star else ''}{trap_label(V)} - {html.escape(V['name'])}", 
+            ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]),
+            f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ta_v, ms_v, mt_v, r_v, rec_v, f"{V['conf']:.0f}%", 
+            prob_cell
         ])
+        
+        # Linha do Desafiante (15 colunas, pois a Probabilidade pega 2 linhas)
         rows.append([
-            f"{trap_label(D)} - {html.escape(D['name'])}", *fmt_pair(D['overall'], V['overall'], False, 1), *fmt_pair(D['cat'], V['cat'], False, 1),
-            D['perfil'], "-".join((r["grade"] or "?") for r in D["runs"]), f"{D['peso']:.1f}", f"{D['dias']}",
-            *fmt_pair(D['split'], V['split'], True, 2), *fmt_pair(D['time'], V['time'], True, 2), *fmt_pair(D['tadj'], V['tadj'], True, 2),
-            *fmt_pair(D['msplit'], V['msplit'], True, 2), *fmt_pair(D['mtime'], V['mtime'], True, 2), *fmt_pair(D['ritmo'], V['ritmo'], True, 2),
-            *fmt_pair(D['rec'], V['rec'], False, 1, True), f"{D['conf']:.0f}%"
+            f"{trap_label(D)} - {html.escape(D['name'])}", 
+            ov_d, cat_d, D['perfil'], "-".join((r["grade"] or "?") for r in D["runs"]),
+            f"{D['peso']:.1f}", f"{D['dias']}", sp_d, t_d, ta_d, ms_d, mt_d, r_d, rec_d, f"{D['conf']:.0f}%"
         ])
-    st.markdown(tbl(["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Time Ajust.", "Méd. Split", "Méd. Time", "Ritmo", "Recup.", "Conf.", "Probabilidade"], rows), unsafe_allow_html=True)
+        
+    heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Time Ajust.", "Méd. Split", "Méd. Time", "Ritmo", "Recup.", "Conf.", "Probabilidade"]
+    st.markdown(tbl(heads, rows), unsafe_allow_html=True)
 
 def main():
     st.set_page_config(page_title="DIB GREYHOUND", layout="wide")
     st.title("🐾 DIB GREYHOUND")
 
-    # Caixa de texto limpa, sem avisos
     url_alvo = st.text_input("Link", placeholder="Cole o link da corrida aqui...", label_visibility="collapsed")
 
     with st.sidebar:
