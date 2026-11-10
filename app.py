@@ -41,18 +41,10 @@ HEADERS = {
     "Referer": "https://greyhoundbet.racingpost.com/",
 }
 
-# =====================================================================
-# TENTATIVA DE AUTOMAÇÃO (Silenciosa)
-# =====================================================================
 @st.cache_data(ttl=300)
 def obter_corridas_do_dia():
-    # A API direta do Racing Post está instável/bloqueando servidores.
-    # Retornamos vazio para acionar o modo manual automaticamente.
     return []
 
-# =====================================================================
-# EXTRAÇÃO E CÁLCULOS (MANTIDOS)
-# =====================================================================
 def pick(d, keys, default=None):
     for k in keys:
         if isinstance(d, dict) and k in d and d[k] not in (None, ""):
@@ -488,18 +480,8 @@ def main():
     st.set_page_config(page_title="DIB GREYHOUND", layout="wide")
     st.title("🐾 DIB GREYHOUND")
 
-    with st.spinner("Buscando corridas do dia..."):
-        corridas = obter_corridas_do_dia()
-
-    if corridas:
-        st.success(f"{len(corridas)} corridas encontradas! Selecione uma abaixo.")
-        opcoes_texto = [c["texto"] for c in corridas]
-        selecao = st.selectbox("Selecione a corrida:", opcoes_texto)
-        url_alvo = next((c["href"] for c in corridas if c["texto"] == selecao), "")
-    else:
-        st.warning("⚠️ Para garantir a estabilidade do sistema, a busca automática foi desativada temporariamente.")
-        st.info("Cole o link da corrida do Racing Post abaixo para iniciar a análise.")
-        url_alvo = st.text_input("Cole o link da corrida aqui:", placeholder="https://greyhoundbet.racingpost.com/...")
+    # Caixa de texto limpa, sem avisos
+    url_alvo = st.text_input("Link", placeholder="Cole o link da corrida aqui...", label_visibility="collapsed")
 
     with st.sidebar:
         st.header("Ajustes da Corrida")
