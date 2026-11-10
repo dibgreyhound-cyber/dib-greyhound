@@ -1,16 +1,12 @@
 # -*- coding: utf-8 -*-
-"""
-DIB GREYHOUND - Automação via API Interna
-"""
 import re
 import html
 import math
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 import numpy as np
 import pandas as pd
 import requests
-from bs4 import BeautifulSoup
 import streamlit as st
 
 CFG = {
@@ -46,44 +42,13 @@ HEADERS = {
 }
 
 # =====================================================================
-# AUTOMAÇÃO VIA API INTERNA
+# TENTATIVA DE AUTOMAÇÃO (Silenciosa)
 # =====================================================================
-@st.cache_data(ttl=300) # Atualiza o cache a cada 5 minutos
+@st.cache_data(ttl=300)
 def obter_corridas_do_dia():
-    corridas = []
-    
-    # Tenta pegar a data de hoje
-    hoje = datetime.now()
-    r_date_str = hoje.strftime("%Y-%m-%d")
-    
-    # URL da API de reuniões do Racing Post
-    url_api = f"https://greyhoundbet.racingpost.com/racing/meetings.sd?r_date={r_date_str}"
-    
-    try:
-        resp = requests.get(url_api, headers=HEADERS, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            # Navega pelo JSON (estrutura típica do site)
-            meetings = data.get("meetings", [])
-            for m in meetings:
-                track = m.get("trackName", "Pista")
-                races = m.get("races", [])
-                for r in races:
-                    r_num = r.get("raceNum", "")
-                    time = r.get("time", "")
-                    race_id = r.get("raceId", "")
-                    
-                    if race_id:
-                        texto = f"{time} {track} - Race {r_num}"
-                        href = f"https://greyhoundbet.racingpost.com/#card/race_id={race_id}&r_date={r_date_str}"
-                        corridas.append({"texto": texto, "href": href})
-        else:
-            st.warning(f"API bloqueou com status {resp.status_code}. Tentando método alternativo...")
-            return []
-    except Exception as e:
-        return []
-        
-    return corridas
+    # A API direta do Racing Post está instável/bloqueando servidores.
+    # Retornamos vazio para acionar o modo manual automaticamente.
+    return []
 
 # =====================================================================
 # EXTRAÇÃO E CÁLCULOS (MANTIDOS)
@@ -532,8 +497,8 @@ def main():
         selecao = st.selectbox("Selecione a corrida:", opcoes_texto)
         url_alvo = next((c["href"] for c in corridas if c["texto"] == selecao), "")
     else:
-        st.warning("⚠️ O site do Racing Post bloqueou a busca automática no momento (ou não há corridas agora).")
-        st.info("Sem problemas! Você pode colar o link da corrida manualmente abaixo.")
+        st.warning("⚠️ Para garantir a estabilidade do sistema, a busca automática foi desativada temporariamente.")
+        st.info("Cole o link da corrida do Racing Post abaixo para iniciar a análise.")
         url_alvo = st.text_input("Cole o link da corrida aqui:", placeholder="https://greyhoundbet.racingpost.com/...")
 
     with st.sidebar:
