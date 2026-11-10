@@ -31,19 +31,14 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 2.9 - MATCHMAKING TOTAL)
+# CONFIGURAÇÃO GLOBAL (DIB 3.3 - DUELO DIRETO + CONFLITO DE PACE)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
-    
-    # Pesos do Perfil
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
-    
     "REMARKS_PTS": {"early": 1.0, "slowaway": -1.0, "firstbend": -1.0},
     "TRAP_VAZIA": 1.0, "TRAFEGO_SEVERO": -2.0, "CONF_MIN_VENCEDOR": 60.0,
-    
-    # Pesos de Velocidade
     "VEL_PTS": {"tadj": 60, "mtime": 40, "msplit": 60, "ritmo": 40},
     "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 20,
 }
@@ -358,8 +353,14 @@ def analisar_galgo(dog, ctx):
 def finalizar(ds, ctx):
     ok = [d for d in ds if not d["nd"]]
     vac = [t for t in range(1, 7) if t not in {d["trap"] for d in ds if d["name"] != "vacant"}]
+    
     ms_rank = sorted([d for d in ok if d["msplit"]], key=lambda x: x["msplit"])
     top3_ms = {d["name"] for d in ms_rank[:3]}
+    ctx["top3_ms"] = top3_ms
+    
+    ritmo_rank = sorted([d for d in ok if d["ritmo"]], key=lambda x: x["ritmo"])
+    top3_ritmo = {d["name"] for d in ritmo_rank[:3]}
+    ctx["top3_ritmo"] = top3_ritmo
 
     def pts_prop(key, maxp, d, invert=True):
         vals = [x[key] for x in ok if x.get(key) is not None]
@@ -398,42 +399,87 @@ def finalizar(ds, ctx):
         d["elegivel"] = not d["bloqueado"]
     return ok, top3_ms
 
-def calc_prob(V, D, ctx):
-    t_V, t_D = V["tadj"], D["tadj"]
-    if V["trap"] in ctx["post_pick"]: t_V -= 0.05
-    if V["trap"] in [1,2,3]: t_V -= 0.04
-    if any(abs(V["trap"] - v) == 1 for v in ctx["vazias"]): t_V -= 0.03
-    if V["perfil"] == "Trombador" and V["trap"] in [1,2,3,4,5] and V["name"] not in ctx["top3_ms"]: t_V += 0.05
-    z = (t_D - t_V) / math.sqrt(max(V["sd"], 0.05)**2 + max(D["sd"], 0.05)**2)
-    prob = 0.5 * (1 + math.erf(z / math.sqrt(2))) * 100
-    
-    # Teto e piso de segurança
-    return max(10.0, min(90.0, prob))
+# =====================================================================
+# NOVO CÁLCULO DE AVB (DIB 3.3 - DUELO DIRETO + CONFLITO DE PACE)
+# =====================================================================
+def calc_prob(V, D, rank, ctx):
+    prob = 50.0
+    if V.get("tadj") is None or D.get("tadj") is None: return 50.0
 
-# =====================================================================
-# NOVA FUNÇÃO DE AVB (TODAS AS COMBINAÇÕES DO TOP 4)
-# =====================================================================
-def montar_avbs(rank, ctx):
-    elig = [d for d in rank if d["elegivel"]]
-    if len(elig) < 2: return [], [], []
+    # 1. PILAR VELOCIDADE
+    diff_tadj = D["tadj"] - V["tadj"]
+    diff_mtime = D["mtime"] - V["mtime"] if D.get("mtime") is not None and V.get("mtime") is not None else 0
+    pts_vel = ((diff_tadj + diff_mtime) / 0.10) * 4.0
+    pts_vel = max(-15.0, min(15.0, pts_vel))
+    prob += pts_vel
     
-    top4 = elig[:4]
+    # 2. PILAR LARGADA
+    if V.get("msplit") and D.get("msplit"):
+        diff_split = D["msplit"] - V["msplit"]
+        pts_split = (diff_split / 0.05) * 3.0
+        pts_split = max(-10.0, min(10.0, pts_split))
+        prob += pts_split
+        
+    # 3. PILAR RITMO FINAL
+    if V.get("ritmo") and D.get("ritmo"):
+        diff_ritmo = D["ritmo"] - V["ritmo"]
+        pts_ritmo = (diff_ritmo / 0.05) * 2.0
+        pts_ritmo = max(-6.0, min(6.0, pts_ritmo))
+        prob += pts_ritmo
+        
+    # 4. PILAR SEGURANÇA E RECUPERAÇÃO
+    pts_seguranca = 0.0
+    if V.get("rec") is not None and D.get("rec") is not None:
+        diff_rec = V["rec"] - D["rec"]
+        pts_seguranca += (diff_rec * 0.1)
+        pts_seguranca = max(-5.0, min(5.0, pts_seguranca))
+        
+    val_perfil = {"Limpo": 0, "Irregular": 1, "Trombador": 2}
+    diff_perfil = val_perfil.get(D["perfil"], 1) - val_perfil.get(V["perfil"], 1)
+    pts_seguranca += (diff_perfil * 2.5)
+    prob += pts_seguranca
+
+    # 5. CONFLITO DE PACE (NOVA REGRA)
+    top3_ms = ctx.get("top3_ms", set())
+    top3_ritmo = ctx.get("top3_ritmo", set())
+    epfs = [d for d in rank if d["name"] in top3_ms] # Cães com largada rápida no páreo
+
+    if V["name"] in top3_ms:
+        if D["name"] in top3_ms:
+            prob -= 3.0 # Ambos são rápidos, vão brigar diretamente
+        else:
+            prob -= 5.0 # V vai ter que brigar com outro cão da prova pela ponta
+    elif D["name"] in top3_ms:
+        prob += 5.0 # D vai se atrapalhar brigando pela ponta
+
+    if V["name"] in top3_ritmo and V["name"] not in top3_ms:
+        if len(epfs) >= 2:
+            prob += 5.0 # V é um "Closer" e há 2+ cães rápidos brigando na frente
+
+    # Ajustes Táticos
+    if V["trap"] in ctx["post_pick"]: prob += 2.0
+    if V["trap"] in [1,2,3] and D["trap"] in [4,5,6]: prob += 2.0
+    if any(abs(V["trap"] - v) == 1 for v in ctx["vazias"]): prob += 1.5
+    if any(abs(D["trap"] - v) == 1 for v in ctx["vazias"]): prob -= 1.5
+
+    return max(25.0, min(75.0, prob))
+
+def montar_avbs(rank, ctx):
+    top4 = [d for d in rank if d.get("name") != "vacant"][:4]
+    if len(top4) < 2: return [], [], []
+    
     s1, s2 = [], []
     
-    # Gera todas as combinações possíveis entre o Top 4
     for i in range(len(top4)):
         for j in range(i+1, len(top4)):
             A, B = top4[i], top4[j]
-            
-            # Calcula a probabilidade de A bater B
-            prob_A = calc_prob(A, B, ctx)
+            prob_A = calc_prob(A, B, rank, ctx)
             
             if prob_A >= 50.0:
                 V, D, prob = A, B, prob_A
             else:
                 V, D, prob = B, A, 100.0 - prob_A
                 
-            # Organiza nas tabelas com base na probabilidade
             if prob >= 60.0:
                 s1.append((V, D, prob, True))
             else:
@@ -550,8 +596,8 @@ def tabela_avb(lista, titulo):
     st.markdown(tbl(heads, rows), unsafe_allow_html=True)
 
 def main():
-    st.set_page_config(page_title="DIB GREYHOUND 2.9", layout="wide")
-    st.title("🐾 DIB GREYHOUND 2.9")
+    st.set_page_config(page_title="DIB GREYHOUND 3.3", layout="wide")
+    st.title("🐾 DIB GREYHOUND 3.3")
 
     url_alvo = st.text_input("Link", placeholder="Cole o link da corrida aqui...", label_visibility="collapsed")
 
@@ -571,7 +617,6 @@ def main():
             
             ds = [analisar_galgo(d, ctx) for d in dogs]
             rank, top3_ms = finalizar(ds, ctx)
-            ctx["top3_ms"] = top3_ms
             ds.sort(key=lambda d: d["trap"])
             
             st.markdown(f"### {classe} · {int(dist)}m · POST PICK: {pp_in or '-'}")
