@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
+"""
+DIB GREYHOUND - Automação via API Interna
+"""
 import re
 import html
 import math
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 import requests
@@ -35,33 +38,56 @@ FIELD_MAP = {
 TRAP_EMOJI = {1: "🟥", 2: "🟦", 3: "⬜", 4: "⬛", 5: "🟧", 6: "🔳"}
 MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 
-@st.cache_data(ttl=60)
-def obter_corridas_do_dia():
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    corridas = []
-    try:
-        url = "https://greyhoundbet.racingpost.com/"
-        resp = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(resp.text, "html.parser")
-        links = soup.find_all("a", href=True)
-        
-        for link in links:
-            href = link["href"]
-            if "race_id=" in href and "r_date=" in href:
-                text = link.get_text(separator=" ", strip=True)
-                if text and "Race" in text and len(text) < 50:
-                    corridas.append({"texto": text, "href": href})
-        
-        vistos = set()
-        unicas = []
-        for c in corridas:
-            if c["href"] not in vistos:
-                vistos.add(c["href"])
-                unicas.append(c)
-        return unicas
-    except Exception:
-        return []
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "X-Requested-With": "XMLHttpRequest",
+    "Referer": "https://greyhoundbet.racingpost.com/",
+}
 
+# =====================================================================
+# AUTOMAÇÃO VIA API INTERNA
+# =====================================================================
+@st.cache_data(ttl=300) # Atualiza o cache a cada 5 minutos
+def obter_corridas_do_dia():
+    corridas = []
+    
+    # Tenta pegar a data de hoje
+    hoje = datetime.now()
+    r_date_str = hoje.strftime("%Y-%m-%d")
+    
+    # URL da API de reuniões do Racing Post
+    url_api = f"https://greyhoundbet.racingpost.com/racing/meetings.sd?r_date={r_date_str}"
+    
+    try:
+        resp = requests.get(url_api, headers=HEADERS, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            # Navega pelo JSON (estrutura típica do site)
+            meetings = data.get("meetings", [])
+            for m in meetings:
+                track = m.get("trackName", "Pista")
+                races = m.get("races", [])
+                for r in races:
+                    r_num = r.get("raceNum", "")
+                    time = r.get("time", "")
+                    race_id = r.get("raceId", "")
+                    
+                    if race_id:
+                        texto = f"{time} {track} - Race {r_num}"
+                        href = f"https://greyhoundbet.racingpost.com/#card/race_id={race_id}&r_date={r_date_str}"
+                        corridas.append({"texto": texto, "href": href})
+        else:
+            st.warning(f"API bloqueou com status {resp.status_code}. Tentando método alternativo...")
+            return []
+    except Exception as e:
+        return []
+        
+    return corridas
+
+# =====================================================================
+# EXTRAÇÃO E CÁLCULOS (MANTIDOS)
+# =====================================================================
 def pick(d, keys, default=None):
     for k in keys:
         if isinstance(d, dict) and k in d and d[k] not in (None, ""):
@@ -242,23 +268,16 @@ def extrair_dados_racingpost(url):
             return None, None, None
         race_id, r_date_str = race_id_match.group(1), r_date_match.group(1)
         
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "X-Requested-With": "XMLHttpRequest",
-            "Referer": "https://greyhoundbet.racingpost.com/",
-        }
-        
         card_api_url = f"https://greyhoundbet.racingpost.com/card/race.sd?race_id={race_id}&r_date={r_date_str}"
         info_card = {}
         try:
-            resp_card = requests.get(card_api_url, headers=headers, timeout=10)
+            resp_card = requests.get(card_api_url, headers=HEADERS, timeout=10)
             if resp_card.status_code == 200:
                 info_card = resp_card.json()
         except Exception: pass
 
         api_url = f"https://greyhoundbet.racingpost.com/card/blocks.sd?race_id={race_id}&r_date={r_date_str}&blocks=form"
-        resp = requests.get(api_url, headers=headers, timeout=15)
+        resp = requests.get(api_url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
         data = resp.json()
 
