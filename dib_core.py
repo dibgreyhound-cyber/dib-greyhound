@@ -101,8 +101,9 @@ def bends_digits(b):
     return [int(c) for c in str(b or "") if c.isdigit()]
 
 def grade_num(g):
-    m = re.fullmatch(r"A(\d{1,2})", str(g or "").strip().upper())
-    return int(m.group(1)) if m else None
+    # ATUALIZADO: Aceita A, D, S e B (Sprints)
+    m = re.fullmatch(r"([ADSB])(\d{1,2})", str(g or "").strip().upper())
+    return int(m.group(2)) if m else None
 
 def parse_date(s):
     if not s: return None
@@ -312,7 +313,7 @@ def analisar_galgo(dog, ctx):
 
     today_n = ctx.get("classe_n")
     last_n = grade_num(R[0]["grade"])
-    base = 16.0 - (today_n if today_n else last_n)
+    base = 16.0 - (today_n if today_n else (last_n or 0))
     mod = 0.0
     if today_n and last_n:
         mod = CFG["CAT_BONUS"] if today_n > last_n else (-CFG["CAT_BONUS"] if today_n < last_n else 0.0)
@@ -327,7 +328,6 @@ def analisar_galgo(dog, ctx):
         d["msplit"] = float(np.mean([r["split"] for r in R if r["split"] is not None]))
         d["msplit_pos"] = None
     else:
-        # Fallback para categoria D: usar posição na primeira curva (menor é melhor)
         pos_curve = [bends_digits(r["bends"])[0] for r in R if bends_digits(r["bends"])]
         d["msplit"] = None
         d["msplit_pos"] = float(np.mean(pos_curve)) if pos_curve else None
@@ -392,8 +392,6 @@ def finalizar(ds, ctx):
         pts_perfil = CFG["PERFIL_PTS"][d["perfil"]]
         
         # Se não houver msplit, a velocidade usa msplit_pos no lugar do tempo
-        split_metric = d["msplit"] if d["msplit"] is not None else d["msplit_pos"]
-        
         vel = (pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) + 
                pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) + 
                (pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d) if d["msplit"] else (CFG["VEL_PTS"]["msplit"] * (1 - (d["msplit_pos"] / 6)) if d.get("msplit_pos") else 0)) + 
