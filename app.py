@@ -5,6 +5,7 @@ Usa o seu dib_core.py (calculo e tabelas) sem mudancas.
 """
 import re
 import time
+import json
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -77,7 +78,7 @@ def http():
     return _Http()
 
 
-dib.requests = http()      # o dib_core passa a usar a mesma sessao
+dib.requests = http()
 
 
 # ---------------------------------------------------------------- numeros dos galgos
@@ -109,6 +110,56 @@ class _St:
 dib.st = _St()
 dib.TRAP_EMOJI = {t: badge(t) for t in range(1, 7)}
 dib.trap_label = lambda d: badge(d["trap"])
+
+
+# ---------------------------------------------------------------- botao copiar (JavaScript)
+def botao_copiar(texto):
+    """Cria um botão HTML nativo que copia o texto usando JavaScript."""
+    # Converte o texto para uma string JSON válida (escapa aspas, quebras de linha, etc)
+    texto_js = json.dumps(texto)
+    
+    html = f"""
+    <html>
+    <head>
+    <style>
+    .copy-btn {{
+        background-color: #ff4b4b;
+        color: white;
+        border: none;
+        padding: 12px 20px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 16px;
+        font-weight: bold;
+        width: 100%;
+        transition: 0.2s;
+    }}
+    .copy-btn:active {{ background-color: #cc0000; }}
+    </style>
+    </head>
+    <body>
+    <button class="copy-btn" id="copyBtn">📋 Copiar Análise para o Chat</button>
+    <script>
+    const textToCopy = {texto_js};
+    document.getElementById("copyBtn").addEventListener("click", async () => {{
+        try {{
+            await navigator.clipboard.writeText(textToCopy);
+            document.getElementById("copyBtn").innerText = "✅ Texto Copiado! Cole no Chat.";
+            document.getElementById("copyBtn").style.backgroundColor = "#28a745";
+            setTimeout(() => {{
+                document.getElementById("copyBtn").innerText = "📋 Copiar Análise para o Chat";
+                document.getElementById("copyBtn").style.backgroundColor = "#ff4b4b";
+            }}, 4000);
+        }} catch (err) {{
+            document.getElementById("copyBtn").innerText = "❌ Erro (Copie manualmente abaixo)";
+            document.getElementById("copyBtn").style.backgroundColor = "#ff9800";
+        }}
+    }});
+    </script>
+    </body>
+    </html>
+    """
+    components.html(html, height=65)
 
 
 # ---------------------------------------------------------------- leitura de JSON
@@ -387,11 +438,12 @@ def analisar(c, classe_in, dist_in, pp_in):
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
         
-    # BOTÃO DE EXPORTAR (Text Area)
+    # BOTÃO DE EXPORTAR COM CÓPIA AUTOMÁTICA
     st.markdown("---")
     with st.expander("📋 Exportar Análise (Copiar e Colar para o Chat)"):
         texto_gerado = gerar_texto_analise(c, p)
-        st.text_area("Selecione o texto abaixo para copiar:", texto_gerado, height=400)
+        botao_copiar(texto_gerado) # Chama o botão JS
+        st.text_area("Se o botão acima não funcionar, copie o texto aqui:", texto_gerado, height=200)
 
 
 # ---------------------------------------------------------------- aba Form
