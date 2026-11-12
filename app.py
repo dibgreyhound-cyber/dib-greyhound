@@ -22,7 +22,6 @@ LISTA_CANDIDATOS = [
     BASE + "/meeting-list/blocks.sd?r_date={d}&blocks=list",
     BASE + "/meeting/list.sd?r_date={d}",
 ]
-# Enderecos tentados para o resultado de UMA corrida (o primeiro que devolver galgos com posicao vence)
 RESULTADO_CANDIDATOS = (
     [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult")]
     + [BASE + "/result/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results")]
@@ -37,7 +36,7 @@ KEYS = {
     "grade": ["raceClass", "raceGrade", "grade", "class", "raceClassDesc"],
     "dist": ["distMetres", "distMeters", "distance", "dist", "raceDistance"],
 }
-RES = {   # campos de um galgo no resultado (primeiro que existir)
+RES = {
     "nome": ["dogName", "dog_name", "name"],
     "pos": ["finishPos", "finPos", "outcomeDesc", "position", "pos", "fin", "outcome", "result"],
     "trap": ["trapNum", "trap", "dogTrap"],
@@ -51,7 +50,7 @@ EXTRA = {"winsec": ["winnerOrSecond", "winSec", "wnSec", "winnerName", "secondNa
          "trainer": ["trainerName", "trainer", "trainer_name"]}
 
 
-# ---------------------------------------------------------------- conexao com o site (sessao + nova tentativa)
+# ---------------------------------------------------------------- conexao com o site
 class _Http:
     def __init__(self):
         self.s = requests.Session()
@@ -62,11 +61,9 @@ class _Http:
         self.pronto = False
 
     def get(self, url, headers=None, timeout=15):
-        if not self.pronto:        # visita a pagina inicial uma vez para receber os cookies, como um navegador
-            try:
-                self.s.get(BASE + "/", timeout=8)
-            except Exception:
-                pass
+        if not self.pronto:
+            try: self.s.get(BASE + "/", timeout=8)
+            except Exception: pass
             self.pronto = True
         r = self.s.get(url, timeout=timeout)
         if r.status_code in (403, 429):
@@ -83,7 +80,7 @@ def http():
 dib.requests = http()      # o dib_core passa a usar a mesma sessao
 
 
-# ---------------------------------------------------------------- numeros dos galgos (padrao do site)
+# ---------------------------------------------------------------- numeros dos galgos
 BADGE_STYLE = {
     1: "background:#d62828;color:#fff;",
     2: "background:#1d4ed8;color:#fff;",
@@ -96,19 +93,14 @@ BADGE_STYLE = {
 
 
 def badge(t):
-    try:
-        t = int(t)
-    except Exception:
-        return ""
+    try: t = int(t)
+    except Exception: return ""
     return (f"<span style='display:inline-block;min-width:24px;height:24px;line-height:24px;text-align:center;"
             f"border-radius:4px;font-weight:700;font-size:14px;vertical-align:middle;{BADGE_STYLE.get(t, '')}'>{t}</span>")
 
 
 class _St:
-    """Faz o dib_core aceitar HTML nos st.markdown (necessario para os numeros coloridos)."""
-    def __getattr__(self, n):
-        return getattr(st, n)
-
+    def __getattr__(self, n): return getattr(st, n)
     def markdown(self, body, *a, **k):
         k.setdefault("unsafe_allow_html", True)
         return st.markdown(body, *a, **k)
@@ -138,8 +130,7 @@ def achar_corridas(obj):
     def walk(o, pista_ctx):
         if isinstance(o, dict):
             p = _get(o, "pista")
-            if isinstance(p, str):
-                pista_ctx = p
+            if isinstance(p, str): pista_ctx = p
             rid = _get(o, "id")
             hora = _hhmm(_get(o, "hora"))
             if rid is not None and re.fullmatch(r"\d{5,9}", str(rid)) and hora:
@@ -150,11 +141,9 @@ def achar_corridas(obj):
                     "grade": re.sub(r"[()\s]", "", str(g or "")).upper(),
                     "dist": int(re.sub(r"\D", "", str(d))) if d and re.search(r"\d", str(d)) else 0,
                 }
-            for v in o.values():
-                walk(v, pista_ctx)
+            for v in o.values(): walk(v, pista_ctx)
         elif isinstance(o, list):
-            for v in o:
-                walk(v, pista_ctx)
+            for v in o: walk(v, pista_ctx)
 
     walk(obj, "")
     return sorted(achados.values(), key=lambda c: (c["hora"], c["pista"]))
@@ -174,19 +163,16 @@ def achar_resultados(obj):
                     "sp": str(_get(o, "sp", RES) or ""), "tempo": str(_get(o, "tempo", RES) or ""),
                     "margem": str(_get(o, "margem", RES) or ""), "coment": str(_get(o, "coment", RES) or ""),
                 }
-            for v in o.values():
-                walk(v)
+            for v in o.values(): walk(v)
         elif isinstance(o, list):
-            for v in o:
-                walk(v)
+            for v in o: walk(v)
 
     walk(obj)
     return sorted(achados.values(), key=lambda x: x["pos"])
 
 
 def _chaves(js):
-    if not isinstance(js, dict):
-        return type(js).__name__
+    if not isinstance(js, dict): return type(js).__name__
     return ", ".join(f"{k}{'(erro)' if isinstance(v, dict) and 'errorCode' in v else ''}" for k, v in js.items())[:90]
 
 
@@ -204,8 +190,7 @@ def tentar(urls, parser):
         res = parser(js) if js is not None else []
         tentativas.append({"Endereço": curto, "Status": r.status_code, "Achados": len(res),
                            "Chaves": _chaves(js) if js is not None else ""})
-        if primeira is None and js is not None and not res:
-            primeira = js
+        if primeira is None and js is not None and not res: primeira = js
         if res:
             achado = res
             break
@@ -283,7 +268,7 @@ def preparar(race_id, r_date, c, classe_in, dist_in, pp_in, so_antes=False):
             return None
         cache[chave] = res
     dogs, meta, meta_info = cache[chave]
-    if so_antes:   # para comparar com o resultado, usa so corridas ANTERIORES a esta data
+    if so_antes:
         dogs = [dict(d, runs=[r for r in d["runs"] if (r.get("date_str") or "") < r_date]) for d in dogs]
     classe = (classe_in or c.get("grade") or (meta_info or {}).get("classe") or "").strip().upper()
     dist = float(dist_in or c.get("dist") or 0)
@@ -311,12 +296,10 @@ def titulo_corrida(c, p=None, prefixo=""):
 
 # ---------------------------------------------------------------- exportar texto
 def gerar_texto_analise(c, p):
-    """Gera um relatório em Markdown simples para copiar e colar no chat."""
     txt = []
     txt.append(titulo_corrida(c, p).replace("### ", ""))
     txt.append("")
     
-    # Tabela de Projeção
     txt.append("**Planilha de Projeção**")
     txt.append("| Trp | Galgo | Overall | Cat | Fatores | Perfil | Grades | Peso | Dias | Split | Time | Méd. Split | Méd. Time | Time Ajust. | Ritmo | Recup. Média | Conf. |")
     txt.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
@@ -332,7 +315,7 @@ def gerar_texto_analise(c, p):
         
         f_split = f"{d['split']:.2f}" if d.get("split") else "-"
         f_time = f"{d['time']:.2f}" if d.get("time") else "-"
-        f_msplit = f"{d['msplit']:.2f}" if d.get("msplit") else "-"
+        f_msplit = f"{d['msplit']:.2f}" if d.get("msplit") else (f"Pos:{d['msplit_pos']:.1f}" if d.get("msplit_pos") else "-")
         f_mtime = f"{d['mtime']:.2f}" if d.get("mtime") else "-"
         f_tadj = f"{d['tadj']:.2f}" if d.get("tadj") else "-"
         f_ritmo = f"{d['ritmo']:.2f}" if d.get("ritmo") else "-"
@@ -343,12 +326,10 @@ def gerar_texto_analise(c, p):
     
     txt.append("")
     
-    # Classificação
     classif = " > ".join(f"{d['pos']}º [T{d['trap']}]" for d in p["rank"])
     txt.append(f"**Classificação:** {classif}")
     txt.append("")
     
-    # AVBs
     txt.append("**AVBs Principais (≥ 60%)**")
     if not p["s1"]:
         txt.append("Nenhum confronto atingiu 60%.")
@@ -360,7 +341,6 @@ def gerar_texto_analise(c, p):
     
     txt.append("")
     
-    # Observações
     txt.append("**Observações:**")
     elegiveis = [d for d in p["rank"] if not d.get("bloqueado")]
     if elegiveis:
@@ -369,9 +349,14 @@ def gerar_texto_analise(c, p):
             txt.append(f"- 🏆 Melhor Elegível: O favorito está bloqueado. O cão mais seguro é o {best_elig['trap']} {best_elig['name']} (Posição {best_elig['pos']}).")
             
     top_ritmo = min([d for d in p["rank"] if d.get("ritmo") is not None], key=lambda x: x["ritmo"], default=None)
-    top_split = min([d for d in p["rank"] if d.get("msplit") is not None], key=lambda x: x["msplit"], default=None)
-    if top_ritmo and top_split and top_ritmo["name"] != top_split["name"]:
-        txt.append(f"- 💡 Pace: O {top_split['name']} tem a melhor largada, mas o {top_ritmo['name']} tem o melhor ritmo final.")
+    if any(d.get("msplit") for d in p["rank"]):
+        top_split = min([d for d in p["rank"] if d.get("msplit") is not None], key=lambda x: x["msplit"], default=None)
+        if top_ritmo and top_split and top_ritmo["name"] != top_split["name"]:
+            txt.append(f"- 💡 Pace: O {top_split['name']} tem a melhor largada (Split), mas o {top_ritmo['name']} tem o melhor ritmo final.")
+    else:
+        top_split = min([d for d in p["rank"] if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"], default=None)
+        if top_ritmo and top_split and top_ritmo["name"] != top_split["name"]:
+            txt.append(f"- 💡 Pace: O {top_split['name']} assume a liderança na 1ª curva, mas o {top_ritmo['name']} tem o melhor ritmo de prova final.")
 
     pior_rec = min([d for d in p["rank"] if d.get("rec") is not None], key=lambda x: x["rec"], default=None)
     if pior_rec and pior_rec["rec"] < -10.0:
@@ -402,11 +387,11 @@ def analisar(c, classe_in, dist_in, pp_in):
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
         
-    # BOTÃO DE EXPORTAR
+    # BOTÃO DE EXPORTAR (Text Area)
     st.markdown("---")
     with st.expander("📋 Exportar Análise (Copiar e Colar para o Chat)"):
         texto_gerado = gerar_texto_analise(c, p)
-        st.code(texto_gerado, language="markdown")
+        st.text_area("Selecione o texto abaixo para copiar:", texto_gerado, height=400)
 
 
 # ---------------------------------------------------------------- aba Form
@@ -458,7 +443,7 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
     tabela_html(["Pos", "Trap", "Galgo", "SP", "Tempo", "Margem", "Comentário"],
                 [[f"{l['pos']}º", badge(l["trap"]), l["nome"], l["sp"], l["tempo"], l["margem"], l["coment"]]
                  for l in linhas])
-    try:   # comparacao: previsto x real
+    try:
         p = preparar(c["id"], c["data"], c, classe_in, dist_in, pp_in, so_antes=True)
         if not p or not p["rank"]:
             return
@@ -526,9 +511,8 @@ def main():
             limite = agora_uk().strftime("%H:%M")
             if modo == "ana" and ocultar and hoje:
                 lista = [c for c in lista if c["hora"] >= limite]
-            if modo == "res":   # resultados: so corridas que ja foram disputadas, mais recentes primeiro
-                if hoje:
-                    lista = [c for c in lista if c["hora"] < limite]
+            if modo == "res":
+                if hoje: lista = [c for c in lista if c["hora"] < limite]
                 lista = sorted(lista, key=lambda c: (c["hora"], c["pista"]), reverse=True)
             st.caption(f"{len(lista)} corridas · horário da pista (Brasil = −3h)")
             for c in lista:
@@ -561,12 +545,10 @@ def main():
     if sel:
         if sel.get("modo") == "res":
             aba1, aba2 = st.tabs(["📊 Resultado", "📄 Form"])
-            with aba1:
-                mostrar_resultado(sel, classe_in, dist_in, pp_in)
+            with aba1: mostrar_resultado(sel, classe_in, dist_in, pp_in)
         else:
             aba1, aba2 = st.tabs(["📋 Análise", "📄 Form"])
-            with aba1:
-                analisar(sel, classe_in, dist_in, pp_in)
+            with aba1: analisar(sel, classe_in, dist_in, pp_in)
         with aba2:
             mostrar_form(sel)
         if st.session_state.pop("fechar", False):
