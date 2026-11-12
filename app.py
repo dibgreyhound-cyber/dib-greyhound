@@ -54,6 +54,7 @@ EXTRA = {"winsec": ["winnerOrSecond", "winSec", "wnSec", "winnerName", "secondNa
 
 
 # ---------------------------------------------------------------- conexao com o site
+# REMOVIDO O @st.cache_resource DAQUI PARA EVITAR ERRO DE MEMÓRIA
 class _Http:
     def __init__(self):
         self.s = requests.Session()
@@ -75,18 +76,14 @@ class _Http:
         return r
 
     def get_resultado(self, url, timeout=10):
-        # Força uma visita à página de resultados do dia para pegar o cookie correto
         try: self.s.get(BASE + "/results", timeout=5)
         except Exception: pass
         return self.s.get(url, timeout=timeout)
 
 
-@st.cache_resource
-def http():
-    return _Http()
-
-
-dib.requests = http()
+# Instancia a classe globalmente para ser usada nas funções
+http = _Http()
+dib.requests = http
 
 
 # ---------------------------------------------------------------- numeros dos galgos
@@ -220,9 +217,9 @@ def tentar(urls, parser, is_resultado=False):
         time.sleep(0.2)
         try:
             if is_resultado:
-                r = http().get_resultado(u, timeout=8)
+                r = http.get_resultado(u, timeout=8)
             else:
-                r = http().get(u, timeout=8)
+                r = http.get(u, timeout=8)
             js = r.json() if r.status_code == 200 else None
         except Exception as e:
             tentativas.append({"Endereço": curto, "Status": f"erro: {str(e)[:40]}", "Achados": 0, "Chaves": ""})
@@ -253,7 +250,7 @@ def buscar_resultado(race_id, data_str):
 @st.cache_data(ttl=300, show_spinner=False)
 def buscar_form_raw(race_id, data_str):
     try:
-        r = http().get(f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks=form", timeout=15)
+        r = http.get(f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks=form", timeout=15)
         r.raise_for_status()
         return r.json().get("form", {}).get("dogs", [])
     except Exception:
