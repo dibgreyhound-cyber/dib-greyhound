@@ -101,7 +101,6 @@ def bends_digits(b):
     return [int(c) for c in str(b or "") if c.isdigit()]
 
 def grade_num(g):
-    # Aceita A, D, S e B (Sprints)
     m = re.fullmatch(r"([ADSB])(\d{1,2})", str(g or "").strip().upper())
     return int(m.group(2)) if m else None
 
@@ -617,7 +616,7 @@ def tabela_avb(lista, titulo):
 def gerar_observacoes(rank, avbs, ctx):
     if not rank: return
     st.markdown("---")
-    st.markdown("#### 🏁 O Cenário da Corrida") # <-- TÍTULO ALTERADO AQUI
+    st.markdown("#### 🏁 O Cenário da Corrida")
     
     elegiveis = [d for d in rank if not d.get("bloqueado")]
     bloqueados = [d for d in rank if d.get("bloqueado")]
@@ -631,46 +630,56 @@ def gerar_observacoes(rank, avbs, ctx):
         fav = elegiveis[0]
         bloc_acima = [d for d in bloqueados if d["pos"] < fav["pos"]]
         if bloc_acima:
-            st.markdown(f"- **🏆 Melhor Elegível:** O favorito absoluto ({bloc_acima[0]['name']}) está bloqueado 🚫. O cão mais seguro para vitória é o **{TRAP_EMOJI[fav['trap']]} {fav['name']}** (Posição {fav['pos']} | Recup: {fav['rec']:+.1f}%).")
+            b_trap = TRAP_EMOJI.get(bloc_acima[0]['trap'], str(bloc_acima[0]['trap']))
+            f_trap = TRAP_EMOJI.get(fav['trap'], str(fav['trap']))
+            st.markdown(f"- **🏆 Melhor Elegível:** O favorito absoluto ({b_trap}) está bloqueado 🚫. O cão mais seguro para vitória é o **{f_trap}** (Posição {fav['pos']} | Recup: {fav['rec']:+.1f}%).")
         else:
+            f_trap = TRAP_EMOJI.get(fav['trap'], str(fav['trap']))
             txt_rec = f" Ele tem recuperação excelente ({fav['rec']:+.1f}%)." if fav['rec'] > 10 else ""
-            st.markdown(f"- **🏆 Favorito Claro:** O **{TRAP_EMOJI[fav['trap']]} {fav['name']}** domina o Overall ({fav['overall']:.1f}).{txt_rec}")
+            st.markdown(f"- **🏆 Favorito Claro:** O **{f_trap}** domina o Overall ({fav['overall']:.1f}).{txt_rec}")
             
     # 2. O "Falso Favorito" Bloqueado
     if bloqueados:
         b = bloqueados[0]
+        b_trap = TRAP_EMOJI.get(b['trap'], str(b['trap']))
         avb_info = ""
         if elegiveis:
             for V, D, prob, star in avbs:
-                if (V["name"] == elegiveis[0]["name"] and D["name"] == b["name"]) or (D["name"] == elegiveis[0]["name"] and V["name"] == b["name"]):
+                if (V["trap"] == elegiveis[0]["trap"] and D["trap"] == b["trap"]) or (D["trap"] == elegiveis[0]["trap"] and V["trap"] == b["trap"]):
                     avb_info = f" O AVB entre eles é apertado ({prob:.1f}%)."
                     break
-        st.markdown(f"- **🚫 Falso Favorito Bloqueado:** O **{b['name']}** tem Overall alto ({b['overall']:.1f}), mas foi pego pela Trava (Conf. {b['conf']:.0f}%).{avb_info}")
+        st.markdown(f"- **🚫 Falso Favorito Bloqueado:** O **{b_trap}** tem Overall alto ({b['overall']:.1f}), mas foi pego pela Trava (Conf. {b['conf']:.0f}%).{avb_info}")
 
     # 3. O Alvo 🎯
     if alvos:
-        nomes_alvo = ", ".join([d["name"] for d in alvos])
+        nomes_alvo = ", ".join([TRAP_EMOJI.get(d['trap'], str(d['trap'])) for d in alvos])
         st.markdown(f"- **🎯 Alvo(s):** O(s) cão(es) **{nomes_alvo}** foram marcados como alvo (fora do Top 3 largada e recuperação ≤ 0%). Vulneráveis no bolo.")
 
     # 4. Alerta de Dados / Pace
     if top_split and top_split["msplit"] < 5.0:
-        st.markdown(f"- **⚠️ Alerta de Dados:** O **{top_split['name']}** aparece com Split muito rápido ({top_split['msplit']:.2f}). Pode ser erro de digitação da base, mas ele foi considerado o 'Melhor Pace'.")
-    elif top_ritmo and top_split and top_ritmo["name"] != top_split["name"]:
-        st.markdown(f"- **💡 Análise de Pace:** O **{top_split['name']}** tem a melhor largada (Split), mas o **{top_ritmo['name']}** tem o melhor ritmo final.")
+        s_trap = TRAP_EMOJI.get(top_split['trap'], str(top_split['trap']))
+        st.markdown(f"- **⚠️ Alerta de Dados:** O **{s_trap}** aparece com Split muito rápido ({top_split['msplit']:.2f}). Pode ser erro de digitação da base, mas ele foi considerado o 'Melhor Pace'.")
+    elif top_ritmo and top_split and top_ritmo["trap"] != top_split["trap"]:
+        s_trap = TRAP_EMOJI.get(top_split['trap'], str(top_split['trap']))
+        r_trap = TRAP_EMOJI.get(top_ritmo['trap'], str(top_ritmo['trap']))
+        st.markdown(f"- **💡 Análise de Pace:** O **{s_trap}** tem a melhor largada (Split), mas o **{r_trap}** tem o melhor ritmo final.")
     elif not top_split and top_ritmo:
         top_split_pos = min([d for d in rank if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"], default=None)
-        if top_split_pos and top_ritmo["name"] != top_split_pos["name"]:
-             st.markdown(f"- **💡 Análise de Pace:** O **{top_split_pos['name']}** assume a liderança na 1ª curva, mas o **{top_ritmo['name']}** tem o melhor ritmo de prova final.")
+        if top_split_pos and top_ritmo["trap"] != top_split_pos["trap"]:
+             s_trap = TRAP_EMOJI.get(top_split_pos['trap'], str(top_split_pos['trap']))
+             r_trap = TRAP_EMOJI.get(top_ritmo['trap'], str(top_ritmo['trap']))
+             st.markdown(f"- **💡 Análise de Pace:** O **{s_trap}** assume a liderança na 1ª curva, mas o **{r_trap}** tem o melhor ritmo de prova final.")
 
     # 5. Alerta de Tráfego
     pior_rec = min([d for d in rank if d.get("rec") is not None], key=lambda x: x["rec"], default=None)
     if pior_rec and pior_rec["rec"] < -10.0:
-        st.markdown(f"- **⚠️ Alerta de Tráfego:** O **{pior_rec['name']}** tem uma recuperação média ruim ({pior_rec['rec']:+.1f}%). Pode perder posições na reta.")
+        rec_trap = TRAP_EMOJI.get(pior_rec['trap'], str(pior_rec['trap']))
+        st.markdown(f"- **⚠️ Alerta de Tráfego:** O **{rec_trap}** tem uma recuperação média ruim ({pior_rec['rec']:+.1f}%). Pode perder posições na reta.")
 
     # 6. Queda de Classe
     dropping_class = [d for d in rank if d.get("cat_mod", 0) > 0]
     if dropping_class:
-        nomes = ", ".join([f"{d['name']}" for d in dropping_class])
+        nomes = ", ".join([TRAP_EMOJI.get(d['trap'], str(d['trap'])) for d in dropping_class])
         st.markdown(f"- **📉 Queda de Classe:** O(s) cão(es) {nomes} desceu(ram) de categoria e corre(m) contra rivais mais fracos hoje.")
 
     # 7. Conflito de Pace
