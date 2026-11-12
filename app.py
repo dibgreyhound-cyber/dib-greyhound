@@ -1,633 +1,490 @@
 # -*- coding: utf-8 -*-
+"""
+app.py - Lista de corridas / Resultados na barra lateral + analise e Form na pagina principal.
+Usa o seu dib_core.py (calculo e tabelas) sem mudancas.
+"""
 import re
-import html
-import math
-import json
-from datetime import datetime
-import numpy as np
+import time
+from datetime import datetime, timedelta
+
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
-# =====================================================================
-# DICIONÁRIO DE REMARKS (TABELA DO MARKO)
-# =====================================================================
-DICIONARIO_REMARKS = {
-    "ald": "Liderou Sempre", "awk": "Desajeitado", "blk": "Trombada Forte",
-    "bmp": "Trombou na Curva", "chl": "Desafiado na Curva", "clrrn": "Corrida Limpa",
-    "crd": "Truncado na Curva", "crdnrln": "Truncado no Final", "crdrnln": "Truncado na Reta",
-    "crdrnup": "Truncado no Início", "crmp": "Espaço Apertado", "disp": "Disputou",
-    "dsp": "Disputou na Curva", "dis pld": "Liderou com Disputa", "ep": "Ritmo Acelerado",
-    "evch": "Evitou Choque", "fcd": "Forçado a Algo", "fcdck": "Forçado na Curva",
-    "fell": "Caiu", "hldon": "Posição Mantida", "imp": "Impedido", "jmp": "Saltou",
-    "jmplate": "Saltou Atrasado", "ko": "Derrubado", "lame": "Manco", "ld": "Liderou a Curva",
-    "ldnrln": "Liderou na Reta", "in": "Linha de Chegada", "mid": "Corre pelo Meio",
-    "msdbrk": "Passou Reto", "on": "Até o Final", "qaw": "Largada Rápida", "rls": "Corre por Dentro",
-    "rnln": "Reta Linha", "rnon": "Manteve Galope", "rnonwll": "Galope até o Final",
-    "rnup": "Distância Trap 1", "saw": "Largada Lenta", "snled": "Liderou desde o Início",
-    "stmb": "Tropeçou", "strfn": "Chegada Forte", "stt": "Início", "struck": "Atingido",
-    "styd": "Ficou", "turnedin trps": "Ficou na Trap", "vsaw": "Largada Muito Lenta",
-    "vw": "Corredor Aberto", "w": "Curva Ampla"
+st.set_page_config(page_title="DIB GREYHOUND", layout="wide", initial_sidebar_state="auto")
+import dib_core as dib
+
+BASE = "https://greyhoundbet.racingpost.com"
+LISTA_CANDIDATOS = [
+    BASE + "/meeting/blocks.sd?r_date={d}&blocks=header%2Clist",
+    BASE + "/meeting/blocks.sd?r_date={d}&blocks=list",
+    BASE + "/meeting-list/blocks.sd?r_date={d}&blocks=list",
+    BASE + "/meeting/list.sd?r_date={d}",
+]
+# Enderecos tentados para o resultado de UMA corrida (o primeiro que devolver galgos com posicao vence)
+RESULTADO_CANDIDATOS = (
+    [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult")]
+    + [BASE + "/result/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results")]
+    + [BASE + "/card/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results")]
+    + [BASE + "/results/race.sd?race_id={rid}&r_date={d}"]
+)
+KEYS = {
+    "id": ["raceId", "race_id", "rid"],
+    "hora": ["raceDate", "offTime", "scheduledTime", "displayTime", "raceTime", "time", "startTime"],
+    "pista": ["trackName", "track", "meetingName", "courseName", "venue"],
+    "num": ["raceTitle", "raceNum", "raceNumber", "rNum", "number", "raceNo"],
+    "grade": ["raceClass", "raceGrade", "grade", "class", "raceClassDesc"],
+    "dist": ["distMetres", "distMeters", "distance", "dist", "raceDistance"],
+}
+RES = {   # campos de um galgo no resultado (primeiro que existir)
+    "nome": ["dogName", "dog_name", "name"],
+    "pos": ["finishPos", "finPos", "outcomeDesc", "position", "pos", "fin", "outcome", "result"],
+    "trap": ["trapNum", "trap", "dogTrap"],
+    "sp": ["SP", "sp", "startingPrice", "price", "odds"],
+    "tempo": ["calcRTimes", "calTm", "finishTime", "winTime", "time"],
+    "margem": ["distBtn", "by", "beatenDistance"],
+    "coment": ["closeUpCmnt", "comment", "cmnt", "commentary", "description"],
+}
+EXTRA = {"winsec": ["winnerOrSecond", "winSec", "wnSec", "winnerName", "secondName"],
+         "sp": ["SP", "sp", "startingPrice", "price"],
+         "trainer": ["trainerName", "trainer", "trainer_name"]}
+
+
+# ---------------------------------------------------------------- conexao com o site (sessao + nova tentativa)
+class _Http:
+    def __init__(self):
+        self.s = requests.Session()
+        self.s.headers.update({
+            "User-Agent": dib.HEADERS.get("User-Agent", "Mozilla/5.0"),
+            "Accept": "application/json, text/plain, */*", "Accept-Language": "en-GB,en;q=0.9",
+            "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/", "Origin": BASE})
+        self.pronto = False
+
+    def get(self, url, headers=None, timeout=15):
+        if not self.pronto:        # visita a pagina inicial uma vez para receber os cookies, como um navegador
+            try:
+                self.s.get(BASE + "/", timeout=8)
+            except Exception:
+                pass
+            self.pronto = True
+        r = self.s.get(url, timeout=timeout)
+        if r.status_code in (403, 429):
+            time.sleep(1.5)
+            r = self.s.get(url, timeout=timeout)
+        return r
+
+
+@st.cache_resource
+def http():
+    return _Http()
+
+
+dib.requests = http()      # o dib_core passa a usar a mesma sessao
+
+
+# ---------------------------------------------------------------- numeros dos galgos (padrao do site)
+BADGE_STYLE = {
+    1: "background:#d62828;color:#fff;",
+    2: "background:#1d4ed8;color:#fff;",
+    3: "background:#fff;color:#000;border:1px solid #000;",
+    4: "background:#111;color:#fff;border:1px solid #444;",
+    5: "background:#f97316;color:#fff;",
+    6: "background:repeating-linear-gradient(90deg,#111 0 4px,#fff 4px 8px);color:#e11;"
+       "text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff;",
 }
 
-# =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 3.3 - DUELO DIRETO + CONFLITO DE PACE)
-# =====================================================================
-CFG = {
-    "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
-    "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
-    "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
-    "REMARKS_PTS": {"early": 1.0, "slowaway": -1.0, "firstbend": -1.0},
-    "TRAP_VAZIA": 1.0, "TRAFEGO_SEVERO": -2.0, "CONF_MIN_VENCEDOR": 60.0,
-    "VEL_PTS": {"tadj": 60, "mtime": 40, "msplit": 60, "ritmo": 40},
-    "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 20,
-}
 
-FIELD_MAP = {
-    "date": ["raceTime", "raceDate", "date"], "track": ["trackName", "track"],
-    "dist": ["distMetres", "distance", "dist", "raceDistance"],
-    "grade": ["raceClass", "raceGrade", "grade", "raceClassDesc"],
-    "trap": ["trapNum", "trap"], "split": ["sectionalTime", "split"],
-    "bends": ["bndPos", "bends"], "fin": ["outcomeDesc", "fin", "finPos"],
-    "by": ["distBtn", "by", "beatenDistance", "btnDist"],
-    "wntm": ["winTimeS", "winTime", "wnTm", "winnerTime"],
-    "gng": ["goingType", "gng", "going"], "weight": ["weight", "dogWeight", "wght"],
-    "remarks": ["closeUpCmnt", "remarks"], "caltm": ["calcRTimes", "calTm", "calcTime"],
-}
-
-TRAP_EMOJI = {1: "🟥", 2: "🟦", 3: "⬜", 4: "⬛", 5: "🟧", 6: "🔳"}
-MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "X-Requested-With": "XMLHttpRequest",
-    "Referer": "https://greyhoundbet.racingpost.com/",
-}
-
-RE_TRAF = re.compile(r"(awk|blk|bmp|crmp|evch|fcd|fell|ko|msdbrk|saw|stmb|struck|vsaw|crd|imp|lame)")
-RE_NOFREE = re.compile(r"(awk|blk|bmp|crmp|evch|fcd|fell|ko|msdbrk|saw|stmb|struck|vsaw|crd|imp|lame|baulk)")
-
-def pick(d, keys, default=None):
-    for k in keys:
-        if isinstance(d, dict) and k in d and d[k] not in (None, ""):
-            return d[k]
-    return default
-
-def to_float(x):
-    if x is None: return None
+def badge(t):
     try:
-        s = re.sub(r"[^\d.\-+]", "", str(x).strip().replace(",", "."))
-        return float(s) if s not in ("", "+", "-", ".") else None
-    except Exception: return None
+        t = int(t)
+    except Exception:
+        return ""
+    return (f"<span style='display:inline-block;min-width:24px;height:24px;line-height:24px;text-align:center;"
+            f"border-radius:4px;font-weight:700;font-size:14px;vertical-align:middle;{BADGE_STYLE.get(t, '')}'>{t}</span>")
 
-def fin_num(x):
-    m = re.search(r"\d+", str(x or ""))
-    return int(m.group()) if m else None
 
-def parse_lengths(x):
-    if x in (None, ""): return None
-    s = str(x).strip().lower()
-    words = {"shd": 0.1, "hd": 0.2, "nk": 0.3, "dist": 30.0, "dis": 30.0}
-    if s in words: return words[s]
-    m = re.fullmatch(r"(\d+)?\s*(\d+)/(\d+)", s)
-    if m: return float(m.group(1) or 0) + int(m.group(2)) / int(m.group(3))
-    s = s.replace("¼", ".25").replace("½", ".5").replace("¾", ".75")
-    try: return float(s)
-    except Exception: return None
+class _St:
+    """Faz o dib_core aceitar HTML nos st.markdown (necessario para os numeros coloridos)."""
+    def __getattr__(self, n):
+        return getattr(st, n)
 
-def bends_digits(b):
-    return [int(c) for c in str(b or "") if c.isdigit()]
+    def markdown(self, body, *a, **k):
+        k.setdefault("unsafe_allow_html", True)
+        return st.markdown(body, *a, **k)
 
-def grade_num(g):
-    m = re.fullmatch(r"A(\d{1,2})", str(g or "").strip().upper())
-    return int(m.group(1)) if m else None
 
-def parse_date(s):
-    if not s: return None
-    s = str(s)[:10]
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
-        try: return datetime.strptime(s, fmt)
-        except Exception: pass
+dib.st = _St()
+dib.TRAP_EMOJI = {t: badge(t) for t in range(1, 7)}
+dib.trap_label = lambda d: badge(d["trap"])
+
+
+# ---------------------------------------------------------------- leitura de JSON
+def _get(d, k, tabela=KEYS):
+    for key in tabela[k]:
+        if key in d and d[key] not in (None, "", {}, []):
+            return d[key]
     return None
 
-def parts_of(rem):
-    for tok in re.split(r"[,\s]+", str(rem or "").lower()):
-        if tok:
-            for p in tok.split("-"):
-                if p: yield p
 
-def count_traf(rem):
-    return sum(1 for p in parts_of(rem) if RE_TRAF.search(p))
+def _hhmm(v):
+    m = re.search(r"(\d{1,2}):(\d{2})", str(v or ""))
+    return f"{int(m.group(1)):02d}:{m.group(2)}" if m else None
 
-def traffic_penalty(rem):
-    s = str(rem or "").lower()
-    for key in ("baulk", "crd", "bmp", "fcd"):
-        if key in s and key in CFG["TRAFFIC_ADJ"]:
-            return CFG["TRAFFIC_ADJ"][key] if key == "baulk" else max(
-                CFG["TRAFFIC_ADJ"][k] for k in ("crd", "bmp", "fcd") if k in s)
-    return 0.0
 
-def not_free(rem):
-    return bool(RE_NOFREE.search(str(rem or "").lower()))
+def achar_corridas(obj):
+    achados = {}
 
-def first_bend_traffic(rem):
-    s = str(rem or "").lower()
-    if "baulk" in s: return True
-    return any(RE_TRAF.search(p) and "1" in re.findall(r"\d", p) for p in parts_of(rem))
+    def walk(o, pista_ctx):
+        if isinstance(o, dict):
+            p = _get(o, "pista")
+            if isinstance(p, str):
+                pista_ctx = p
+            rid = _get(o, "id")
+            hora = _hhmm(_get(o, "hora"))
+            if rid is not None and re.fullmatch(r"\d{5,9}", str(rid)) and hora:
+                g, d = _get(o, "grade"), _get(o, "dist")
+                achados[str(rid)] = {
+                    "id": str(rid), "hora": hora, "pista": (pista_ctx or "?").title(),
+                    "num": str(_get(o, "num") or "").replace("Race", "").strip(),
+                    "grade": re.sub(r"[()\s]", "", str(g or "")).upper(),
+                    "dist": int(re.sub(r"\D", "", str(d))) if d and re.search(r"\d", str(d)) else 0,
+                }
+            for v in o.values():
+                walk(v, pista_ctx)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v, pista_ctx)
 
-HINTS = {
-    "dist": (("dist", "metre", "meter"), ("btn", "beat", "by")),
-    "grade": (("class", "grade"), ()), "by": (("btn", "beaten"), ()),
-    "wntm": (("win", "time"), ()),
-}
+    walk(obj, "")
+    return sorted(achados.values(), key=lambda c: (c["hora"], c["pista"]))
 
-def pick_fb(f, k):
-    v = pick(f, FIELD_MAP[k])
-    if v is not None or k not in HINTS: return v
-    inc, exc = HINTS[k]
-    for key, val in f.items():
-        kl = str(key).lower()
-        ok = all(x in kl for x in inc) if k == "wntm" else any(x in kl for x in inc)
-        if ok and not any(x in kl for x in exc) and val not in (None, ""):
-            return val
-    return None
 
-def norm_run(f):
-    g = lambda k: pick_fb(f, k)
-    return {
-        "date": parse_date(g("date")), "date_str": str(g("date") or "")[:10],
-        "track": str(g("track") or ""), "dist": to_float(g("dist")),
-        "grade": str(g("grade") or "").strip().upper(), "trap": fin_num(g("trap")),
-        "split": to_float(g("split")), "bends": str(g("bends") or ""),
-        "fin": fin_num(g("fin")), "by": parse_lengths(g("by")),
-        "wntm": to_float(g("wntm")), "gng": g("gng"),
-        "weight": to_float(g("weight")), "remarks": str(g("remarks") or ""),
-        "caltm": to_float(g("caltm")),
-    }
+def achar_resultados(obj):
+    achados = {}
 
-GRADE_RE = re.compile(r"^(A\d{1,2}|T\d?|HP|OR|IT|S\d|D\d|B\d|ON\d)$")
+    def walk(o):
+        if isinstance(o, dict):
+            nome = _get(o, "nome", RES)
+            m = re.search(r"\d+", str(_get(o, "pos", RES) or ""))
+            if isinstance(nome, str) and m and 1 <= int(m.group()) <= 8:
+                t = re.search(r"\d+", str(_get(o, "trap", RES) or ""))
+                achados[nome] = {
+                    "pos": int(m.group()), "trap": int(t.group()) if t else None, "nome": nome,
+                    "sp": str(_get(o, "sp", RES) or ""), "tempo": str(_get(o, "tempo", RES) or ""),
+                    "margem": str(_get(o, "margem", RES) or ""), "coment": str(_get(o, "coment", RES) or ""),
+                }
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
 
-def descobrir_chaves(dogs):
-    vals = {}
-    for dog in dogs:
-        for f in dog.get("forms", []):
-            for k, v in f.items():
-                if isinstance(v, (str, int, float)) and v not in ("", None):
-                    vals.setdefault(k, []).append(v)
-    for k, vs in vals.items():
-        kl = str(k).lower()
-        if any(x in kl for x in ("btn", "beat", "weight", "time", "id")): continue
-        nums = [to_float(v) for v in vs]
-        if all(n is not None and 150 <= n <= 900 for n in nums) and len(set(nums)) <= 6:
-            if k not in FIELD_MAP["dist"]: FIELD_MAP["dist"].insert(0, k)
-            break
-    for k, vs in vals.items():
-        if sum(1 for v in vs if GRADE_RE.match(str(v).strip().upper())) >= 0.8 * len(vs):
-            if k not in FIELD_MAP["grade"]: FIELD_MAP["grade"].insert(0, k)
-            break
+    walk(obj)
+    return sorted(achados.values(), key=lambda x: x["pos"])
 
-def extrair_metadados_json(data, info_card, dogs):
-    info = {"pista": "", "hora": "", "race": "", "classe": "", "post_pick": ""}
-    fontes = [info_card] if isinstance(info_card, dict) else []
-    for src in [data]:
-        if isinstance(src, dict):
-            fontes.append(src)
-            if isinstance(src.get("race"), dict): fontes.append(src["race"])
-            if isinstance(src.get("form"), dict):
-                fontes.append(src["form"])
-                if isinstance(src["form"].get("race"), dict): fontes.append(src["form"]["race"])
-    
-    for src in fontes:
-        pista = pick(src, ["trackName", "track", "meetingName", "courseName"])
-        if pista: info["pista"] = str(pista).strip(); break
-    if not info["pista"] and dogs and dogs[0].get("runs"):
-        info["pista"] = str(dogs[0]["runs"][0].get("track", "Desconhecida")).strip()
-        
-    for src in fontes:
-        for k in ["offTime", "scheduledTime", "displayTime", "time", "raceTime"]:
-            val = src.get(k)
-            if val:
-                m = re.search(r"\b([1-9]|1[0-2]):\d{2}\b", str(val))
-                if m: info["hora"] = m.group(0); break
-        if info["hora"]: break
 
-    for src in fontes:
-        r_num = pick(src, ["raceNum", "raceNumber", "rNum", "raceNumberDesc", "number"])
-        if r_num is not None:
-            info["race"] = str(r_num).replace("Race", "").strip(); break
+def _chaves(js):
+    if not isinstance(js, dict):
+        return type(js).__name__
+    return ", ".join(f"{k}{'(erro)' if isinstance(v, dict) and 'errorCode' in v else ''}" for k, v in js.items())[:90]
 
-    for src in fontes:
-        grade = pick(src, ["raceClass", "grade", "class", "raceClassDesc", "raceGrade"])
-        if grade: info["classe"] = str(grade).strip().upper(); break
-    if not info["classe"] and dogs and dogs[0].get("runs"):
-        info["classe"] = str(dogs[0]["runs"][0].get("grade", "")).strip().upper()
 
-    for src in fontes:
-        pp = pick(src, ["postPick", "post_pick", "tips", "tip"])
-        if pp:
-            m = re.search(r"\b([1-6][-/.][1-6][-/.][1-6])\b", str(pp))
-            if m:
-                info["post_pick"] = m.group(1).strip().replace("/", "-").replace(".", "-"); break
-            elif re.search(r"[1-6]", str(pp)):
-                info["post_pick"] = str(pp).strip().replace("/", "-").replace(".", "-"); break
-    return info
-
-def extrair_dados_racingpost(url):
-    try:
-        if not url.startswith("http"):
-            url = "https://greyhoundbet.racingpost.com/" + url
-
-        race_id_match = re.search(r"race_id=(\d+)", url)
-        r_date_match = re.search(r"r_date=([\d-]+)", url)
-        if not race_id_match or not r_date_match:
-            st.error("Não foi possível extrair o ID da corrida do link.")
-            return None, None, None
-        race_id, r_date_str = race_id_match.group(1), r_date_match.group(1)
-        
-        card_api_url = f"https://greyhoundbet.racingpost.com/card/race.sd?race_id={race_id}&r_date={r_date_str}"
-        info_card = {}
+def tentar(urls, parser):
+    tentativas, achado, primeira = [], [], None
+    for u in urls:
+        curto = u.replace(BASE, "")
+        time.sleep(0.3)
         try:
-            resp_card = requests.get(card_api_url, headers=HEADERS, timeout=10)
-            if resp_card.status_code == 200:
-                info_card = resp_card.json()
-        except Exception: pass
+            r = http().get(u, timeout=8)
+            js = r.json() if r.status_code == 200 else None
+        except Exception as e:
+            tentativas.append({"Endereço": curto, "Status": f"erro: {str(e)[:40]}", "Achados": 0, "Chaves": ""})
+            continue
+        res = parser(js) if js is not None else []
+        tentativas.append({"Endereço": curto, "Status": r.status_code, "Achados": len(res),
+                           "Chaves": _chaves(js) if js is not None else ""})
+        if primeira is None and js is not None and not res:
+            primeira = js
+        if res:
+            achado = res
+            break
+    return achado, tentativas, primeira
 
-        api_url = f"https://greyhoundbet.racingpost.com/card/blocks.sd?race_id={race_id}&r_date={r_date_str}&blocks=form"
-        resp = requests.get(api_url, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
 
-        dogs = data.get("form", {}).get("dogs", [])
-        if not dogs:
-            st.warning("Nenhum dado encontrado para esta corrida.")
-            return None, None, None
-            
-        descobrir_chaves(dogs)
-        out = []
-        for dog in dogs:
-            trap = fin_num(dog.get("trapNum"))
-            runs = [norm_run(f) for f in dog.get("forms", [])]
-            out.append({
-                "name": dog.get("dogName", "Desconhecido"),
-                "trap": trap or 0, "peso_atual": to_float(dog.get("weight")), "runs": runs,
-            })
-            
-        existing_traps = {d["trap"] for d in out}
-        for t in range(1, 7):
-            if t not in existing_traps:
-                out.append({"name": "vacant", "trap": t, "peso_atual": None, "runs": []})
-        out.sort(key=lambda x: x["trap"])
-            
-        meta_info = extrair_metadados_json(data, info_card, out)
-        return out, {"r_date": r_date_str, "raw_first": dogs[0]}, meta_info
+@st.cache_data(ttl=120, show_spinner=False)
+def buscar_lista(data_str, url_custom):
+    urls = ([url_custom.replace("{data}", data_str)] if url_custom.strip() else []) \
+        + [u.format(d=data_str) for u in LISTA_CANDIDATOS]
+    return tentar(urls, achar_corridas)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def buscar_resultado(race_id, data_str):
+    return tentar([u.format(rid=race_id, d=data_str) for u in RESULTADO_CANDIDATOS], achar_resultados)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def buscar_form_raw(race_id, data_str):
+    try:
+        r = http().get(f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks=form", timeout=15)
+        r.raise_for_status()
+        return r.json().get("form", {}).get("dogs", [])
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------- utilidades
+def hora_br(hhmm):
+    h, m = [int(x) for x in hhmm.split(":")]
+    t = datetime(2000, 1, 1, h, m) - timedelta(hours=3)
+    return f"{t.hour % 12 or 12}:{t.minute:02d}"
+
+
+def agora_uk():
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Europe/London"))
+    except Exception:
+        return datetime.utcnow()
+
+
+def escolher(c, data_str, modo):
+    st.session_state["sel"] = dict(c, data=data_str, modo=modo)
+    st.session_state["fechar"] = True
+
+
+def fechar_sidebar():
+    components.html(
+        """<script>
+        try {
+          const d = window.parent.document;
+          if (window.parent.innerWidth < 900) {
+            const b = d.querySelector('[data-testid="stSidebarCollapseButton"] button')
+                   || d.querySelector('[data-testid="stSidebarCollapseButton"]')
+                   || d.querySelector('button[kind="header"]');
+            if (b) b.click();
+          }
+        } catch (e) {}
+        </script>""", height=0)
+
+
+def tabela_html(headers, rows):
+    st.markdown(dib.tbl(headers, rows), unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------- analise
+def preparar(race_id, r_date, c, classe_in, dist_in, pp_in, so_antes=False):
+    cache = st.session_state.setdefault("cache_corridas", {})
+    chave = f"{race_id}|{r_date}"
+    if chave not in cache:
+        res = dib.extrair_dados_racingpost(f"{BASE}/#card/race_id={race_id}&r_date={r_date}")
+        if not res or not res[0]:
+            return None
+        cache[chave] = res
+    dogs, meta, meta_info = cache[chave]
+    if so_antes:   # para comparar com o resultado, usa so corridas ANTERIORES a esta data
+        dogs = [dict(d, runs=[r for r in d["runs"] if (r.get("date_str") or "") < r_date]) for d in dogs]
+    classe = (classe_in or c.get("grade") or (meta_info or {}).get("classe") or "").strip().upper()
+    dist = float(dist_in or c.get("dist") or 0)
+    if not dist:
+        ds_all = [r["dist"] for d in dogs for r in d["runs"] if r["dist"]]
+        dist = float(pd.Series(ds_all).mode().iloc[0]) if ds_all else 480.0
+    pp = pp_in or (meta_info or {}).get("post_pick", "")
+    ctx = {"dist": dist, "today": dib.parse_date(meta["r_date"]), "classe_n": dib.grade_num(classe),
+           "post_pick": [int(x) for x in re.findall(r"\d", pp)],
+           "vazias": [t for t in range(1, 7) if t not in {d["trap"] for d in dogs if d["name"] != "vacant"}]}
+    ds = [dib.analisar_galgo(d, ctx) for d in dogs]
+    rank, _ = dib.finalizar(ds, ctx)
+    ds.sort(key=lambda d: d["trap"])
+    res = dib.montar_avbs(rank, ctx)
+    s1 = res[0] if isinstance(res, tuple) else res
+    return {"ds": ds, "rank": rank, "ctx": ctx, "s1": s1, "classe": classe, "dist": dist, "pp": pp}
+
+
+def titulo_corrida(c, p=None, prefixo=""):
+    t = f"{c['pista']} {c['hora']} (BR {hora_br(c['hora'])})" if c.get("hora") else ""
+    extra = f" · {p['classe']} · {int(p['dist'])}m · POST PICK: {p['pp'] or '-'}" if p else \
+        f" · {c.get('grade', '')} · {c.get('dist', '')}m"
+    return f"### {prefixo}{t} · Race {c.get('num', '')}{extra}"
+
+
+def analisar(c, classe_in, dist_in, pp_in):
+    p = preparar(c["id"], c["data"], c, classe_in, dist_in, pp_in)
+    if not p:
+        return
+    st.markdown(titulo_corrida(c, p))
+    st.markdown("#### Planilha de Projeção")
+    st.markdown(dib.tabela_projecao(p["ds"]), unsafe_allow_html=True)
+    st.markdown("&nbsp; ".join(badge(d["trap"]) for d in p["rank"]), unsafe_allow_html=True)
+    st.markdown(titulo_corrida(c, p))
+    dib.tabela_avb(p["s1"], "1ª Planilha — AVB Principal (Prob ≥ 60%)")
+    if hasattr(dib, "gerar_observacoes"):
+        dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
+
+
+# ---------------------------------------------------------------- aba Form
+def mostrar_form(c):
+    raw = buscar_form_raw(c["id"], c["data"])
+    st.markdown(titulo_corrida(c, None, "📄 Form · "))
+    if not raw:
+        st.warning("Não consegui carregar o Form desta corrida.")
+        return
+    dib.descobrir_chaves(raw)
+    heads = ["Data", "Pista", "Dis", "Trp", "Split", "Bends", "Fin", "By", "Win/Sec", "Remarks",
+             "WnTm", "Gng", "Wght", "SP", "Grade", "CalTm"]
+    for dog in sorted(raw, key=lambda x: int(re.search(r"\d+", str(x.get("trapNum", 9))).group())
+                      if re.search(r"\d+", str(x.get("trapNum", ""))) else 9):
+        trap = re.search(r"\d+", str(dog.get("trapNum", "")))
+        trainer = _get(dog, "trainer", EXTRA) or ""
+        peso = dog.get("weight") or ""
+        st.markdown(f"{badge(trap.group()) if trap else ''} **{dog.get('dogName', '?')}**"
+                    f"{' · Tnr: ' + str(trainer) if trainer else ''}{' · ' + str(peso) + ' kg' if peso else ''}",
+                    unsafe_allow_html=True)
+        rows = []
+        for f in dog.get("forms", []):
+            n = dib.norm_run(f)
+            g = lambda k: dib.pick_fb(f, k)
+            data = n["date"].strftime("%d%b%y") if n["date"] else n["date_str"]
+            rows.append([data, n["track"], f"{int(n['dist'])}m" if n["dist"] else "", n["trap"] or "",
+                         g("split") or "", n["bends"], g("fin") or "", g("by") or "",
+                         _get(f, "winsec", EXTRA) or "", g("remarks") or "", g("wntm") or "",
+                         g("gng") or "", g("weight") or "", _get(f, "sp", EXTRA) or "",
+                         n["grade"], g("caltm") or ""])
+        if rows:
+            tabela_html(heads, rows)
+        else:
+            st.caption("Sem corridas anteriores (galgo vacant ou sem histórico).")
+
+
+# ---------------------------------------------------------------- resultados
+def mostrar_resultado(c, classe_in, dist_in, pp_in):
+    linhas, tent, primeira = buscar_resultado(c["id"], c["data"])
+    st.markdown(titulo_corrida(c, None, "📊 Resultado · "))
+    if not linhas:
+        st.warning("Não consegui ler o resultado desta corrida (ela pode ainda não ter sido disputada). "
+                   "Veja o diagnóstico abaixo.")
+        st.dataframe(pd.DataFrame(tent), use_container_width=True, hide_index=True)
+        if primeira is not None:
+            st.caption("Primeira resposta recebida:")
+            st.json(primeira if len(str(primeira)) < 6000 else {"(cortado)": str(primeira)[:6000]})
+        return
+    tabela_html(["Pos", "Trap", "Galgo", "SP", "Tempo", "Margem", "Comentário"],
+                [[f"{l['pos']}º", badge(l["trap"]), l["nome"], l["sp"], l["tempo"], l["margem"], l["coment"]]
+                 for l in linhas])
+    try:   # comparacao: previsto x real
+        p = preparar(c["id"], c["data"], c, classe_in, dist_in, pp_in, so_antes=True)
+        if not p or not p["rank"]:
+            return
+        prev = {d["trap"]: d["pos"] for d in p["rank"]}
+        real = {l["trap"]: l["pos"] for l in linhas if l["trap"]}
+        st.markdown("#### 🔍 Previsto × Real (projeção só com corridas anteriores)")
+        tabela_html(["Real", "Galgo", "Previsto"],
+                    [[f"{l['pos']}º", f"{badge(l['trap'])} {l['nome']}", f"{prev.get(l['trap'], '-')}º"]
+                     for l in linhas])
+        fav, venc = p["rank"][0], linhas[0]
+        top3_prev = {d["trap"] for d in p["rank"][:3]}
+        top3_real = {l["trap"] for l in linhas[:3] if l["trap"]}
+        st.markdown(f"- **Vencedor:** previsto {badge(fav['trap'])} {fav['name']} → "
+                    f"{'✅ acertou' if fav['trap'] == venc['trap'] else '❌ venceu ' + venc['nome']}",
+                    unsafe_allow_html=True)
+        st.markdown(f"- **Top 3:** {len(top3_prev & top3_real)} de 3 galgos previstos entre os 3 primeiros.")
+        if p["s1"]:
+            st.markdown("**AVBs (≥ 60%):**")
+            for (V, D, prob, star) in p["s1"]:
+                pv, pd_ = real.get(V["trap"]), real.get(D["trap"])
+                ok = ("✅" if pv < pd_ else "❌") if (pv and pd_) else ("✅" if pv else ("❌" if pd_ else "—"))
+                st.markdown(f"- {ok} {badge(V['trap'])} {V['name']} ({pv or '-'}º) vence "
+                            f"{badge(D['trap'])} {D['name']} ({pd_ or '-'}º) · {prob:.1f}%", unsafe_allow_html=True)
+        else:
+            st.markdown("- Nenhum AVB ≥ 60% nesta corrida.")
     except Exception as e:
-        st.error(f"Erro ao extrair dados: {e}")
-        return None, None, None
+        st.caption(f"Não foi possível comparar com a projeção: {e}")
 
-def oficial(r, ctx):
-    return (grade_num(r["grade"]) is not None and r["dist"] is not None
-            and abs(r["dist"] - ctx["dist"]) < 1 and r["caltm"] is not None and r["caltm"] > 0)
 
-def analisar_galgo(dog, ctx):
-    if dog.get("name") == "vacant":
-        return {"name": "vacant", "trap": dog["trap"], "runs": [], "val": [], "nd": True,
-                "conf": 0.0, "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False}
-                
-    runs = sorted(dog["runs"], key=lambda r: r["date"] or datetime.min, reverse=True)[:CFG["N_RUNS"]]
-    R = [r for r in runs if oficial(r, ctx)]
-    
-    d = {"name": dog["name"], "trap": dog["trap"], "runs": runs, "val": R, "nd": not R,
-         "conf": min(100.0, len(R) * 20.0), "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False}
-    
-    ultima_any = runs[0] if runs else None
-    d["dias"] = (ctx["today"] - ultima_any["date"]).days if ultima_any and ultima_any["date"] else 0
-    
-    d["forma_trial"] = False
-    if ultima_any and re.match(r"^T", ultima_any["grade"] or ""):
-        count_t = sum(1 for r in runs if re.match(r"^T", r["grade"] or ""))
-        if count_t >= 2: d["forma_trial"] = True
-    if not R: return d
-
-    today_n = ctx.get("classe_n")
-    last_n = grade_num(R[0]["grade"])
-    base = 16.0 - (today_n if today_n else last_n)
-    mod = 0.0
-    if today_n and last_n:
-        mod = CFG["CAT_BONUS"] if today_n > last_n else (-CFG["CAT_BONUS"] if today_n < last_n else 0.0)
-    d["cat_mod"], d["cat"] = mod, base + mod
-
-    d["peso"] = dog.get("peso_atual") or R[0]["weight"]
-    d["split"], d["time"] = R[0]["split"], R[0]["caltm"]
-    
-    d["msplit"] = float(np.mean([r["split"] for r in R if r["split"] is not None])) if any(r["split"] for r in R) else None
-    d["mtime"] = float(np.mean([r["caltm"] for r in R if r["caltm"] is not None])) if any(r["caltm"] for r in R) else None
-    d["ritmo"] = d["mtime"] - d["msplit"] if d["mtime"] and d["msplit"] else None
-    
-    adj_times = [r["caltm"] - (traffic_penalty(r["remarks"]) + ((r["dist"] - 300) / 1000.0 if traffic_penalty(r["remarks"]) > 0 else 0.0)) for r in R]
-    d["tadj"] = float(np.mean(adj_times)) if adj_times else None
-    
-    cal = [r["caltm"] for r in R]
-    d["sd"] = float(np.std(cal)) if len(cal) > 1 else 0.0
-    d["pico"] = min(cal) if cal else None
-
-    recs = [(bends_digits(r["bends"])[0] - r["fin"]) / CFG["N_CORREDORES"] * 100.0 for r in R if bends_digits(r["bends"]) and r["fin"] and not not_free(r["remarks"])]
-    d["rec"] = float(np.mean(recs)) if recs else 0.0
-    d["rec_txt"] = f"{d['rec']:+.2f}% ({'Ganhou' if d['rec'] > 0.005 else ('Perdeu' if d['rec'] < -0.005 else 'Manteve')})"
-
-    n_traf = sum(count_traf(r["remarks"]) for r in R)
-    d["perfil"] = "Limpo" if n_traf <= 1 else ("Irregular" if n_traf == 2 else "Trombador")
-    
-    d["early_cnt"] = sum(1 for r in R if any(re.match(r"^(ep|ald|snld|ld)", t) for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
-    d["saw_cnt"] = sum(1 for r in R if any(t.startswith("saw") or t.startswith("vsaw") for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
-    d["fbt_cnt"] = sum(1 for r in R if first_bend_traffic(r["remarks"]))
-    
-    d["remarks_translated"] = []
-    for r in R:
-        for token in re.split(r"[,\s]+", str(r["remarks"]).lower()):
-            if token in DICIONARIO_REMARKS:
-                d["remarks_translated"].append(DICIONARIO_REMARKS[token])
-                
-    return d
-
-def finalizar(ds, ctx):
-    ok = [d for d in ds if not d["nd"]]
-    vac = [t for t in range(1, 7) if t not in {d["trap"] for d in ds if d["name"] != "vacant"}]
-    
-    ms_rank = sorted([d for d in ok if d["msplit"]], key=lambda x: x["msplit"])
-    top3_ms = {d["name"] for d in ms_rank[:3]}
-    ctx["top3_ms"] = top3_ms
-    
-    ritmo_rank = sorted([d for d in ok if d["ritmo"]], key=lambda x: x["ritmo"])
-    top3_ritmo = {d["name"] for d in ritmo_rank[:3]}
-    ctx["top3_ritmo"] = top3_ritmo
-
-    def pts_prop(key, maxp, d, invert=True):
-        vals = [x[key] for x in ok if x.get(key) is not None]
-        if d.get(key) is None or not vals: return 0.0
-        lo, hi = min(vals), max(vals)
-        if hi == lo: return float(maxp)
-        return maxp * (hi - d[key]) / (hi - lo) if invert else maxp * (d[key] - lo) / (hi - lo)
-
-    for d in ok:
-        pts_cat, pts_perfil = d["cat"] * 2, CFG["PERFIL_PTS"][d["perfil"]]
-        vel = (pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) + 
-               pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) + 
-               pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d) + 
-               pts_prop("ritmo", CFG["VEL_PTS"]["ritmo"], d))
-        
-        f = []
-        if d["early_cnt"] > 0 and d["perfil"] == "Limpo": 
-            f.append(("Ritmo Acelerado", d["early_cnt"] * 1.0))
-        if d["saw_cnt"] > 0: 
-            f.append(("Largada Lenta", d["saw_cnt"] * -1.0))
-        if d["fbt_cnt"] > 0: 
-            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -1.0))
-        if any(abs(d["trap"] - v) == 1 for v in vac): 
-            f.append(("Trap Vazia", 1.0))
-        if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
-            f.append(("Tráfego Severo", -2.0))
-            
-        d["fatores"] = f
-        d["overall"] = vel + pts_cat + pts_perfil + pts_prop("sd", CFG["CONSIST_PTS"], d, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_prop("rec", CFG["RECUP_PTS"], d, False) + sum(v for _, v in f)
-
-    ok.sort(key=lambda x: -x["overall"])
-    for i, d in enumerate(ok, 1):
-        d["pos"] = i
-        d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"] or d["forma_trial"]
-        d["alvo"] = (d["name"] not in top3_ms) and (d["rec"] <= 0)
-        d["elegivel"] = not d["bloqueado"]
-    return ok, top3_ms
-
-# =====================================================================
-# NOVO CÁLCULO DE AVB (DIB 3.3 - DUELO DIRETO + CONFLITO DE PACE)
-# =====================================================================
-def calc_prob(V, D, rank, ctx):
-    prob = 50.0
-    if V.get("tadj") is None or D.get("tadj") is None: return 50.0
-
-    # 1. PILAR VELOCIDADE
-    diff_tadj = D["tadj"] - V["tadj"]
-    diff_mtime = D["mtime"] - V["mtime"] if D.get("mtime") is not None and V.get("mtime") is not None else 0
-    pts_vel = ((diff_tadj + diff_mtime) / 0.10) * 4.0
-    pts_vel = max(-15.0, min(15.0, pts_vel))
-    prob += pts_vel
-    
-    # 2. PILAR LARGADA
-    if V.get("msplit") and D.get("msplit"):
-        diff_split = D["msplit"] - V["msplit"]
-        pts_split = (diff_split / 0.05) * 3.0
-        pts_split = max(-10.0, min(10.0, pts_split))
-        prob += pts_split
-        
-    # 3. PILAR RITMO FINAL
-    if V.get("ritmo") and D.get("ritmo"):
-        diff_ritmo = D["ritmo"] - V["ritmo"]
-        pts_ritmo = (diff_ritmo / 0.05) * 2.0
-        pts_ritmo = max(-6.0, min(6.0, pts_ritmo))
-        prob += pts_ritmo
-        
-    # 4. PILAR SEGURANÇA E RECUPERAÇÃO
-    pts_seguranca = 0.0
-    if V.get("rec") is not None and D.get("rec") is not None:
-        diff_rec = V["rec"] - D["rec"]
-        pts_seguranca += (diff_rec * 0.1)
-        pts_seguranca = max(-5.0, min(5.0, pts_seguranca))
-        
-    val_perfil = {"Limpo": 0, "Irregular": 1, "Trombador": 2}
-    diff_perfil = val_perfil.get(D["perfil"], 1) - val_perfil.get(V["perfil"], 1)
-    pts_seguranca += (diff_perfil * 2.5)
-    prob += pts_seguranca
-
-    # 5. CONFLITO DE PACE (NOVA REGRA)
-    top3_ms = ctx.get("top3_ms", set())
-    top3_ritmo = ctx.get("top3_ritmo", set())
-    epfs = [d for d in rank if d["name"] in top3_ms] # Cães com largada rápida no páreo
-
-    if V["name"] in top3_ms:
-        if D["name"] in top3_ms:
-            prob -= 3.0 # Ambos são rápidos, vão brigar diretamente
-        else:
-            prob -= 5.0 # V vai ter que brigar com outro cão da prova pela ponta
-    elif D["name"] in top3_ms:
-        prob += 5.0 # D vai se atrapalhar brigando pela ponta
-
-    if V["name"] in top3_ritmo and V["name"] not in top3_ms:
-        if len(epfs) >= 2:
-            prob += 5.0 # V é um "Closer" e há 2+ cães rápidos brigando na frente
-
-    # Ajustes Táticos
-    if V["trap"] in ctx["post_pick"]: prob += 2.0
-    if V["trap"] in [1,2,3] and D["trap"] in [4,5,6]: prob += 2.0
-    if any(abs(V["trap"] - v) == 1 for v in ctx["vazias"]): prob += 1.5
-    if any(abs(D["trap"] - v) == 1 for v in ctx["vazias"]): prob -= 1.5
-
-    return max(25.0, min(75.0, prob))
-
-def montar_avbs(rank, ctx):
-    top4 = [d for d in rank if d.get("name") != "vacant"][:4]
-    if len(top4) < 2: return [], [], []
-    
-    s1, s2 = [], []
-    
-    for i in range(len(top4)):
-        for j in range(i+1, len(top4)):
-            A, B = top4[i], top4[j]
-            prob_A = calc_prob(A, B, rank, ctx)
-            
-            if prob_A >= 50.0:
-                V, D, prob = A, B, prob_A
-            else:
-                V, D, prob = B, A, 100.0 - prob_A
-                
-            if prob >= 60.0:
-                s1.append((V, D, prob, True))
-            else:
-                s2.append((V, D, prob, True))
-                
-    return sorted(s1, key=lambda x: -x[2]), sorted(s2, key=lambda x: -x[2]), []
-
-def get_rank_html(val, rank, max_rank):
-    if val is None or rank is None: return "-"
-    sup = {1: "¹", 2: "²", 3: "³", 4: "⁴", 5: "⁵", 6: "⁶"}.get(rank, "")
-    color = "color:#00ff00;font-weight:bold" if rank == 1 else ("color:#ff4b4b" if rank == max_rank and max_rank > 1 else "")
-    return f"<span style='{color}'>{val:.2f}{sup}</span>"
-
-def tbl(headers, rows):
-    css = """<style>.dib-container{overflow-x:auto;width:100%;margin-bottom:20px}.dib-table{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto}.dib-table th,.dib-table td{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}.dib-table th{background-color:rgba(128,128,128,0.1);font-weight:600}.dib-table td.sep{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}.dib-table td.sep-avb{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}</style>"""
-    out = []
-    for row in rows:
-        if len(row) == 1 and "<hr" in str(row[0]): out.append(f"<tr><td class='sep' colspan='{len(headers)}'></td></tr>"); continue
-        if len(row) == 1 and "sep-avb" in str(row[0]): out.append(f"<tr><td class='sep-avb' colspan='{len(headers)}'></td></tr>"); continue
-        cells = [c if isinstance(c, str) and c.strip().startswith("<td") else f"<td>{c}</td>" for c in row]
-        out.append("<tr>" + "".join(cells) + "</tr>")
-    return f"{css}<div class='dib-container'><table class='dib-table'><thead><tr>{''.join(f'<th>{x}</th>' for x in headers)}</tr></thead><tbody>{''.join(out)}</tbody></table></div>"
-
-def nome_marcado(d):
-    n = html.escape(d["name"])
-    if d.get("bloqueado", False): n += " 🚫"
-    if d.get("alvo", False): n = "🎯 " + n
-    return n
-
-def trap_label(d): return f"{TRAP_EMOJI.get(d['trap'], '')} {d['trap']}"
-
-def tabela_projecao(ds):
-    cols = ["split", "time", "tadj", "msplit", "mtime", "ritmo", "rec"]
-    rk = {c: [None]*len(ds) for c in cols}
-    max_rk = {}
-    for c in cols:
-        vals = [(i, d[c]) for i, d in enumerate(ds) if d.get(c) is not None]
-        max_rk[c] = len(vals)
-        vals.sort(key=lambda x: x[1], reverse=(c == "rec"))
-        for rank, (i, _) in enumerate(vals, 1): rk[c][i] = rank
-
-    rows = []
-    for i, d in enumerate(ds):
-        if d["nd"]:
-            rows.append([trap_label(d), nome_marcado(d)] + ["-"] * 15); continue
-        fat = "<br>".join(f"{k} ({v:+.1f})" for k, v in d["fatores"]) or "-"
-        if d.get("remarks_translated"):
-            rem_txt = ", ".join(set(d["remarks_translated"]))
-            fat += f"<br><small style='color:#aaa'>{rem_txt}</small>"
-            
-        perfil_e = {"Limpo": "✅", "Irregular": "⚠️", "Trombador": "🔴"}[d["perfil"]]
-        dias_txt = f"{d['dias']} ⚠️" if d['dias'] > 21 else str(d['dias'])
-        
-        rows.append([
-            trap_label(d), nome_marcado(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}",
-            f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", fat, f"{perfil_e} {d['perfil']}",
-            "-".join((r["grade"] or "?") for r in d["runs"]), f"{d['peso']:.1f}", dias_txt,
-            get_rank_html(d["split"], rk["split"][i], max_rk["split"]), get_rank_html(d["time"], rk["time"][i], max_rk["time"]),
-            get_rank_html(d["tadj"], rk["tadj"][i], max_rk["tadj"]), get_rank_html(d["msplit"], rk["msplit"][i], max_rk["msplit"]),
-            get_rank_html(d["mtime"], rk["mtime"][i], max_rk["mtime"]), get_rank_html(d["ritmo"], rk["ritmo"][i], max_rk["ritmo"]),
-            get_rank_html(d["rec"], rk["rec"][i], max_rk["rec"]) + f"<br><small>{d['rec_txt'].split()[1]}</small>", f"{d['conf']:.0f}%"
-        ])
-    return tbl(["Trap", "Galgo", "Overall", "Cat", "Fatores", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Time Ajust.", "Méd. Split", "Méd. Time", "Ritmo", "Recup. Média", "Conf."], rows)
-
-def tabela_avb(lista, titulo):
-    st.markdown(f"#### {titulo}")
-    if not lista: st.info("Nenhum AVB nesta categoria."); return
-
-    def fmt_pair(val_v, val_d, is_time=False, precision=2, is_pct=False):
-        if val_v is None or val_d is None: return "-", "-"
-        p, suffix = f".{precision}f", "%" if is_pct else ""
-        v_str, d_str = f"{val_v:{p}}{suffix}", f"{val_d:{p}}{suffix}"
-        diff = val_v - val_d
-        if val_v <= val_d: v_str += f" ({diff:{p}}{suffix})"
-        else: d_str += f" (+{abs(diff):{p}}{suffix})"
-        if is_time:
-            if val_v < val_d: v_str, d_str = f"<span style='color:#00ff00;font-weight:bold'>{v_str}</span>", f"<span style='color:#ff4b4b'>{d_str}</span>"
-            elif val_v > val_d: v_str, d_str = f"<span style='color:#ff4b4b'>{v_str}</span>", f"<span style='color:#00ff00;font-weight:bold'>{d_str}</span>"
-        else:
-            if val_v > val_d: v_str, d_str = f"<span style='color:#00ff00;font-weight:bold'>{v_str}</span>", f"<span style='color:#ff4b4b'>{d_str}</span>"
-            elif val_v < val_d: v_str, d_str = f"<span style='color:#ff4b4b'>{v_str}</span>", f"<span style='color:#00ff00;font-weight:bold'>{d_str}</span>"
-        return v_str, d_str
-
-    rows = []
-    for i, (V, D, prob, star) in enumerate(lista):
-        if i > 0: rows.append(["<hr>"])
-        
-        ov_v, ov_d = fmt_pair(V['overall'], D['overall'], False, 1)
-        cat_v, cat_d = fmt_pair(V['cat'], D['cat'], False, 1)
-        sp_v, sp_d = fmt_pair(V['split'], D['split'], True, 2)
-        t_v, t_d = fmt_pair(V['time'], D['time'], True, 2)
-        ta_v, ta_d = fmt_pair(V['tadj'], D['tadj'], True, 2)
-        ms_v, ms_d = fmt_pair(V['msplit'], D['msplit'], True, 2)
-        mt_v, mt_d = fmt_pair(V['mtime'], D['mtime'], True, 2)
-        r_v, r_d = fmt_pair(V['ritmo'], D['ritmo'], True, 2)
-        rec_v, rec_d = fmt_pair(V['rec'], D['rec'], False, 1, True)
-
-        prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#00ff00'>{prob:.1f}%</span></td>"
-        
-        rows.append([
-            f"{'⭐ ' if star else ''}{trap_label(V)} - {html.escape(V['name'])}", 
-            ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]),
-            f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ta_v, ms_v, mt_v, r_v, rec_v, f"{V['conf']:.0f}%", 
-            prob_cell
-        ])
-        
-        rows.append([
-            f"{trap_label(D)} - {html.escape(D['name'])}", 
-            ov_d, cat_d, D['perfil'], "-".join((r["grade"] or "?") for r in D["runs"]),
-            f"{D['peso']:.1f}", f"{D['dias']}", sp_d, t_d, ta_d, ms_d, mt_d, r_d, rec_d, f"{D['conf']:.0f}%"
-        ])
-        
-    heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Time Ajust.", "Méd. Split", "Méd. Time", "Ritmo", "Recup.", "Conf.", "Probabilidade"]
-    st.markdown(tbl(heads, rows), unsafe_allow_html=True)
-
+# ---------------------------------------------------------------- tela
 def main():
-    st.set_page_config(page_title="DIB GREYHOUND 3.3", layout="wide")
-    st.title("🐾 DIB GREYHOUND 3.3")
-
-    url_alvo = st.text_input("Link", placeholder="Cole o link da corrida aqui...", label_visibility="collapsed")
+    st.title("🐾 DIB GREYHOUND")
 
     with st.sidebar:
-        st.header("Ajustes da Corrida")
-        classe = st.text_input("Classe (ex: A4)", value="A4")
-        dist_in = st.number_input("Distância (m) - 0 = Auto", value=0, step=10)
-        pp_in = st.text_input("Post Pick (ex: 1-2-3)", value="")
+        modo_txt = st.radio("Ver", ["🏁 Corridas", "📊 Resultados"], horizontal=True, label_visibility="collapsed")
+        modo = "res" if "Resultados" in modo_txt else "ana"
+        data = st.date_input("Data", value=agora_uk().date())
+        data_str = data.strftime("%Y-%m-%d")
+        ocultar = st.checkbox("Ocultar corridas já realizadas", value=True) if modo == "ana" else False
+        with st.expander("⚙️ Ajustes (opcional)"):
+            classe_in = st.text_input("Classe (vazio = da lista)", value="")
+            dist_in = st.number_input("Distância (m) - 0 = da lista", value=0, step=10)
+            pp_in = st.text_input("Post Pick (ex: 1-2-3)", value="")
+            url_custom = st.text_input("Endereço da lista (use {data})", value="")
+        corridas, tentativas, primeira = buscar_lista(data_str, url_custom)
+        memoria = st.session_state.setdefault("lista_ok", {})
+        if corridas:
+            memoria[data_str] = corridas
+        elif data_str in memoria:
+            corridas = memoria[data_str]
+            st.caption("⚠️ Usando a última lista carregada (o site não respondeu agora).")
+        if not corridas and any(t.get("Status") == 403 for t in tentativas):
+            st.error("O site recusou o acesso (403). Costuma ser bloqueio temporário por muitas consultas "
+                     "ou data ainda indisponível. Espere alguns minutos, escolha o dia anterior ou toque em Tentar de novo.")
+        if not corridas and st.button("🔄 Tentar de novo"):
+            buscar_lista.clear()
+            st.rerun()
 
-    if st.button("Analisar Corrida", type="primary") and url_alvo:
-        dogs, meta, meta_info = extrair_dados_racingpost(url_alvo)
-        if dogs:
-            dist = float(dist_in) if dist_in > 0 else (float(pd.Series([r["dist"] for d in dogs for r in d["runs"] if r["dist"]]).mode().iloc[0]) if any(r["dist"] for d in dogs for r in d["runs"]) else 480.0)
-            ctx = {"dist": dist, "today": parse_date(meta["r_date"]), "classe_n": grade_num(classe),
-                   "post_pick": [int(x) for x in re.findall(r"\d", pp_in)],
-                   "vazias": [t for t in range(1, 7) if t not in {d["trap"] for d in dogs if d["name"] != "vacant"}]}
-            
-            ds = [analisar_galgo(d, ctx) for d in dogs]
-            rank, top3_ms = finalizar(ds, ctx)
-            ds.sort(key=lambda d: d["trap"])
-            
-            st.markdown(f"### {classe} · {int(dist)}m · POST PICK: {pp_in or '-'}")
-            st.markdown("#### Planilha de Projeção")
-            st.markdown(tabela_projecao(ds), unsafe_allow_html=True)
-            
-            st.markdown("**Classificação:** " + " > ".join(f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {TRAP_EMOJI[d['trap']]} {d['trap']}" for d in rank))
-            
-            s1, s2, s3 = montar_avbs(rank, ctx)
-            tabela_avb(s1, "1ª Planilha — AVB Principal (Prob ≥ 60%)")
-            tabela_avb(s2, "2ª Planilha — AVB Secundário (Prob < 60%)")
+        sel = st.session_state.get("sel")
+        if corridas:
+            pistas = sorted({c["pista"] for c in corridas})
+            filtro = st.multiselect("Pistas (vazio = todas)", pistas)
+            lista = [c for c in corridas if not filtro or c["pista"] in filtro]
+            hoje = data == agora_uk().date()
+            limite = agora_uk().strftime("%H:%M")
+            if modo == "ana" and ocultar and hoje:
+                lista = [c for c in lista if c["hora"] >= limite]
+            if modo == "res":   # resultados: so corridas que ja foram disputadas, mais recentes primeiro
+                if hoje:
+                    lista = [c for c in lista if c["hora"] < limite]
+                lista = sorted(lista, key=lambda c: (c["hora"], c["pista"]), reverse=True)
+            st.caption(f"{len(lista)} corridas · horário da pista (Brasil = −3h)")
+            for c in lista:
+                ativo = sel and sel.get("id") == c["id"] and sel.get("modo") == modo
+                rotulo = f"{'▶ ' if ativo else ''}{c['hora']} · {c['pista']} R{c['num'] or '?'} · " \
+                         f"{c['grade'] or '?'} · {c['dist'] or '?'}m"
+                st.button(rotulo, key=f"{modo}_{c['id']}", use_container_width=True,
+                          on_click=escolher, args=(c, data_str, modo))
+        else:
+            st.warning("Não consegui carregar a lista. Veja o diagnóstico abaixo.")
 
-if __name__ == "__main__":
-    main()
+        with st.expander("🔎 Diagnóstico da lista"):
+            st.dataframe(pd.DataFrame(tentativas), use_container_width=True, hide_index=True)
+            if not corridas and primeira is not None:
+                st.caption("Resposta recebida:")
+                st.json(primeira if len(str(primeira)) < 6000 else {"(cortado)": str(primeira)[:6000]})
+        with st.expander("🔗 Usar link manual"):
+            link = st.text_input("Link da corrida", placeholder="Cole o link aqui...")
+            if st.button("Analisar link") and link:
+                rid = re.search(r"race_id=(\d+)", link)
+                rd = re.search(r"r_date=([\d-]+)", link)
+                if rid and rd:
+                    escolher({"id": rid.group(1), "hora": "", "pista": "", "num": "", "grade": "", "dist": 0},
+                             rd.group(1), "ana")
+                    st.rerun()
+                else:
+                    st.error("Link inválido: precisa ter race_id e r_date.")
+
+    sel = st.session_state.get("sel")
+    if sel:
+        if sel.get("modo") == "res":
+            aba1, aba2 = st.tabs(["📊 Resultado", "📄 Form"])
+            with aba1:
+                mostrar_resultado(sel, classe_in, dist_in, pp_in)
+        else:
+            aba1, aba2 = st.tabs(["📋 Análise", "📄 Form"])
+            with aba1:
+                analisar(sel, classe_in, dist_in, pp_in)
+        with aba2:
+            mostrar_form(sel)
+        if st.session_state.pop("fechar", False):
+            fechar_sidebar()
+
+
+main()
