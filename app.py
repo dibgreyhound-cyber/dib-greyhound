@@ -53,37 +53,39 @@ EXTRA = {"winsec": ["winnerOrSecond", "winSec", "wnSec", "winnerName", "secondNa
          "trainer": ["trainerName", "trainer", "trainer_name"]}
 
 
-# ---------------------------------------------------------------- conexao com o site
-# REMOVIDO O @st.cache_resource DAQUI PARA EVITAR ERRO DE MEMÓRIA
-class _Http:
-    def __init__(self):
-        self.s = requests.Session()
-        self.s.headers.update({
-            "User-Agent": dib.HEADERS.get("User-Agent", "Mozilla/5.0"),
-            "Accept": "application/json, text/plain, */*", "Accept-Language": "en-GB,en;q=0.9",
-            "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/", "Origin": BASE})
-        self.pronto = False
+# ---------------------------------------------------------------- conexao com o site (sessao cacheada + metodos)
+@st.cache_resource
+def get_http():
+    class _Http:
+        def __init__(self):
+            self.s = requests.Session()
+            self.s.headers.update({
+                "User-Agent": dib.HEADERS.get("User-Agent", "Mozilla/5.0"),
+                "Accept": "application/json, text/plain, */*", "Accept-Language": "en-GB,en;q=0.9",
+                "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/", "Origin": BASE})
+            self.pronto = False
 
-    def get(self, url, headers=None, timeout=15):
-        if not self.pronto:
-            try: self.s.get(BASE + "/", timeout=8)
-            except Exception: pass
-            self.pronto = True
-        r = self.s.get(url, timeout=timeout)
-        if r.status_code in (403, 429):
-            time.sleep(1.5)
+        def get(self, url, headers=None, timeout=15):
+            if not self.pronto:
+                try: self.s.get(BASE + "/", timeout=8)
+                except Exception: pass
+                self.pronto = True
             r = self.s.get(url, timeout=timeout)
-        return r
+            if r.status_code in (403, 429):
+                time.sleep(2.0)
+                r = self.s.get(url, timeout=timeout)
+            return r
 
-    def get_resultado(self, url, timeout=10):
-        try: self.s.get(BASE + "/results", timeout=5)
-        except Exception: pass
-        return self.s.get(url, timeout=timeout)
+        def get_resultado(self, url, timeout=10):
+            try: self.s.get(BASE + "/results", timeout=5)
+            except Exception: pass
+            time.sleep(0.5)
+            return self.s.get(url, timeout=timeout)
+            
+    return _Http()
 
 
-# Instancia a classe globalmente para ser usada nas funções
-http = _Http()
-dib.requests = http
+dib.requests = get_http()
 
 
 # ---------------------------------------------------------------- numeros dos galgos
@@ -214,12 +216,12 @@ def tentar(urls, parser, is_resultado=False):
     tentativas, achado, primeira = [], [], None
     for u in urls:
         curto = u.replace(BASE, "")
-        time.sleep(0.2)
+        time.sleep(0.4)
         try:
             if is_resultado:
-                r = http.get_resultado(u, timeout=8)
+                r = get_http().get_resultado(u, timeout=8)
             else:
-                r = http.get(u, timeout=8)
+                r = get_http().get(u, timeout=8)
             js = r.json() if r.status_code == 200 else None
         except Exception as e:
             tentativas.append({"Endereço": curto, "Status": f"erro: {str(e)[:40]}", "Achados": 0, "Chaves": ""})
@@ -250,7 +252,7 @@ def buscar_resultado(race_id, data_str):
 @st.cache_data(ttl=300, show_spinner=False)
 def buscar_form_raw(race_id, data_str):
     try:
-        r = http.get(f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks=form", timeout=15)
+        r = get_http().get(f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks=form", timeout=15)
         r.raise_for_status()
         return r.json().get("form", {}).get("dogs", [])
     except Exception:
