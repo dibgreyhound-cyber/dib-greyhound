@@ -24,11 +24,10 @@ LISTA_CANDIDATOS = [
     BASE + "/meeting/list.sd?r_date={d}",
 ]
 RESULTADO_CANDIDATOS = (
-    [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult", "header%2Cresult%2Ccard", "card%2Cresult", "result%2Cheader")]
-    + [BASE + "/result/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult")]
-    + [BASE + "/card/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "card%2Cresult", "header%2Cresult")]
+    [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult")]
+    + [BASE + "/result/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results")]
+    + [BASE + "/card/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results")]
     + [BASE + "/results/race.sd?race_id={rid}&r_date={d}"]
-    + [BASE + "/result/race.sd?race_id={rid}&r_date={d}"]
 )
 KEYS = {
     "id": ["raceId", "race_id", "rid"],
@@ -52,42 +51,34 @@ EXTRA = {"winsec": ["winnerOrSecond", "winSec", "wnSec", "winnerName", "secondNa
          "trainer": ["trainerName", "trainer", "trainer_name"]}
 
 
-# ---------------------------------------------------------------- conexao com o site (sessao cacheada + metodos)
-@st.cache_resource
-def get_http():
-    class _Http:
-        def __init__(self):
-            self.s = requests.Session()
-            self.s.headers.update({
-                "User-Agent": dib.HEADERS.get("User-Agent", "Mozilla/5.0"),
-                "Accept": "application/json, text/plain, */*", "Accept-Language": "en-GB,en;q=0.9",
-                "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/", "Origin": BASE})
-            self.pronto = False
+# ---------------------------------------------------------------- conexao com o site
+class _Http:
+    def __init__(self):
+        self.s = requests.Session()
+        self.s.headers.update({
+            "User-Agent": dib.HEADERS.get("User-Agent", "Mozilla/5.0"),
+            "Accept": "application/json, text/plain, */*", "Accept-Language": "en-GB,en;q=0.9",
+            "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/", "Origin": BASE})
+        self.pronto = False
 
-        def get(self, url, headers=None, timeout=15):
-            if not self.pronto:
-                try: self.s.get(BASE + "/", timeout=8)
-                except Exception: pass
-                self.pronto = True
-            r = self.s.get(url, timeout=timeout)
-            # Se bloquear ou der erro no servidor (403, 429, 500, 580), espera 2s e tenta mais 2 vezes
-            tentativas = 0
-            while r.status_code in (403, 429, 500, 502, 503, 580) and tentativas < 2:
-                time.sleep(2.0)
-                r = self.s.get(url, timeout=timeout)
-                tentativas += 1
-            return r
-
-        def get_resultado(self, url, timeout=10):
-            try: self.s.get(BASE + "/results", timeout=5)
+    def get(self, url, headers=None, timeout=15):
+        if not self.pronto:
+            try: self.s.get(BASE + "/", timeout=8)
             except Exception: pass
-            time.sleep(0.5)
-            return self.get(url, timeout=timeout)
-            
+            self.pronto = True
+        r = self.s.get(url, timeout=timeout)
+        if r.status_code in (403, 429):
+            time.sleep(1.5)
+            r = self.s.get(url, timeout=timeout)
+        return r
+
+
+@st.cache_resource
+def http():
     return _Http()
 
 
-dib.requests = get_http()
+dib.requests = http()
 
 
 # ---------------------------------------------------------------- numeros dos galgos
@@ -123,12 +114,29 @@ dib.trap_label = lambda d: badge(d["trap"])
 
 # ---------------------------------------------------------------- botao copiar (JavaScript)
 def botao_copiar(texto):
+    """Cria um botão HTML nativo que copia o texto usando JavaScript."""
     texto_js = json.dumps(texto)
+    
     html = f"""
-    <html><head><style>
-    .copy-btn {{background-color: #ff4b4b;color: white;border: none;padding: 12px 20px;border-radius: 8px;cursor: pointer;font-size: 16px;font-weight: bold;width: 100%;transition: 0.2s;}}
-    .copy-btn:active {{background-color: #cc0000;}}
-    </style></head><body>
+    <html>
+    <head>
+    <style>
+    .copy-btn {{
+        background-color: #ff4b4b;
+        color: white;
+        border: none;
+        padding: 12px 20px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 16px;
+        font-weight: bold;
+        width: 100%;
+        transition: 0.2s;
+    }}
+    .copy-btn:active {{ background-color: #cc0000; }}
+    </style>
+    </head>
+    <body>
     <button class="copy-btn" id="copyBtn">📋 Copiar Análise para o Chat</button>
     <script>
     const textToCopy = {texto_js};
@@ -146,7 +154,9 @@ def botao_copiar(texto):
             document.getElementById("copyBtn").style.backgroundColor = "#ff9800";
         }}
     }});
-    </script></body></html>
+    </script>
+    </body>
+    </html>
     """
     components.html(html, height=65)
 
@@ -191,6 +201,7 @@ def achar_corridas(obj):
 
 def achar_resultados(obj):
     achados = {}
+
     def walk(o):
         if isinstance(o, dict):
             nome = _get(o, "nome", RES)
@@ -205,6 +216,7 @@ def achar_resultados(obj):
             for v in o.values(): walk(v)
         elif isinstance(o, list):
             for v in o: walk(v)
+
     walk(obj)
     return sorted(achados.values(), key=lambda x: x["pos"])
 
@@ -214,32 +226,17 @@ def _chaves(js):
     return ", ".join(f"{k}{'(erro)' if isinstance(v, dict) and 'errorCode' in v else ''}" for k, v in js.items())[:90]
 
 
-def tentar(urls, parser, is_resultado=False):
+def tentar(urls, parser):
     tentativas, achado, primeira = [], [], None
     for u in urls:
         curto = u.replace(BASE, "")
         time.sleep(0.3)
         try:
-            if is_resultado:
-                r = get_http().get_resultado(u, timeout=10)
-            else:
-                r = get_http().get(u, timeout=10)
-            
-            # Tratamento seguro para não quebrar se o site devolver HTML em vez de JSON
-            if r.status_code == 200 and r.text.strip():
-                try:
-                    js = r.json()
-                except json.JSONDecodeError:
-                    js = None
-                    tentativas.append({"Endereço": curto, "Status": "HTML/Erro", "Achados": 0, "Chaves": r.text[:40]})
-                    continue
-            else:
-                js = None
-                
+            r = http().get(u, timeout=8)
+            js = r.json() if r.status_code == 200 else None
         except Exception as e:
             tentativas.append({"Endereço": curto, "Status": f"erro: {str(e)[:40]}", "Achados": 0, "Chaves": ""})
             continue
-            
         res = parser(js) if js is not None else []
         tentativas.append({"Endereço": curto, "Status": r.status_code, "Achados": len(res),
                            "Chaves": _chaves(js) if js is not None else ""})
@@ -257,19 +254,17 @@ def buscar_lista(data_str, url_custom):
     return tentar(urls, achar_corridas)
 
 
-# CACHE DE 1 SEGUNDO: Garante que você pode tentar de novo instantaneamente
-@st.cache_data(ttl=1, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def buscar_resultado(race_id, data_str):
-    return tentar([u.format(rid=race_id, d=data_str) for u in RESULTADO_CANDIDATOS], achar_resultados, is_resultado=True)
+    return tentar([u.format(rid=race_id, d=data_str) for u in RESULTADO_CANDIDATOS], achar_resultados)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def buscar_form_raw(race_id, data_str):
     try:
-        r = get_http().get(f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks=form", timeout=15)
-        if r.status_code == 200:
-            return r.json().get("form", {}).get("dogs", [])
-        return []
+        r = http().get(f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks=form", timeout=15)
+        r.raise_for_status()
+        return r.json().get("form", {}).get("dogs", [])
     except Exception:
         return []
 
@@ -320,7 +315,6 @@ def preparar(race_id, r_date, c, classe_in, dist_in, pp_in, so_antes=False):
     if chave not in cache:
         res = dib.extrair_dados_racingpost(f"{BASE}/#card/race_id={race_id}&r_date={r_date}")
         if not res or not res[0]:
-            st.error("⚠️ O Racing Post não respondeu ao pedido desta corrida agora (Erro 580 de servidor). Tente novamente em alguns segundos ou escolha outra corrida.")
             return None
         cache[chave] = res
     dogs, meta, meta_info = cache[chave]
@@ -476,10 +470,11 @@ def analisar(c, classe_in, dist_in, pp_in):
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
         
+    # BOTÃO DE EXPORTAR COM CÓPIA AUTOMÁTICA
     st.markdown("---")
     with st.expander("📋 Exportar Análise (Copiar e Colar para o Chat)"):
         texto_gerado = gerar_texto_analise(c, p)
-        botao_copiar(texto_gerado)
+        botao_copiar(texto_gerado) # Chama o botão JS
         st.text_area("Se o botão acima não funcionar, copie o texto aqui:", texto_gerado, height=200)
 
 
@@ -522,7 +517,8 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
     linhas, tent, primeira = buscar_resultado(c["id"], c["data"])
     st.markdown(titulo_corrida(c, None, "📊 Resultado · "))
     if not linhas:
-        st.warning("Não consegui ler o resultado desta corrida. O Racing Post demora cerca de 10 a 15 minutos para publicar o resultado após a corrida terminar, ou este resultado pode não estar disponível via API.")
+        st.warning("Não consegui ler o resultado desta corrida (ela pode ainda não ter sido disputada). "
+                   "Veja o diagnóstico abaixo.")
         st.dataframe(pd.DataFrame(tent), use_container_width=True, hide_index=True)
         if primeira is not None:
             st.caption("Primeira resposta recebida:")
