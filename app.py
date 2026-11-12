@@ -426,13 +426,19 @@ def gerar_texto_analise(c, p):
         nomes_alvo = ", ".join([d['name'] for d in alvos])
         txt.append(f"- 🎯 Alvo(s): {nomes_alvo} (fora do Top 3 largada e recuperação ≤ 0%).")
 
-    if top_split and top_split["msplit"] < 5.0:
+    # DIB 3.5: Alerta de pista irlandesa e Alerta de Zebra
+    all_splits = [d["msplit"] for d in p["rank"] if d.get("msplit") is not None]
+    is_irish_metric = all(s < 2.0 for s in all_splits) if all_splits else False
+
+    if top_split and top_split["msplit"] < 5.0 and not is_irish_metric:
         s_name = top_split['name']
         txt.append(f"- ⚠️ Alerta de Dados: O {s_name} tem Split muito rápido ({top_split['msplit']:.2f}). Pode ser erro na base (considerado 'Melhor Pace').")
     elif top_ritmo and top_split and top_ritmo["trap"] != top_split["trap"]:
         s_name = top_split['name']
         r_name = top_ritmo['name']
         txt.append(f"- 💡 Análise de Pace: O {s_name} tem a melhor largada, mas o {r_name} tem o melhor ritmo final.")
+        if top_split["pos"] > 3:
+            txt.append(f"- 🦓 Alerta de Zebra: O {s_name} (Posição {top_split['pos']}) tem o melhor Early Pace. Pode surpreender.")
     elif not top_split and top_ritmo:
         top_split_pos = min([d for d in p["rank"] if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"], default=None)
         if top_split_pos and top_ritmo["trap"] != top_split_pos["trap"]:
