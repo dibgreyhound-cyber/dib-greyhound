@@ -309,6 +309,86 @@ def titulo_corrida(c, p=None, prefixo=""):
     return f"### {prefixo}{t} · Race {c.get('num', '')}{extra}"
 
 
+# ---------------------------------------------------------------- exportar texto
+def gerar_texto_analise(c, p):
+    """Gera um relatório em Markdown simples para copiar e colar no chat."""
+    txt = []
+    txt.append(titulo_corrida(c, p).replace("### ", ""))
+    txt.append("")
+    
+    # Tabela de Projeção
+    txt.append("**Planilha de Projeção**")
+    txt.append("| Trp | Galgo | Overall | Cat | Fatores | Perfil | Grades | Peso | Dias | Split | Time | Méd. Split | Méd. Time | Time Ajust. | Ritmo | Recup. Média | Conf. |")
+    txt.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    
+    for d in p["ds"]:
+        if d["nd"]:
+            txt.append(f"| {d['trap']} | {d['name']} | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |")
+            continue
+        
+        nome = f"{d['name']} {'🚫' if d.get('bloqueado') else ''} {'🎯' if d.get('alvo') else ''}".strip()
+        fat = "<br>".join(f"{k} ({v:+.1f})" for k, v in d["fatores"]) or "-"
+        grades = "-".join((r["grade"] or "?") for r in d["runs"])
+        
+        f_split = f"{d['split']:.2f}" if d.get("split") else "-"
+        f_time = f"{d['time']:.2f}" if d.get("time") else "-"
+        f_msplit = f"{d['msplit']:.2f}" if d.get("msplit") else "-"
+        f_mtime = f"{d['mtime']:.2f}" if d.get("mtime") else "-"
+        f_tadj = f"{d['tadj']:.2f}" if d.get("tadj") else "-"
+        f_ritmo = f"{d['ritmo']:.2f}" if d.get("ritmo") else "-"
+        f_rec = f"{d['rec']:+.2f}%" if d.get("rec") is not None else "-"
+        f_peso = f"{d['peso']:.1f}" if d.get("peso") else "-"
+        
+        txt.append(f"| {d['trap']} | {nome} | {d['overall']:.1f} | {d['cat']:.1f} | {fat} | {d['perfil']} | {grades} | {f_peso} | {d['dias']} | {f_split} | {f_time} | {f_msplit} | {f_mtime} | {f_tadj} | {f_ritmo} | {f_rec} | {d['conf']:.0f}% |")
+    
+    txt.append("")
+    
+    # Classificação
+    classif = " > ".join(f"{d['pos']}º [T{d['trap']}]" for d in p["rank"])
+    txt.append(f"**Classificação:** {classif}")
+    txt.append("")
+    
+    # AVBs
+    txt.append("**AVBs Principais (≥ 60%)**")
+    if not p["s1"]:
+        txt.append("Nenhum confronto atingiu 60%.")
+    else:
+        txt.append("| Vencedor (Trap/Nome) | Perdedor (Trap/Nome) | Probabilidade |")
+        txt.append("|---|---|---|")
+        for (V, D, prob, star) in p["s1"]:
+            txt.append(f"| {V['trap']} - {V['name']} | {D['trap']} - {D['name']} | {prob:.1f}% |")
+    
+    txt.append("")
+    
+    # Observações
+    txt.append("**Observações:**")
+    elegiveis = [d for d in p["rank"] if not d.get("bloqueado")]
+    if elegiveis:
+        best_elig = elegiveis[0]
+        if best_elig["pos"] > 1:
+            txt.append(f"- 🏆 Melhor Elegível: O favorito está bloqueado. O cão mais seguro é o {best_elig['trap']} {best_elig['name']} (Posição {best_elig['pos']}).")
+            
+    top_ritmo = min([d for d in p["rank"] if d.get("ritmo") is not None], key=lambda x: x["ritmo"], default=None)
+    top_split = min([d for d in p["rank"] if d.get("msplit") is not None], key=lambda x: x["msplit"], default=None)
+    if top_ritmo and top_split and top_ritmo["name"] != top_split["name"]:
+        txt.append(f"- 💡 Pace: O {top_split['name']} tem a melhor largada, mas o {top_ritmo['name']} tem o melhor ritmo final.")
+
+    pior_rec = min([d for d in p["rank"] if d.get("rec") is not None], key=lambda x: x["rec"], default=None)
+    if pior_rec and pior_rec["rec"] < -10.0:
+        txt.append(f"- ⚠️ Tráfego: O {pior_rec['name']} tem recuperação média ruim ({pior_rec['rec']:+.1f}%). Pode perder posições.")
+        
+    dropping = [d for d in p["rank"] if d.get("cat_mod", 0) > 0]
+    if dropping:
+        nomes = ", ".join([f"{d['name']}" for d in dropping])
+        txt.append(f"- 📉 Queda de Classe: {nomes} desceu(ram) de categoria hoje.")
+
+    top3_ms = p["ctx"].get("top3_ms", set())
+    if len(top3_ms) >= 3:
+        txt.append("- ⚠️ Conflito de Pace: Múltiplos cães com largada rápida. Risco de trombada na 1ª curva.")
+
+    return "\n".join(txt)
+
+
 def analisar(c, classe_in, dist_in, pp_in):
     p = preparar(c["id"], c["data"], c, classe_in, dist_in, pp_in)
     if not p:
@@ -321,6 +401,12 @@ def analisar(c, classe_in, dist_in, pp_in):
     dib.tabela_avb(p["s1"], "1ª Planilha — AVB Principal (Prob ≥ 60%)")
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
+        
+    # BOTÃO DE EXPORTAR
+    st.markdown("---")
+    with st.expander("📋 Exportar Análise (Copiar e Colar para o Chat)"):
+        texto_gerado = gerar_texto_analise(c, p)
+        st.code(texto_gerado, language="markdown")
 
 
 # ---------------------------------------------------------------- aba Form
