@@ -31,14 +31,13 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 3.5)
+# CONFIGURAÇÃO GLOBAL (DIB 3.6)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
-    "REMARKS_PTS": {"early": 1.0, "slowaway": -1.0, "firstbend": -1.0},
-    "TRAP_VAZIA": 1.0, "TRAFEGO_SEVERO": -2.0, "CONF_MIN_VENCEDOR": 40.0, # <-- DIB 3.5: Reduzido de 60 para 40
+    "TRAP_VAZIA": 5.0, "TRAFEGO_SEVERO": -15.0, "CONF_MIN_VENCEDOR": 40.0, # <-- Aumentado impacto da Trap Vazia e Tráfego Severo
     
     "VEL_PTS": {"tadj": 100, "mtime": 80, "msplit": 80, "ritmo": 60},
     "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 10, 
@@ -371,7 +370,7 @@ def finalizar(ds, ctx):
     if not ms_rank:
         ms_rank = sorted([d for d in ok if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"])
     top3_ms = {d["name"] for d in ms_rank[:3]}
-    top_split_name = ms_rank[0]["name"] if ms_rank else None # DIB 3.5
+    top_split_name = ms_rank[0]["name"] if ms_rank else None
     ctx["top3_ms"] = top3_ms
     
     ritmo_rank = sorted([d for d in ok if d.get("ritmo")], key=lambda x: x["ritmo"])
@@ -396,15 +395,15 @@ def finalizar(ds, ctx):
         
         f = []
         if d["early_cnt"] > 0 and d["perfil"] == "Limpo": 
-            f.append(("Ritmo Acelerado", d["early_cnt"] * 1.0))
+            f.append(("Ritmo Acelerado", d["early_cnt"] * 5.0)) # <-- AUMENTADO
         if d["saw_cnt"] > 0: 
-            f.append(("Largada Lenta", d["saw_cnt"] * -1.0))
+            f.append(("Largada Lenta", d["saw_cnt"] * -8.0)) # <-- AUMENTADO
         if d["fbt_cnt"] > 0: 
-            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -1.0))
+            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -8.0)) # <-- AUMENTADO
         if any(abs(d["trap"] - v) == 1 for v in vac): 
-            f.append(("Trap Vazia", 1.0))
+            f.append(("Trap Vazia", CFG["TRAP_VAZIA"]))
         if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
-            f.append(("Tráfego Severo", -2.0))
+            f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"])) # <-- AUMENTADO
             
         d["fatores"] = f
         d["overall"] = vel + pts_cat + pts_perfil + pts_prop("sd", CFG["CONSIST_PTS"], d, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_prop("rec", CFG["RECUP_PTS"], d, False) + sum(v for _, v in f)
@@ -413,7 +412,6 @@ def finalizar(ds, ctx):
     for i, d in enumerate(ok, 1):
         d["pos"] = i
         d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"] or d["forma_trial"]
-        # DIB 3.5: Não é alvo se estiver no Top 3 Split OU for o Melhor Split da prova
         d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d["rec"] <= 0)
         d["elegivel"] = not d["bloqueado"]
     return ok, top3_ms
