@@ -321,9 +321,23 @@ def analisar_galgo(dog, ctx):
     d["peso"] = dog.get("peso_atual") or R[0]["weight"]
     d["split"], d["time"] = R[0]["split"], R[0]["caltm"]
     
-    d["msplit"] = float(np.mean([r["split"] for r in R if r["split"] is not None])) if any(r["split"] for r in R) else None
+    # --- LÓGICA DE SPRINT (SEM SPLIT) ---
+    has_split = any(r["split"] for r in R)
+    if has_split:
+        d["msplit"] = float(np.mean([r["split"] for r in R if r["split"] is not None]))
+        d["msplit_pos"] = None
+    else:
+        # Fallback para categoria D: usar posição na primeira curva (menor é melhor)
+        pos_curve = [bends_digits(r["bends"])[0] for r in R if bends_digits(r["bends"])]
+        d["msplit"] = None
+        d["msplit_pos"] = float(np.mean(pos_curve)) if pos_curve else None
+
     d["mtime"] = float(np.mean([r["caltm"] for r in R if r["caltm"] is not None])) if any(r["caltm"] for r in R) else None
-    d["ritmo"] = d["mtime"] - d["msplit"] if d["mtime"] and d["msplit"] else None
+    
+    if has_split:
+        d["ritmo"] = d["mtime"] - d["msplit"] if d["mtime"] and d["msplit"] else None
+    else:
+        d["ritmo"] = d["mtime"] # Em sprints, o ritmo é o tempo total
     
     adj_times = [r["caltm"] - (traffic_penalty(r["remarks"]) + ((r["dist"] - 300) / 1000.0 if traffic_penalty(r["remarks"]) > 0 else 0.0)) for r in R]
     d["tadj"] = float(np.mean(adj_times)) if adj_times else None
@@ -355,11 +369,14 @@ def finalizar(ds, ctx):
     ok = [d for d in ds if not d["nd"]]
     vac = [t for t in range(1, 7) if t not in {d["trap"] for d in ds if d["name"] != "vacant"}]
     
-    ms_rank = sorted([d for d in ok if d["msplit"]], key=lambda x: x["msplit"])
+    # Ranking de Méd. Split ou Méd. Posição Curva (se não houver split)
+    ms_rank = sorted([d for d in ok if d.get("msplit") is not None], key=lambda x: x["msplit"])
+    if not ms_rank:
+        ms_rank = sorted([d for d in ok if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"])
     top3_ms = {d["name"] for d in ms_rank[:3]}
     ctx["top3_ms"] = top3_ms
     
-    ritmo_rank = sorted([d for d in ok if d["ritmo"]], key=lambda x: x["ritmo"])
+    ritmo_rank = sorted([d for d in ok if d.get("ritmo")], key=lambda x: x["ritmo"])
     top3_ritmo = {d["name"] for d in ritmo_rank[:3]}
     ctx["top3_ritmo"] = top3_ritmo
 
@@ -374,9 +391,12 @@ def finalizar(ds, ctx):
         pts_cat = d["cat"] * 1.5
         pts_perfil = CFG["PERFIL_PTS"][d["perfil"]]
         
+        # Se não houver msplit, a velocidade usa msplit_pos no lugar do tempo
+        split_metric = d["msplit"] if d["msplit"] is not None else d["msplit_pos"]
+        
         vel = (pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) + 
                pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) + 
-               pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d) + 
+               (pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d) if d["msplit"] else (CFG["VEL_PTS"]["msplit"] * (1 - (d["msplit_pos"] / 6)) if d.get("msplit_pos") else 0)) + 
                pts_prop("ritmo", CFG["VEL_PTS"]["ritmo"], d))
         
         f = []
@@ -412,11 +432,16 @@ def calc_prob(V, D, rank, ctx):
     pts_vel = max(-15.0, min(15.0, pts_vel))
     prob += pts_vel
     
+    # Largada (Split vs Posição Curva)
     if V.get("msplit") and D.get("msplit"):
         diff_split = D["msplit"] - V["msplit"]
         pts_split = (diff_split / 0.05) * 3.0
         pts_split = max(-10.0, min(10.0, pts_split))
         prob += pts_split
+    elif V.get("msplit_pos") and D.get("msplit_pos"):
+        diff_pos = D["msplit_pos"] - V["msplit_pos"] # Positivo se D largou pior
+        pts_split = diff_pos * 4.0
+        prob += max(-10.0, min(10.0, pts_split))
         
     if V.get("ritmo") and D.get("ritmo"):
         diff_ritmo = D["ritmo"] - V["ritmo"]
@@ -523,13 +548,16 @@ def tabela_projecao(ds):
         perfil_e = {"Limpo": "✅", "Irregular": "⚠️", "Trombador": "🔴"}[d["perfil"]]
         dias_txt = f"{d['dias']} ⚠️" if d['dias'] > 21 else str(d['dias'])
         
-        # ORDEM CORRIGIDA AQUI: Split -> Time -> Méd. Split -> Méd. Time -> Time Ajust. -> Ritmo
+        # Exibição: Se for corrida curta (sem split), mostra a posição na 1ª curva no lugar do Méd. Split
+        split_display = get_rank_html(d["split"], rk["split"][i], max_rk["split"])
+        msplit_display = get_rank_html(d["msplit"], rk["msplit"][i], max_rk["msplit"]) if d.get("msplit") else (f"<span style='color:#ffa500'>Pos: {d.get('msplit_pos', 0):.1f}</span>" if d.get("msplit_pos") else "-")
+        
         rows.append([
             trap_label(d), nome_marcado(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}",
             f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", fat, f"{perfil_e} {d['perfil']}",
             "-".join((r["grade"] or "?") for r in d["runs"]), f"{d['peso']:.1f}", dias_txt,
-            get_rank_html(d["split"], rk["split"][i], max_rk["split"]), get_rank_html(d["time"], rk["time"][i], max_rk["time"]),
-            get_rank_html(d["msplit"], rk["msplit"][i], max_rk["msplit"]), get_rank_html(d["mtime"], rk["mtime"][i], max_rk["mtime"]),
+            split_display, get_rank_html(d["time"], rk["time"][i], max_rk["time"]),
+            msplit_display, get_rank_html(d["mtime"], rk["mtime"][i], max_rk["mtime"]),
             get_rank_html(d["tadj"], rk["tadj"][i], max_rk["tadj"]), get_rank_html(d["ritmo"], rk["ritmo"][i], max_rk["ritmo"]),
             get_rank_html(d["rec"], rk["rec"][i], max_rk["rec"]) + f"<br><small>{d['rec_txt'].split()[1]}</small>", f"{d['conf']:.0f}%"
         ])
@@ -562,7 +590,14 @@ def tabela_avb(lista, titulo):
         cat_v, cat_d = fmt_pair(V['cat'], D['cat'], False, 1)
         sp_v, sp_d = fmt_pair(V['split'], D['split'], True, 2)
         t_v, t_d = fmt_pair(V['time'], D['time'], True, 2)
-        ms_v, ms_d = fmt_pair(V['msplit'], D['msplit'], True, 2)
+        
+        if V.get("msplit") and D.get("msplit"):
+            ms_v, ms_d = fmt_pair(V['msplit'], D['msplit'], True, 2)
+        elif V.get("msplit_pos") and D.get("msplit_pos"):
+            ms_v, ms_d = fmt_pair(V['msplit_pos'], D['msplit_pos'], True, 1) # Posição menor é melhor
+        else:
+            ms_v, ms_d = "-", "-"
+            
         mt_v, mt_d = fmt_pair(V['mtime'], D['mtime'], True, 2)
         ta_v, ta_d = fmt_pair(V['tadj'], D['tadj'], True, 2)
         r_v, r_d = fmt_pair(V['ritmo'], D['ritmo'], True, 2)
@@ -570,7 +605,6 @@ def tabela_avb(lista, titulo):
 
         prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#00ff00'>{prob:.1f}%</span></td>"
         
-        # ORDEM CORRIGIDA AQUI TAMBÉM
         rows.append([
             f"{'⭐ ' if star else ''}{trap_label(V)} - {html.escape(V['name'])}", 
             ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]),
@@ -599,9 +633,15 @@ def gerar_observacoes(rank, avbs, ctx):
             st.markdown(f"- **🏆 Melhor Elegível:** O favorito absoluto está bloqueado. O cão mais seguro para vitória é o **{TRAP_EMOJI[best_elig['trap']]} {best_elig['name']}** (Posição {best_elig['pos']} | Perfil: {best_elig['perfil']}).")
 
     top_ritmo = min([d for d in rank if d.get("ritmo") is not None], key=lambda x: x["ritmo"], default=None)
-    top_split = min([d for d in rank if d.get("msplit") is not None], key=lambda x: x["msplit"], default=None)
-    if top_ritmo and top_split and top_ritmo["name"] != top_split["name"]:
-        st.markdown(f"- **💡 Análise de Pace:** O **{top_split['name']}** tem a melhor largada (Split), mas o **{top_ritmo['name']}** tem o melhor ritmo final. O segundo se beneficia se o primeiro for atrapalhado na frente.")
+    
+    if any(d.get("msplit") for d in rank):
+        top_split = min([d for d in rank if d.get("msplit") is not None], key=lambda x: x["msplit"], default=None)
+        if top_ritmo and top_split and top_ritmo["name"] != top_split["name"]:
+            st.markdown(f"- **💡 Análise de Pace:** O **{top_split['name']}** tem a melhor largada (Split), mas o **{top_ritmo['name']}** tem o melhor ritmo final.")
+    else:
+        top_split = min([d for d in rank if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"], default=None)
+        if top_ritmo and top_split and top_ritmo["name"] != top_split["name"]:
+            st.markdown(f"- **💡 Análise de Pace:** O **{top_split['name']}** assume a liderança na 1ª curva, mas o **{top_ritmo['name']}** tem o melhor ritmo de prova final (Tempo Total).")
 
     pior_rec = min([d for d in rank if d.get("rec") is not None], key=lambda x: x["rec"], default=None)
     if pior_rec and pior_rec["rec"] < -10.0:
