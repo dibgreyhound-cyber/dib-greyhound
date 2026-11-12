@@ -101,7 +101,7 @@ def bends_digits(b):
     return [int(c) for c in str(b or "") if c.isdigit()]
 
 def grade_num(g):
-    # ATUALIZADO: Aceita A, D, S e B (Sprints)
+    # Aceita A, D, S e B (Sprints)
     m = re.fullmatch(r"([ADSB])(\d{1,2})", str(g or "").strip().upper())
     return int(m.group(2)) if m else None
 
@@ -322,7 +322,6 @@ def analisar_galgo(dog, ctx):
     d["peso"] = dog.get("peso_atual") or R[0]["weight"]
     d["split"], d["time"] = R[0]["split"], R[0]["caltm"]
     
-    # --- LÓGICA DE SPRINT (SEM SPLIT) ---
     has_split = any(r["split"] for r in R)
     if has_split:
         d["msplit"] = float(np.mean([r["split"] for r in R if r["split"] is not None]))
@@ -337,7 +336,7 @@ def analisar_galgo(dog, ctx):
     if has_split:
         d["ritmo"] = d["mtime"] - d["msplit"] if d["mtime"] and d["msplit"] else None
     else:
-        d["ritmo"] = d["mtime"] # Em sprints, o ritmo é o tempo total
+        d["ritmo"] = d["mtime"]
     
     adj_times = [r["caltm"] - (traffic_penalty(r["remarks"]) + ((r["dist"] - 300) / 1000.0 if traffic_penalty(r["remarks"]) > 0 else 0.0)) for r in R]
     d["tadj"] = float(np.mean(adj_times)) if adj_times else None
@@ -369,7 +368,6 @@ def finalizar(ds, ctx):
     ok = [d for d in ds if not d["nd"]]
     vac = [t for t in range(1, 7) if t not in {d["trap"] for d in ds if d["name"] != "vacant"}]
     
-    # Ranking de Méd. Split ou Méd. Posição Curva (se não houver split)
     ms_rank = sorted([d for d in ok if d.get("msplit") is not None], key=lambda x: x["msplit"])
     if not ms_rank:
         ms_rank = sorted([d for d in ok if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"])
@@ -391,7 +389,6 @@ def finalizar(ds, ctx):
         pts_cat = d["cat"] * 1.5
         pts_perfil = CFG["PERFIL_PTS"][d["perfil"]]
         
-        # Se não houver msplit, a velocidade usa msplit_pos no lugar do tempo
         vel = (pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) + 
                pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) + 
                (pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d) if d["msplit"] else (CFG["VEL_PTS"]["msplit"] * (1 - (d["msplit_pos"] / 6)) if d.get("msplit_pos") else 0)) + 
@@ -430,14 +427,13 @@ def calc_prob(V, D, rank, ctx):
     pts_vel = max(-15.0, min(15.0, pts_vel))
     prob += pts_vel
     
-    # Largada (Split vs Posição Curva)
     if V.get("msplit") and D.get("msplit"):
         diff_split = D["msplit"] - V["msplit"]
         pts_split = (diff_split / 0.05) * 3.0
         pts_split = max(-10.0, min(10.0, pts_split))
         prob += pts_split
     elif V.get("msplit_pos") and D.get("msplit_pos"):
-        diff_pos = D["msplit_pos"] - V["msplit_pos"] # Positivo se D largou pior
+        diff_pos = D["msplit_pos"] - V["msplit_pos"]
         pts_split = diff_pos * 4.0
         prob += max(-10.0, min(10.0, pts_split))
         
@@ -546,7 +542,6 @@ def tabela_projecao(ds):
         perfil_e = {"Limpo": "✅", "Irregular": "⚠️", "Trombador": "🔴"}[d["perfil"]]
         dias_txt = f"{d['dias']} ⚠️" if d['dias'] > 21 else str(d['dias'])
         
-        # Exibição: Se for corrida curta (sem split), mostra a posição na 1ª curva no lugar do Méd. Split
         split_display = get_rank_html(d["split"], rk["split"][i], max_rk["split"])
         msplit_display = get_rank_html(d["msplit"], rk["msplit"][i], max_rk["msplit"]) if d.get("msplit") else (f"<span style='color:#ffa500'>Pos: {d.get('msplit_pos', 0):.1f}</span>" if d.get("msplit_pos") else "-")
         
@@ -592,7 +587,7 @@ def tabela_avb(lista, titulo):
         if V.get("msplit") and D.get("msplit"):
             ms_v, ms_d = fmt_pair(V['msplit'], D['msplit'], True, 2)
         elif V.get("msplit_pos") and D.get("msplit_pos"):
-            ms_v, ms_d = fmt_pair(V['msplit_pos'], D['msplit_pos'], True, 1) # Posição menor é melhor
+            ms_v, ms_d = fmt_pair(V['msplit_pos'], D['msplit_pos'], True, 1)
         else:
             ms_v, ms_d = "-", "-"
             
@@ -622,34 +617,63 @@ def tabela_avb(lista, titulo):
 def gerar_observacoes(rank, avbs, ctx):
     if not rank: return
     st.markdown("---")
-    st.markdown("#### 📝 Observações Indispensáveis")
+    st.markdown("#### 🏁 O Cenário da Corrida") # <-- TÍTULO ALTERADO AQUI
     
     elegiveis = [d for d in rank if not d.get("bloqueado")]
-    if elegiveis:
-        best_elig = elegiveis[0]
-        if best_elig["pos"] > 1:
-            st.markdown(f"- **🏆 Melhor Elegível:** O favorito absoluto está bloqueado. O cão mais seguro para vitória é o **{TRAP_EMOJI[best_elig['trap']]} {best_elig['name']}** (Posição {best_elig['pos']} | Perfil: {best_elig['perfil']}).")
-
-    top_ritmo = min([d for d in rank if d.get("ritmo") is not None], key=lambda x: x["ritmo"], default=None)
+    bloqueados = [d for d in rank if d.get("bloqueado")]
+    alvos = [d for d in rank if d.get("alvo")]
     
-    if any(d.get("msplit") for d in rank):
-        top_split = min([d for d in rank if d.get("msplit") is not None], key=lambda x: x["msplit"], default=None)
-        if top_ritmo and top_split and top_ritmo["name"] != top_split["name"]:
-            st.markdown(f"- **💡 Análise de Pace:** O **{top_split['name']}** tem a melhor largada (Split), mas o **{top_ritmo['name']}** tem o melhor ritmo final.")
-    else:
-        top_split = min([d for d in rank if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"], default=None)
-        if top_ritmo and top_split and top_ritmo["name"] != top_split["name"]:
-            st.markdown(f"- **💡 Análise de Pace:** O **{top_split['name']}** assume a liderança na 1ª curva, mas o **{top_ritmo['name']}** tem o melhor ritmo de prova final (Tempo Total).")
+    top_ritmo = min([d for d in rank if d.get("ritmo") is not None], key=lambda x: x["ritmo"], default=None)
+    top_split = min([d for d in rank if d.get("msplit") is not None], key=lambda x: x["msplit"], default=None) if any(d.get("msplit") for d in rank) else None
+    
+    # 1. Favorito Claro / Melhor Elegível
+    if elegiveis:
+        fav = elegiveis[0]
+        bloc_acima = [d for d in bloqueados if d["pos"] < fav["pos"]]
+        if bloc_acima:
+            st.markdown(f"- **🏆 Melhor Elegível:** O favorito absoluto ({bloc_acima[0]['name']}) está bloqueado 🚫. O cão mais seguro para vitória é o **{TRAP_EMOJI[fav['trap']]} {fav['name']}** (Posição {fav['pos']} | Recup: {fav['rec']:+.1f}%).")
+        else:
+            txt_rec = f" Ele tem recuperação excelente ({fav['rec']:+.1f}%)." if fav['rec'] > 10 else ""
+            st.markdown(f"- **🏆 Favorito Claro:** O **{TRAP_EMOJI[fav['trap']]} {fav['name']}** domina o Overall ({fav['overall']:.1f}).{txt_rec}")
+            
+    # 2. O "Falso Favorito" Bloqueado
+    if bloqueados:
+        b = bloqueados[0]
+        avb_info = ""
+        if elegiveis:
+            for V, D, prob, star in avbs:
+                if (V["name"] == elegiveis[0]["name"] and D["name"] == b["name"]) or (D["name"] == elegiveis[0]["name"] and V["name"] == b["name"]):
+                    avb_info = f" O AVB entre eles é apertado ({prob:.1f}%)."
+                    break
+        st.markdown(f"- **🚫 Falso Favorito Bloqueado:** O **{b['name']}** tem Overall alto ({b['overall']:.1f}), mas foi pego pela Trava (Conf. {b['conf']:.0f}%).{avb_info}")
 
+    # 3. O Alvo 🎯
+    if alvos:
+        nomes_alvo = ", ".join([d["name"] for d in alvos])
+        st.markdown(f"- **🎯 Alvo(s):** O(s) cão(es) **{nomes_alvo}** foram marcados como alvo (fora do Top 3 largada e recuperação ≤ 0%). Vulneráveis no bolo.")
+
+    # 4. Alerta de Dados / Pace
+    if top_split and top_split["msplit"] < 5.0:
+        st.markdown(f"- **⚠️ Alerta de Dados:** O **{top_split['name']}** aparece com Split muito rápido ({top_split['msplit']:.2f}). Pode ser erro de digitação da base, mas ele foi considerado o 'Melhor Pace'.")
+    elif top_ritmo and top_split and top_ritmo["name"] != top_split["name"]:
+        st.markdown(f"- **💡 Análise de Pace:** O **{top_split['name']}** tem a melhor largada (Split), mas o **{top_ritmo['name']}** tem o melhor ritmo final.")
+    elif not top_split and top_ritmo:
+        top_split_pos = min([d for d in rank if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"], default=None)
+        if top_split_pos and top_ritmo["name"] != top_split_pos["name"]:
+             st.markdown(f"- **💡 Análise de Pace:** O **{top_split_pos['name']}** assume a liderança na 1ª curva, mas o **{top_ritmo['name']}** tem o melhor ritmo de prova final.")
+
+    # 5. Alerta de Tráfego
     pior_rec = min([d for d in rank if d.get("rec") is not None], key=lambda x: x["rec"], default=None)
     if pior_rec and pior_rec["rec"] < -10.0:
-        st.markdown(f"- **⚠️ Alerta de Tráfego:** O cão **{pior_rec['name']}** tem uma recuperação média terrível ({pior_rec['rec']:+.1f}%). Se ele não largar na frente, vai perder posições na reta.")
+        st.markdown(f"- **⚠️ Alerta de Tráfego:** O **{pior_rec['name']}** tem uma recuperação média ruim ({pior_rec['rec']:+.1f}%). Pode perder posições na reta.")
 
+    # 6. Queda de Classe
     dropping_class = [d for d in rank if d.get("cat_mod", 0) > 0]
     if dropping_class:
         nomes = ", ".join([f"{d['name']}" for d in dropping_class])
-        st.markdown(f"- **📉 Queda de Classe:** O(s) cão(es) {nomes} desceu(ram) de categoria e corre(m) contra rivais mais fracos hoje. Isso é um bônus tático importante.")
+        st.markdown(f"- **📉 Queda de Classe:** O(s) cão(es) {nomes} desceu(ram) de categoria e corre(m) contra rivais mais fracos hoje.")
 
+    # 7. Conflito de Pace
     top3_ms = ctx.get("top3_ms", set())
     if len(top3_ms) >= 3:
-        st.markdown("- **Atenção:** Múltiplos cães com largada rápida (Top 3 Split). Isso aumenta o risco de conflito de pace (trombadas na 1ª curva).")
+        st.markdown("- **Atenção (Conflito de Pace):** Múltiplos cães com largada rápida (Top 3 Split). Risco de trombada na 1ª curva.")
