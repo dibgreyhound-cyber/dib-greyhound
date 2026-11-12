@@ -23,11 +23,13 @@ LISTA_CANDIDATOS = [
     BASE + "/meeting-list/blocks.sd?r_date={d}&blocks=list",
     BASE + "/meeting/list.sd?r_date={d}",
 ]
+# Adicionados mais endpoints para garantir que a API do Racing Post responda
 RESULTADO_CANDIDATOS = (
-    [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult")]
-    + [BASE + "/result/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results")]
-    + [BASE + "/card/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results")]
+    [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult", "header%2Cresult%2Ccard", "card%2Cresult", "result%2Cheader")]
+    + [BASE + "/result/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult")]
+    + [BASE + "/card/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult")]
     + [BASE + "/results/race.sd?race_id={rid}&r_date={d}"]
+    + [BASE + "/result/race.sd?race_id={rid}&r_date={d}"]
 )
 KEYS = {
     "id": ["raceId", "race_id", "rid"],
@@ -254,7 +256,8 @@ def buscar_lista(data_str, url_custom):
     return tentar(urls, achar_corridas)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+# REDUZIDO O TTL PARA 10 SEGUNDOS PARA PERMITIR RECARREGAR RÁPIDO
+@st.cache_data(ttl=10, show_spinner=False)
 def buscar_resultado(race_id, data_str):
     return tentar([u.format(rid=race_id, d=data_str) for u in RESULTADO_CANDIDATOS], achar_resultados)
 
@@ -518,7 +521,7 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
     st.markdown(titulo_corrida(c, None, "📊 Resultado · "))
     if not linhas:
         st.warning("Não consegui ler o resultado desta corrida (ela pode ainda não ter sido disputada). "
-                   "Veja o diagnóstico abaixo.")
+                   "Veja o diagnóstico abaixo. O Racing Post demora cerca de 10 a 15 minutos para publicar o resultado após a corrida terminar.")
         st.dataframe(pd.DataFrame(tent), use_container_width=True, hide_index=True)
         if primeira is not None:
             st.caption("Primeira resposta recebida:")
