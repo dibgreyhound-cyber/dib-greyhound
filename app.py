@@ -23,11 +23,11 @@ LISTA_CANDIDATOS = [
     BASE + "/meeting-list/blocks.sd?r_date={d}&blocks=list",
     BASE + "/meeting/list.sd?r_date={d}",
 ]
-# Adicionados mais endpoints para garantir que a API do Racing Post responda
+# Endpoints mais completos para resultados
 RESULTADO_CANDIDATOS = (
     [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult", "header%2Cresult%2Ccard", "card%2Cresult", "result%2Cheader")]
     + [BASE + "/result/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult")]
-    + [BASE + "/card/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult")]
+    + [BASE + "/card/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "card%2Cresult", "header%2Cresult")]
     + [BASE + "/results/race.sd?race_id={rid}&r_date={d}"]
     + [BASE + "/result/race.sd?race_id={rid}&r_date={d}"]
 )
@@ -74,6 +74,12 @@ class _Http:
             r = self.s.get(url, timeout=timeout)
         return r
 
+    def get_resultado(self, url, timeout=10):
+        # Força uma visita à página de resultados do dia para pegar o cookie correto
+        try: self.s.get(BASE + "/results", timeout=5)
+        except Exception: pass
+        return self.s.get(url, timeout=timeout)
+
 
 @st.cache_resource
 def http():
@@ -116,29 +122,12 @@ dib.trap_label = lambda d: badge(d["trap"])
 
 # ---------------------------------------------------------------- botao copiar (JavaScript)
 def botao_copiar(texto):
-    """Cria um botão HTML nativo que copia o texto usando JavaScript."""
     texto_js = json.dumps(texto)
-    
     html = f"""
-    <html>
-    <head>
-    <style>
-    .copy-btn {{
-        background-color: #ff4b4b;
-        color: white;
-        border: none;
-        padding: 12px 20px;
-        border-radius: 8px;
-        cursor: pointer;
-        font-size: 16px;
-        font-weight: bold;
-        width: 100%;
-        transition: 0.2s;
-    }}
-    .copy-btn:active {{ background-color: #cc0000; }}
-    </style>
-    </head>
-    <body>
+    <html><head><style>
+    .copy-btn {{background-color: #ff4b4b;color: white;border: none;padding: 12px 20px;border-radius: 8px;cursor: pointer;font-size: 16px;font-weight: bold;width: 100%;transition: 0.2s;}}
+    .copy-btn:active {{background-color: #cc0000;}}
+    </style></head><body>
     <button class="copy-btn" id="copyBtn">📋 Copiar Análise para o Chat</button>
     <script>
     const textToCopy = {texto_js};
@@ -156,9 +145,7 @@ def botao_copiar(texto):
             document.getElementById("copyBtn").style.backgroundColor = "#ff9800";
         }}
     }});
-    </script>
-    </body>
-    </html>
+    </script></body></html>
     """
     components.html(html, height=65)
 
@@ -203,7 +190,6 @@ def achar_corridas(obj):
 
 def achar_resultados(obj):
     achados = {}
-
     def walk(o):
         if isinstance(o, dict):
             nome = _get(o, "nome", RES)
@@ -218,7 +204,6 @@ def achar_resultados(obj):
             for v in o.values(): walk(v)
         elif isinstance(o, list):
             for v in o: walk(v)
-
     walk(obj)
     return sorted(achados.values(), key=lambda x: x["pos"])
 
@@ -228,13 +213,16 @@ def _chaves(js):
     return ", ".join(f"{k}{'(erro)' if isinstance(v, dict) and 'errorCode' in v else ''}" for k, v in js.items())[:90]
 
 
-def tentar(urls, parser):
+def tentar(urls, parser, is_resultado=False):
     tentativas, achado, primeira = [], [], None
     for u in urls:
         curto = u.replace(BASE, "")
-        time.sleep(0.3)
+        time.sleep(0.2)
         try:
-            r = http().get(u, timeout=8)
+            if is_resultado:
+                r = http().get_resultado(u, timeout=8)
+            else:
+                r = http().get(u, timeout=8)
             js = r.json() if r.status_code == 200 else None
         except Exception as e:
             tentativas.append({"Endereço": curto, "Status": f"erro: {str(e)[:40]}", "Achados": 0, "Chaves": ""})
@@ -256,10 +244,10 @@ def buscar_lista(data_str, url_custom):
     return tentar(urls, achar_corridas)
 
 
-# REDUZIDO O TTL PARA 10 SEGUNDOS PARA PERMITIR RECARREGAR RÁPIDO
-@st.cache_data(ttl=10, show_spinner=False)
+# CACHE DE 1 SEGUNDO: Garante que você pode tentar de novo instantaneamente
+@st.cache_data(ttl=1, show_spinner=False)
 def buscar_resultado(race_id, data_str):
-    return tentar([u.format(rid=race_id, d=data_str) for u in RESULTADO_CANDIDATOS], achar_resultados)
+    return tentar([u.format(rid=race_id, d=data_str) for u in RESULTADO_CANDIDATOS], achar_resultados, is_resultado=True)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -473,11 +461,10 @@ def analisar(c, classe_in, dist_in, pp_in):
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
         
-    # BOTÃO DE EXPORTAR COM CÓPIA AUTOMÁTICA
     st.markdown("---")
     with st.expander("📋 Exportar Análise (Copiar e Colar para o Chat)"):
         texto_gerado = gerar_texto_analise(c, p)
-        botao_copiar(texto_gerado) # Chama o botão JS
+        botao_copiar(texto_gerado)
         st.text_area("Se o botão acima não funcionar, copie o texto aqui:", texto_gerado, height=200)
 
 
@@ -520,8 +507,7 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
     linhas, tent, primeira = buscar_resultado(c["id"], c["data"])
     st.markdown(titulo_corrida(c, None, "📊 Resultado · "))
     if not linhas:
-        st.warning("Não consegui ler o resultado desta corrida (ela pode ainda não ter sido disputada). "
-                   "Veja o diagnóstico abaixo. O Racing Post demora cerca de 10 a 15 minutos para publicar o resultado após a corrida terminar.")
+        st.warning("Não consegui ler o resultado desta corrida. O Racing Post demora cerca de 10 a 15 minutos para publicar o resultado após a corrida terminar, ou este resultado pode não estar disponível via API.")
         st.dataframe(pd.DataFrame(tent), use_container_width=True, hide_index=True)
         if primeira is not None:
             st.caption("Primeira resposta recebida:")
