@@ -391,7 +391,7 @@ def gerar_texto_analise(c, p):
     
     txt.append("")
     
-    txt.append("**🏁 O Cenário da Corrida:**") # <-- TÍTULO ALTERADO AQUI
+    txt.append("**🏁 O Cenário da Corrida:**")
     
     elegiveis = [d for d in p["rank"] if not d.get("bloqueado")]
     bloqueados = [d for d in p["rank"] if d.get("bloqueado")]
@@ -403,41 +403,51 @@ def gerar_texto_analise(c, p):
         fav = elegiveis[0]
         bloc_acima = [d for d in bloqueados if d["pos"] < fav["pos"]]
         if bloc_acima:
-            txt.append(f"- 🏆 Melhor Elegível: O favorito ({bloc_acima[0]['name']}) está bloqueado 🚫. O cão mais seguro é o {fav['name']} (Posição {fav['pos']} | Recup: {fav['rec']:+.1f}%).")
+            b_name = bloc_acima[0]['name']
+            f_name = fav['name']
+            txt.append(f"- 🏆 Melhor Elegível: O favorito absoluto ({b_name}) está bloqueado 🚫. O cão mais seguro é o {f_name} (Posição {fav['pos']} | Recup: {fav['rec']:+.1f}%).")
         else:
+            f_name = fav['name']
             txt_rec = f" Ele tem recuperação excelente ({fav['rec']:+.1f}%)." if fav['rec'] > 10 else ""
-            txt.append(f"- 🏆 Favorito Claro: O {fav['name']} domina o Overall ({fav['overall']:.1f}).{txt_rec}")
+            txt.append(f"- 🏆 Favorito Claro: O {f_name} domina o Overall ({fav['overall']:.1f}).{txt_rec}")
 
     if bloqueados:
         b = bloqueados[0]
+        b_name = b['name']
         avb_info = ""
         if elegiveis:
             for V, D, prob, star in p["s1"]:
-                if (V["name"] == elegiveis[0]["name"] and D["name"] == b["name"]) or (D["name"] == elegiveis[0]["name"] and V["name"] == b["name"]):
+                if (V["trap"] == elegiveis[0]["trap"] and D["trap"] == b["trap"]) or (D["trap"] == elegiveis[0]["trap"] and V["trap"] == b["trap"]):
                     avb_info = f" AVB apertado contra o elegível ({prob:.1f}%)."
                     break
-        txt.append(f"- 🚫 Falso Favorito Bloqueado: O {b['name']} tem Overall alto ({b['overall']:.1f}), mas foi pego pela Trava (Conf. {b['conf']:.0f}%).{avb_info}")
+        txt.append(f"- 🚫 Falso Favorito Bloqueado: O {b_name} tem Overall alto ({b['overall']:.1f}), mas foi pego pela Trava (Conf. {b['conf']:.0f}%).{avb_info}")
 
     if alvos:
-        nomes_alvo = ", ".join([d["name"] for d in alvos])
+        nomes_alvo = ", ".join([d['name'] for d in alvos])
         txt.append(f"- 🎯 Alvo(s): {nomes_alvo} (fora do Top 3 largada e recuperação ≤ 0%).")
 
     if top_split and top_split["msplit"] < 5.0:
-        txt.append(f"- ⚠️ Alerta de Dados: O {top_split['name']} tem Split muito rápido ({top_split['msplit']:.2f}). Pode ser erro na base (considerado 'Melhor Pace').")
-    elif top_ritmo and top_split and top_ritmo["name"] != top_split["name"]:
-        txt.append(f"- 💡 Análise de Pace: O {top_split['name']} tem a melhor largada, mas o {top_ritmo['name']} tem o melhor ritmo final.")
+        s_name = top_split['name']
+        txt.append(f"- ⚠️ Alerta de Dados: O {s_name} tem Split muito rápido ({top_split['msplit']:.2f}). Pode ser erro na base (considerado 'Melhor Pace').")
+    elif top_ritmo and top_split and top_ritmo["trap"] != top_split["trap"]:
+        s_name = top_split['name']
+        r_name = top_ritmo['name']
+        txt.append(f"- 💡 Análise de Pace: O {s_name} tem a melhor largada, mas o {r_name} tem o melhor ritmo final.")
     elif not top_split and top_ritmo:
         top_split_pos = min([d for d in p["rank"] if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"], default=None)
-        if top_split_pos and top_ritmo["name"] != top_split_pos["name"]:
-             txt.append(f"- 💡 Análise de Pace: O {top_split_pos['name']} assume a liderança na 1ª curva, mas o {top_ritmo['name']} tem o melhor ritmo de prova final.")
+        if top_split_pos and top_ritmo["trap"] != top_split_pos["trap"]:
+             s_name = top_split_pos['name']
+             r_name = top_ritmo['name']
+             txt.append(f"- 💡 Análise de Pace: O {s_name} assume a liderança na 1ª curva, mas o {r_name} tem o melhor ritmo de prova final.")
 
     pior_rec = min([d for d in p["rank"] if d.get("rec") is not None], key=lambda x: x["rec"], default=None)
     if pior_rec and pior_rec["rec"] < -10.0:
-        txt.append(f"- ⚠️ Tráfego: O {pior_rec['name']} tem recuperação ruim ({pior_rec['rec']:+.1f}%).")
+        rec_name = pior_rec['name']
+        txt.append(f"- ⚠️ Tráfego: O {rec_name} tem recuperação ruim ({pior_rec['rec']:+.1f}%).")
 
     dropping = [d for d in p["rank"] if d.get("cat_mod", 0) > 0]
     if dropping:
-        nomes = ", ".join([f"{d['name']}" for d in dropping])
+        nomes = ", ".join([d['name'] for d in dropping])
         txt.append(f"- 📉 Queda de Classe: {nomes} desceu(ram) de categoria hoje.")
 
     top3_ms = p["ctx"].get("top3_ms", set())
