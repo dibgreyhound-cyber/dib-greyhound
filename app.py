@@ -23,7 +23,6 @@ LISTA_CANDIDATOS = [
     BASE + "/meeting-list/blocks.sd?r_date={d}&blocks=list",
     BASE + "/meeting/list.sd?r_date={d}",
 ]
-# Endpoints mais completos para resultados
 RESULTADO_CANDIDATOS = (
     [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult", "header%2Cresult%2Ccard", "card%2Cresult", "result%2Cheader")]
     + [BASE + "/result/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult")]
@@ -71,16 +70,19 @@ def get_http():
                 except Exception: pass
                 self.pronto = True
             r = self.s.get(url, timeout=timeout)
-            if r.status_code in (403, 429):
+            # Se bloquear ou der erro no servidor (403, 429, 500, 580), espera 2s e tenta mais 2 vezes
+            tentativas = 0
+            while r.status_code in (403, 429, 500, 502, 503, 580) and tentativas < 2:
                 time.sleep(2.0)
                 r = self.s.get(url, timeout=timeout)
+                tentativas += 1
             return r
 
         def get_resultado(self, url, timeout=10):
             try: self.s.get(BASE + "/results", timeout=5)
             except Exception: pass
             time.sleep(0.5)
-            return self.s.get(url, timeout=timeout)
+            return self.get(url, timeout=timeout)
             
     return _Http()
 
@@ -216,16 +218,28 @@ def tentar(urls, parser, is_resultado=False):
     tentativas, achado, primeira = [], [], None
     for u in urls:
         curto = u.replace(BASE, "")
-        time.sleep(0.4)
+        time.sleep(0.3)
         try:
             if is_resultado:
-                r = get_http().get_resultado(u, timeout=8)
+                r = get_http().get_resultado(u, timeout=10)
             else:
-                r = get_http().get(u, timeout=8)
-            js = r.json() if r.status_code == 200 else None
+                r = get_http().get(u, timeout=10)
+            
+            # Tratamento seguro para não quebrar se o site devolver HTML em vez de JSON
+            if r.status_code == 200 and r.text.strip():
+                try:
+                    js = r.json()
+                except json.JSONDecodeError:
+                    js = None
+                    tentativas.append({"Endereço": curto, "Status": "HTML/Erro", "Achados": 0, "Chaves": r.text[:40]})
+                    continue
+            else:
+                js = None
+                
         except Exception as e:
             tentativas.append({"Endereço": curto, "Status": f"erro: {str(e)[:40]}", "Achados": 0, "Chaves": ""})
             continue
+            
         res = parser(js) if js is not None else []
         tentativas.append({"Endereço": curto, "Status": r.status_code, "Achados": len(res),
                            "Chaves": _chaves(js) if js is not None else ""})
@@ -253,8 +267,9 @@ def buscar_resultado(race_id, data_str):
 def buscar_form_raw(race_id, data_str):
     try:
         r = get_http().get(f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks=form", timeout=15)
-        r.raise_for_status()
-        return r.json().get("form", {}).get("dogs", [])
+        if r.status_code == 200:
+            return r.json().get("form", {}).get("dogs", [])
+        return []
     except Exception:
         return []
 
@@ -305,6 +320,7 @@ def preparar(race_id, r_date, c, classe_in, dist_in, pp_in, so_antes=False):
     if chave not in cache:
         res = dib.extrair_dados_racingpost(f"{BASE}/#card/race_id={race_id}&r_date={r_date}")
         if not res or not res[0]:
+            st.error("⚠️ O Racing Post não respondeu ao pedido desta corrida agora (Erro 580 de servidor). Tente novamente em alguns segundos ou escolha outra corrida.")
             return None
         cache[chave] = res
     dogs, meta, meta_info = cache[chave]
