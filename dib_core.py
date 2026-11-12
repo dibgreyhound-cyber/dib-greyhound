@@ -31,14 +31,14 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 3.4)
+# CONFIGURAÇÃO GLOBAL (DIB 3.5)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
     "REMARKS_PTS": {"early": 1.0, "slowaway": -1.0, "firstbend": -1.0},
-    "TRAP_VAZIA": 1.0, "TRAFEGO_SEVERO": -2.0, "CONF_MIN_VENCEDOR": 60.0,
+    "TRAP_VAZIA": 1.0, "TRAFEGO_SEVERO": -2.0, "CONF_MIN_VENCEDOR": 40.0, # <-- DIB 3.5: Reduzido de 60 para 40
     
     "VEL_PTS": {"tadj": 100, "mtime": 80, "msplit": 80, "ritmo": 60},
     "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 10, 
@@ -371,6 +371,7 @@ def finalizar(ds, ctx):
     if not ms_rank:
         ms_rank = sorted([d for d in ok if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"])
     top3_ms = {d["name"] for d in ms_rank[:3]}
+    top_split_name = ms_rank[0]["name"] if ms_rank else None # DIB 3.5
     ctx["top3_ms"] = top3_ms
     
     ritmo_rank = sorted([d for d in ok if d.get("ritmo")], key=lambda x: x["ritmo"])
@@ -412,7 +413,8 @@ def finalizar(ds, ctx):
     for i, d in enumerate(ok, 1):
         d["pos"] = i
         d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"] or d["forma_trial"]
-        d["alvo"] = (d["name"] not in top3_ms) and (d["rec"] <= 0)
+        # DIB 3.5: Não é alvo se estiver no Top 3 Split OU for o Melhor Split da prova
+        d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d["rec"] <= 0)
         d["elegivel"] = not d["bloqueado"]
     return ok, top3_ms
 
@@ -655,14 +657,22 @@ def gerar_observacoes(rank, avbs, ctx):
         nomes_alvo = ", ".join([TRAP_EMOJI.get(d['trap'], str(d['trap'])) for d in alvos])
         st.markdown(f"- **🎯 Alvo(s):** O(s) cão(es) **{nomes_alvo}** foram marcados como alvo (fora do Top 3 largada e recuperação ≤ 0%). Vulneráveis no bolo.")
 
-    # 4. Alerta de Dados / Pace
-    if top_split and top_split["msplit"] < 5.0:
+    # 4. Alerta de Dados / Pace / Zebra
+    all_splits = [d["msplit"] for d in rank if d.get("msplit") is not None]
+    is_irish_metric = all(s < 2.0 for s in all_splits) if all_splits else False
+
+    if top_split and top_split["msplit"] < 5.0 and not is_irish_metric:
         s_trap = TRAP_EMOJI.get(top_split['trap'], str(top_split['trap']))
         st.markdown(f"- **⚠️ Alerta de Dados:** O **{s_trap}** aparece com Split muito rápido ({top_split['msplit']:.2f}). Pode ser erro de digitação da base, mas ele foi considerado o 'Melhor Pace'.")
     elif top_ritmo and top_split and top_ritmo["trap"] != top_split["trap"]:
         s_trap = TRAP_EMOJI.get(top_split['trap'], str(top_split['trap']))
         r_trap = TRAP_EMOJI.get(top_ritmo['trap'], str(top_ritmo['trap']))
         st.markdown(f"- **💡 Análise de Pace:** O **{s_trap}** tem a melhor largada (Split), mas o **{r_trap}** tem o melhor ritmo final.")
+        
+        # Alerta de Zebra (DIB 3.5)
+        if top_split["pos"] > 3:
+            st.markdown(f"- **🦓 Alerta de Zebra:** O **{s_trap}** (Posição {top_split['pos']}) tem o melhor Early Pace da corrida. Se ele não for atrapalhado, pode ditar o ritmo e surpreender os favoritos.")
+            
     elif not top_split and top_ritmo:
         top_split_pos = min([d for d in rank if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"], default=None)
         if top_split_pos and top_ritmo["trap"] != top_split_pos["trap"]:
