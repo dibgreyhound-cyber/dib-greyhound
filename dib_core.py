@@ -31,7 +31,7 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 3.7)
+# CONFIGURAÇÃO GLOBAL (DIB 3.8)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
@@ -312,18 +312,13 @@ def analisar_galgo(dog, ctx):
     # --- INÍCIO DA CORREÇÃO DA CATEGORIA (DIB 3.7) ---
     today_n = ctx.get("classe_n")
     
-    # 1. Bônus/Penalidade: Baseado na ÚLTIMA corrida vs Hoje
     last_n = grade_num(R[0]["grade"])
     mod = 0.0
     if today_n and last_n:
-        # Se hoje é A3 (3) e a última foi A2 (2), ele desceu de categoria: bônus positivo.
         mod = CFG["CAT_BONUS"] if today_n > last_n else (-CFG["CAT_BONUS"] if today_n < last_n else 0.0)
 
-    # 2. Base da Categoria: Média de todas as últimas corridas
     valid_grades = [grade_num(r["grade"]) for r in R if grade_num(r["grade"]) is not None]
     avg_grade_n = sum(valid_grades) / len(valid_grades) if valid_grades else (today_n or 0)
-    
-    # A base usa a média (Ex: se a média é A2.6, base = 16.0 - 2.6 = 13.4)
     base = 16.0 - avg_grade_n
     
     d["cat_mod"], d["cat"] = mod, base + mod
@@ -500,9 +495,14 @@ def montar_avbs(rank, ctx):
             else:
                 V, D, prob = B, A, 100.0 - prob_A
                 
-            # Regra 1: Galgo com Alvo não pode ser Vencedor no AVB (e Bloqueados também não)
+            # Regra 1: Galgo com Alvo ou Bloqueado não pode ser Vencedor no AVB
             if V.get("bloqueado", False) or V.get("alvo", False):
                 continue
+                
+            # Regra 3: O Vencedor tem que ter um Tempo Ajustado melhor (menor) que o Desafiante
+            if V.get("tadj") is not None and D.get("tadj") is not None:
+                if V["tadj"] >= D["tadj"]: # Se o tempo do Vencedor for maior ou igual (pior), descarta
+                    continue
                 
             if prob >= 60.0:
                 s1.append((V, D, prob, True))
