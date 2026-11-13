@@ -167,7 +167,7 @@ def tentar(urls, parser):
         time.sleep(0.3)
         try:
             r = http().get(u, timeout=8)
-        except Exception as e:
+        except Exception:
             tentativas.append({"Status": f"erro", "Achados": 0, "Endereço": curto})
             continue
         js = None
@@ -346,7 +346,7 @@ def mostrar_form(c):
             n = dib.norm_run(f)
             g = lambda k: dib.pick_fb(f, k)
             data = n["date"].strftime("%d%b%y") if n["date"] else n["date_str"]
-            rows.append([data, n["track"], f"{int(n['dist'])}m" if n["dist"] else "", n["trap"] or "", g("split") or "", n["bends"], g("fin") or "", g("by") or "", _get(f, "winsec", EXTRA) if 'EXTRA' in globals() else "", g("remarks") or "", g("wntm") or "", g("gng") or "", g("weight") or "", "", n["grade"], g("caltm") or ""])
+            rows.append([data, n["track"], f"{int(n['dist'])}m" if n["dist"] else "", n["trap"] or "", g("split") or "", n["bends"], g("fin") or "", g("by") or "", "", g("remarks") or "", g("wntm") or "", g("gng") or "", g("weight") or "", "", n["grade"], g("caltm") or ""])
         if rows: tabela_html(heads, rows)
 
 
@@ -389,7 +389,7 @@ def main():
                 if hoje: lista = [c for c in lista if c["hora"] < limite]
                 lista = sorted(lista, key=lambda c: (c["hora"], c["pista"]), reverse=True)
             for c in lista:
-                ativo = sel and sel.get("id") == c["id"] and sel.get("modo"] == modo
+                ativo = sel and sel.get("id") == c["id"] and sel.get("modo") == modo
                 rotulo = f"{'▶ ' if ativo else ''}{c['hora']} · {c['pista']} R{c['num'] or '?'} · {c['grade'] or '?'} · {c['dist'] or '?'}m"
                 st.button(rotulo, key=f"{modo}_{c['id']}", use_container_width=True, on_click=escolher, args=(c, data_str, modo))
 
@@ -406,7 +406,7 @@ def main():
 
     sel = st.session_state.get("sel")
     if sel:
-        if sel.get("modo"] == "res":
+        if sel.get("modo") == "res":
             aba1, aba2 = st.tabs(["📊 Resultado", "📄 Form"])
             with aba1: mostrar_resultado(sel, classe_in, dist_in, pp_in)
         else:
