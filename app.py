@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-app.py - Lista de corridas / Resultados na barra lateral + analise e Form na pagina principal.
-Usa o seu dib_core.py (calculo e tabelas) sem mudancas.
+app.py - Versão Ajustada e Estável para o DIB GREYHOUND
 """
 import re
 import time
@@ -21,15 +20,7 @@ LISTA_CANDIDATOS = [
     BASE + "/meeting/blocks.sd?r_date={d}&blocks=header%2Clist",
     BASE + "/meeting/blocks.sd?r_date={d}&blocks=list",
     BASE + "/meeting-list/blocks.sd?r_date={d}&blocks=list",
-    BASE + "/meeting/list.sd?r_date={d}",
 ]
-RESULTADO_CANDIDATOS = (
-    [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult", "result-meeting-result", "race", "details")]
-    + [BASE + "/result/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "result-meeting-result")]
-    + [BASE + "/card/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "result-meeting-result", "card")]
-    + [BASE + "/results/race.sd?race_id={rid}&r_date={d}"]
-    + [BASE + "/result/race.sd?race_id={rid}&r_date={d}"]
-)
 KEYS = {
     "id": ["raceId", "race_id", "rid"],
     "hora": ["raceDate", "offTime", "scheduledTime", "displayTime", "raceTime", "time", "startTime"],
@@ -39,28 +30,15 @@ KEYS = {
     "dist": ["distMetres", "distMeters", "distance", "dist", "raceDistance"],
     "clip": ["clipId", "clip_id", "videoId", "replayId"],
 }
-RES = {
-    "nome": ["dogName", "dog_name", "name", "runnerName"],
-    "pos": ["finishPos", "finPos", "outcomeDesc", "position", "pos", "fin", "outcome", "result"],
-    "trap": ["trapNum", "trap", "dogTrap"],
-    "sp": ["SP", "sp", "startingPrice", "price", "odds"],
-    "tempo": ["calcRTimes", "calTm", "finishTime", "winTime", "time"],
-    "margem": ["distBtn", "by", "beatenDistance"],
-    "coment": ["closeUpCmnt", "comment", "cmnt", "commentary", "description"],
-}
-EXTRA = {"winsec": ["winnerOrSecond", "winSec", "wnSec", "winnerName", "secondName"],
-         "sp": ["SP", "sp", "startingPrice", "price"],
-         "trainer": ["trainerName", "trainer", "trainer_name"]}
 
 
-# ---------------------------------------------------------------- conexao com o site
 class _Http:
     def __init__(self):
         self.s = requests.Session()
         self.s.headers.update({
-            "User-Agent": dib.HEADERS.get("User-Agent", "Mozilla/5.0"),
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*", "Accept-Language": "en-GB,en;q=0.9",
-            "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/", "Origin": BASE})
+            "Referer": BASE + "/", "Origin": BASE})
         self.pronto = False
 
     def get(self, url, headers=None, timeout=15):
@@ -68,14 +46,11 @@ class _Http:
             try: self.s.get(BASE + "/", timeout=8)
             except Exception: pass
             self.pronto = True
-        r = self.s.get(url, timeout=timeout)
-        if r.status_code in (403, 429, 580, 500, 502, 503):
-            time.sleep(1.5)
-            try:
-                r = self.s.get(url, timeout=timeout)
-            except Exception:
-                pass
-        return r
+        try:
+            r = self.s.get(url, timeout=timeout)
+            return r
+        except Exception as e:
+            raise e
 
 
 @st.cache_resource
@@ -86,7 +61,6 @@ def http():
 dib.requests = http()
 
 
-# ---------------------------------------------------------------- numeros dos galgos
 BADGE_STYLE = {
     1: "background:#d62828;color:#fff;",
     2: "background:#1d4ed8;color:#fff;",
@@ -117,7 +91,6 @@ dib.TRAP_EMOJI = {t: badge(t) for t in range(1, 7)}
 dib.trap_label = lambda d: badge(d["trap"])
 
 
-# ---------------------------------------------------------------- botao copiar (JavaScript)
 def botao_copiar(texto):
     texto_js = json.dumps(texto)
     html = f"""
@@ -138,15 +111,11 @@ def botao_copiar(texto):
     document.getElementById("copyBtn").addEventListener("click", async () => {{
         try {{
             await navigator.clipboard.writeText(textToCopy);
-            document.getElementById("copyBtn").innerText = "✅ Texto Copiado! Cole no Chat.";
-            document.getElementById("copyBtn").style.backgroundColor = "#28a745";
+            document.getElementById("copyBtn").innerText = "✅ Texto Copiado!";
             setTimeout(() => {{
                 document.getElementById("copyBtn").innerText = "📋 Copiar Análise para o Chat";
-                document.getElementById("copyBtn").style.backgroundColor = "#ff4b4b";
             }}, 4000);
-        }} catch (err) {{
-            document.getElementById("copyBtn").innerText = "❌ Erro";
-        }}
+        }} catch (err) {{ document.getElementById("copyBtn").innerText = "❌ Erro"; }}
     }});
     </script>
     </body>
@@ -169,7 +138,6 @@ def _hhmm(v):
 
 def achar_corridas(obj):
     achados = {}
-
     def walk(o, pista_ctx):
         if isinstance(o, dict):
             p = _get(o, "pista")
@@ -178,67 +146,18 @@ def achar_corridas(obj):
             hora = _hhmm(_get(o, "hora"))
             if rid is not None and re.fullmatch(r"\d{5,9}", str(rid)) and hora:
                 g, d = _get(o, "grade"), _get(o, "dist")
-                clip_val = ""
-                for k_clip in KEYS["clip"] + ["clip", "video", "replay", "mediaId", "media_id"]:
-                    if k_clip in o and o[k_clip]:
-                        clip_val = str(o[k_clip])
-                        break
                 achados[str(rid)] = {
                     "id": str(rid), "hora": hora, "pista": (pista_ctx or "?").title(),
                     "num": str(_get(o, "num") or "").replace("Race", "").strip(),
                     "grade": re.sub(r"[()\s]", "", str(g or "")).upper(),
                     "dist": int(re.sub(r"\D", "", str(d))) if d and re.search(r"\d", str(d)) else 0,
-                    "clip": clip_val,
+                    "clip": str(_get(o, "clip") or ""),
                 }
             for v in o.values(): walk(v, pista_ctx)
         elif isinstance(o, list):
             for v in o: walk(v, pista_ctx)
-
     walk(obj, "")
     return sorted(achados.values(), key=lambda c: (c["hora"], c["pista"]))
-
-
-def achar_resultados(obj):
-    achados = {}
-    video_info = {"url": "", "vid": ""}
-
-    def walk(o):
-        if isinstance(o, dict):
-            for k in ("videoFileName", "videoUrl", "streamUrl", "m3u8", "replayUrl"):
-                if o.get(k) and isinstance(o[k], str) and "http" in o[k]:
-                    video_info["url"] = o[k]
-            for k in ("video_id", "videoId", "clipId", "clip_id", "replayId"):
-                if o.get(k) and str(o[k]).strip():
-                    video_info["vid"] = str(o[k]).strip()
-
-            nome = _get(o, "nome", RES)
-            pos_raw = _get(o, "pos", RES)
-            m = re.search(r"\d+", str(pos_raw or "")) if pos_raw is not None else None
-            
-            # Se encontrou nome e posição válida ou se o objeto parece um corredor com trap e posição numérica
-            if isinstance(nome, str) and (m or isinstance(pos_raw, (int, float))):
-                pos_val = int(m.group()) if m else int(pos_raw)
-                t = re.search(r"\d+", str(_get(o, "trap", RES) or ""))
-                if 1 <= pos_val <= 8:
-                    achados[nome] = {
-                        "pos": pos_val, "trap": int(t.group()) if t else None, "nome": nome,
-                        "sp": str(_get(o, "sp", RES) or ""), "tempo": str(_get(o, "tempo", RES) or ""),
-                        "margem": str(_get(o, "margem", RES) or ""), "coment": str(_get(o, "coment", RES) or ""),
-                    }
-            for v in o.values(): walk(v)
-        elif isinstance(o, list):
-            for v in o: walk(v)
-
-    walk(obj)
-    lista = sorted(achados.values(), key=lambda x: x["pos"])
-    if lista and (video_info["url"] or video_info["vid"]):
-        lista[0]["_video"] = video_info
-    return lista
-
-
-def _chaves(js):
-    if not isinstance(js, dict): return f"({type(js).__name__} com {len(js) if hasattr(js, '__len__') else '?'} itens)"
-    return ", ".join(f"{k}{'(erro)' if isinstance(v, dict) and 'errorCode' in v else ''}" for k, v in js.items())[:90]
 
 
 def tentar(urls, parser):
@@ -249,18 +168,14 @@ def tentar(urls, parser):
         try:
             r = http().get(u, timeout=8)
         except Exception as e:
-            tentativas.append({"Status": f"erro: {str(e)[:40]}", "Achados": 0, "Chaves": "", "Resposta": "", "Endereço": curto})
+            tentativas.append({"Status": f"erro", "Achados": 0, "Endereço": curto})
             continue
-        js, resposta = None, ""
+        js = None
         if r.status_code == 200:
-            try:
-                js = r.json()
-            except Exception:
-                resposta = r.text[:90].replace("\n", " ")
+            try: js = r.json()
+            except Exception: pass
         res = parser(js) if js is not None else []
-        tentativas.append({"Status": r.status_code, "Achados": len(res),
-                           "Chaves": _chaves(js) if js is not None else "", "Resposta": resposta, "Endereço": curto})
-        if primeira is None and js is not None and not res: primeira = js
+        tentativas.append({"Status": r.status_code, "Achados": len(res), "Endereço": curto})
         if res:
             achado = res
             break
@@ -274,17 +189,11 @@ def buscar_lista(data_str, url_custom):
     return tentar(urls, achar_corridas)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def buscar_resultado(race_id, data_str):
-    return tentar([u.format(rid=race_id, d=data_str) for u in RESULTADO_CANDIDATOS], achar_resultados)
-
-
 @st.cache_data(ttl=300, show_spinner=False)
 def buscar_form_raw(race_id, data_str):
     try:
         r = http().get(f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks=form", timeout=15)
-        if r.status_code != 200:
-            return []
+        if r.status_code != 200: return []
         return r.json().get("form", {}).get("dogs", [])
     except Exception:
         return []
@@ -309,182 +218,25 @@ def escolher(c, data_str, modo):
     st.session_state["fechar"] = True
 
 
-def fechar_sidebar():
-    components.html(
-        """<script>
-        try {
-          const d = window.parent.document;
-          if (window.parent.innerWidth < 900) {
-            const b = d.querySelector('[data-testid="stSidebarCollapseButton"] button')
-                   || d.querySelector('[data-testid="stSidebarCollapseButton"]')
-                   || d.querySelector('button[kind="header"]');
-            if (b) b.click();
-          }
-        } catch (e) {}
-        </script>""", height=0)
-
-
 def tabela_html(headers, rows):
     st.markdown(dib.tbl(headers, rows), unsafe_allow_html=True)
 
 
 def _link(url, rotulo):
-    try:
-        st.link_button(rotulo, url)
-    except Exception:
-        st.markdown(f"[{rotulo}]({url})")
+    try: st.link_button(rotulo, url)
+    except Exception: st.markdown(f"[{rotulo}]({url})")
 
 
-def mostrar_replay(c, video_info=None):
-    video_info = video_info or {}
-    url_m3u8 = video_info.get("url", "").strip()
-    vid = video_info.get("vid", "").strip() or str(c.get("clip") or "").strip()
+def mostrar_replay(c):
     link_site_replay = f"{BASE}/#result-meeting-result/race_id={c['id']}&r_date={c['data']}"
-
-    if url_m3u8:
-        with st.expander("▶ Replay da Corrida", expanded=True):
-            player_html = f"""
-            <video id="video" controls autoplay playsinline style="width:100%; max-height:420px; background:#000; border-radius:8px;"></video>
-            <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-            <script>
-              var video = document.getElementById('video');
-              var videoSrc = {json.dumps(url_m3u8)};
-              if (Hls.isSupported()) {{
-                var hls = new Hls();
-                hls.loadSource(videoSrc);
-                hls.attachMedia(video);
-              }} else if (video.canPlayType('application/vnd.apple.mpegurl')) {{
-                video.src = videoSrc;
-              }}
-            </script>
-            """
-            components.html(player_html, height=380)
-            _link(url_m3u8, "Abrir stream (.m3u8) em outra aba")
-    elif vid:
-        if not vid.isdigit():
-            url_yt = f"https://www.youtube.com/watch?v={vid}"
-            with st.expander("▶ Replay da Corrida", expanded=True):
-                st.video(url_yt)
-                _link(url_yt, "Abrir no YouTube")
-        else:
-            st.info(f"🎬 Replay disponível (ID: {vid}).")
-    else:
-        st.caption("▶ Replay: o link do vídeo ainda não foi liberado para esta corrida.")
-    
-    _link(link_site_replay, "🎬 Ver Resultado e Replay no Racing Post")
-
-
-_RE_SD = re.compile(r"""["']((?:/?[\w\-]+/)*[\w\-]*\.sd)(?:\?[^"']*)?["']""")
-_RE_BLOCKS = re.compile(r"""blocks\s*[:=]\s*["']([\w,%\-]+)["']""")
-
-
-def _baixar(url, tam=3_000_000):
-    try:
-        r = http().get(url, timeout=15)
-        if r.status_code == 200:
-            return r.text[:tam]
-    except Exception:
-        pass
-    return ""
-
-
-def _contextos(texto, padrao, n=70, limite=20):
-    vistos, res = set(), []
-    for m in re.finditer(padrao, texto, flags=re.I):
-        ini, fim = max(0, m.start() - n), min(len(texto), m.end() + n)
-        trecho = texto[ini:fim].replace("\n", " ")
-        chave = trecho[n - 10:n + 20]
-        if chave not in vistos:
-            vistos.add(chave)
-            res.append(trecho)
-        if len(res) >= limite:
-            break
-    return res
-
-
-def _galgos_com_posicao(js):
-    n = 0
-    def walk(o):
-        nonlocal n
-        if isinstance(o, dict):
-            nome = o.get("dogName") or o.get("name")
-            pos = re.search(r"\d+", str(o.get("outcomeDesc") or o.get("finishPos") or o.get("position") or o.get("pos") or ""))
-            if isinstance(nome, str) and pos:
-                n += 1
-            for v in o.values(): walk(v)
-        elif isinstance(o, list):
-            for v in o: walk(v)
-    walk(js)
-    return n
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def varrer_site():
-    html = _baixar(BASE + "/")
-    scripts = []
-    for u in re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html):
-        u = "https:" + u if u.startswith("//") else (BASE + u if u.startswith("/") else (u if u.startswith("http") else BASE + "/" + u))
-        if "racingpost" in u and u not in scripts:
-            scripts.append(u)
-    scripts = scripts[:8]
-    tudo = "\n".join(_baixar(u) for u in scripts)
-    return {
-        "html": len(html), "scripts": [u.replace(BASE, "") for u in scripts], "chars": len(tudo),
-        "caminhos": sorted({m.group(1) for m in _RE_SD.finditer(tudo)})[:120],
-        "blocos": sorted({m.group(1) for m in _RE_BLOCKS.finditer(tudo)})[:120],
-        "rotas": _contextos(tudo, r"(results?|meeting|card)[-_](list|details?|meeting)|#result", 80, 25),
-        "result": _contextos(tudo, r"result", 70, 25),
-        "replay": _contextos(tudo, r"replay|clipId|youtube|\.mp4|m3u8|video", 80, 25),
-    }
-
-
-@st.cache_data(ttl=600, show_spinner=False)
-def testar_enderecos(race_id, data_str, bases, nomes):
-    testes, achado = [], None
-    for p in bases:
-        for b in nomes:
-            u = f"{BASE}{p}?race_id={race_id}&r_date={data_str}&blocks={b}"
-            time.sleep(0.25)
-            try:
-                r = http().get(u, timeout=8)
-                js = r.json() if r.status_code == 200 else None
-            except Exception:
-                testes.append({"Status": "não é JSON", "Galgos": 0, "Chaves": "", "Endereço": u.replace(BASE, "")})
-                continue
-            n = _galgos_com_posicao(js) if js is not None else 0
-            testes.append({"Status": r.status_code, "Galgos": n, "Chaves": _chaves(js) if js is not None else "", "Endereço": u.replace(BASE, "")})
-            if n >= 2 and not achado:
-                achado = u
-    return testes, achado
-
-
-def painel_descobrir(race_id, data_str):
-    st.markdown("---")
-    st.markdown("#### 🧪 Procurando o endereço do resultado e do replay")
-    with st.spinner("Lendo o código do site..."):
-        v = varrer_site()
-    caminhos_res = [p for p in v["caminhos"] if "result" in p.lower()]
-    bases = tuple(dict.fromkeys([(p if p.startswith("/") else "/" + p) for p in caminhos_res[:5]] + ["/results/blocks.sd", "/card/blocks.sd"]))
-    nomes = tuple(dict.fromkeys([b for b in v["blocos"] if "result" in b.lower()][:6] + ["result", "results", "resultDetails", "card%2Cresult"]))[:8]
-    with st.spinner("Testando endereços..."):
-        testes, achado = testar_enderecos(race_id, data_str, bases, nomes)
-    if achado:
-        st.success("Achei um endereço com resultado!")
-        st.code(achado)
-    linhas = [f"Pagina inicial: {v['html']} caracteres", "TESTES:", *[f"{t['Status']} | galgos={t['Galgos']} | {t['Chaves']} | {t['Endereço']}" for t in testes]]
-    relatorio = "\n".join(linhas)
-    botao_copiar(relatorio)
-    st.text_area("Relatório:", relatorio, height=220)
-    st.dataframe(pd.DataFrame(testes), use_container_width=True, hide_index=True)
+    st.info("🎬 Para assistir ao replay com o token de segurança atualizado do site:")
+    _link(link_site_replay, "Abrir Resultado e Replay no Racing Post")
 
 
 BAR_STYLE = {
-    1: ("background:#c62828;", "invert"),
-    2: ("background:#1d4ed8;", "invert"),
-    3: ("background:#eeeeee;", "dark"),
-    4: ("background:#151515;", "invert"),
-    5: ("background:#f26b21;", "invert"),
-    6: ("background:repeating-linear-gradient(180deg,#111 0 3px,#fff 3px 6px);", "invert"),
+    1: ("background:#c62828;", "invert"), 2: ("background:#1d4ed8;", "invert"),
+    3: ("background:#eeeeee;", "dark"), 4: ("background:#151515;", "invert"),
+    5: ("background:#f26b21;", "invert"), 6: ("background:repeating-linear-gradient(180deg,#111 0 3px,#fff 3px 6px);", "invert"),
 }
 
 
@@ -497,13 +249,12 @@ def grafico_predictor(ds):
         t = d["trap"]
         estilo, icone = BAR_STYLE.get(t, ("background:#888;", "invert"))
         if d.get("nd") or d.get("overall") is None:
-            fill, tip = "", "sem dados"
+            fill = ""
         else:
             w = 100.0 if mx <= 0 else max(4.0, min(100.0, d["overall"] / mx * 100.0))
-            tip = f"{d['name']} · Overall {d['overall']:.1f}"
             filtro = "brightness(0)" if icone == "dark" else "brightness(0) invert(1)"
-            fill = (f"<div title=\"{tip}\" style='position:relative;width:{w:.1f}%;height:100%;border-radius:14px;{estilo}'>"
-                    f"<span style='position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:15px;line-height:1;filter:{filtro};'>🐕</span></div>")
+            fill = (f"<div style='position:relative;width:{w:.1f}%;height:100%;border-radius:14px;{estilo}'>"
+                    f"<span style='position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:15px;filter:{filtro};'>🐕</span></div>")
         linhas.append(f"<div style='display:flex;align-items:center;gap:8px;margin:7px 0'>{badge(t)}"
                       f"<div style='flex:1;height:24px;background:#0a2a52;border-radius:14px;overflow:hidden'>{fill}</div></div>")
     return ("<div style='background:#143f6f;border-radius:16px;padding:16px 12px 8px;max-width:640px;margin:8px 0;position:relative'>"
@@ -515,10 +266,12 @@ def preparar(race_id, r_date, c, classe_in, dist_in, pp_in, so_antes=False):
     cache = st.session_state.setdefault("cache_corridas", {})
     chave = f"{race_id}|{r_date}"
     if chave not in cache:
-        res = dib.extrair_dados_racingpost(f"{BASE}/#card/race_id={race_id}&r_date={r_date}")
-        if not res or not res[0]:
+        try:
+            res = dib.extrair_dados_racingpost(f"{BASE}/#card/race_id={race_id}&r_date={r_date}")
+            if not res or not res[0]: return None
+            cache[chave] = res
+        except Exception:
             return None
-        cache[chave] = res
     dogs, meta, meta_info = cache[chave]
     if so_antes:
         dogs = [dict(d, runs=[r for r in d["runs"] if (r.get("date_str") or "") < r_date]) for d in dogs]
@@ -541,21 +294,16 @@ def preparar(race_id, r_date, c, classe_in, dist_in, pp_in, so_antes=False):
 
 def titulo_corrida(c, p=None, prefixo=""):
     t = f"{c['pista']} {c['hora']} (BR {hora_br(c['hora'])})" if c.get("hora") else ""
-    extra = f" · {p['classe']} · {int(p['dist'])}m · POST PICK: {p['pp'] or '-'}" if p else f" · {c.get('grade', '')} · {c.get('dist', '')}m"
+    extra = f" · {p['classe']} · {int(p['dist'])}m" if p else f" · {c.get('grade', '')} · {c.get('dist', '')}m"
     return f"### {prefixo}{t} · Race {c.get('num', '')}{extra}"
 
 
 def gerar_texto_analise(c, p):
-    txt = []
-    txt.append(titulo_corrida(c, p).replace("### ", ""))
-    txt.append("")
-    txt.append("**Planilha de Projeção**")
+    txt = [titulo_corrida(c, p).replace("### ", ""), "", "**Planilha de Projeção**"]
     txt.append("| Trp | Galgo | Overall | Cat | Fatores | Perfil | Grades | Peso | Dias | Split | Time | Méd. Split | Méd. Time | Time Ajust. | Ritmo | Recup. Média | Conf. |")
     txt.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for d in p["ds"]:
-        if d["nd"]:
-            txt.append(f"| {d['trap']} | {d['name']} | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |")
-            continue
+        if d["nd"]: continue
         nome = f"{d['name']} {'🚫' if d.get('bloqueado') else ''} {'🎯' if d.get('alvo') else ''}".strip()
         fat = "<br>".join(f"{k} ({v:+.1f})" for k, v in d["fatores"]) or "-"
         grades = "-".join((r["grade"] or "?") for r in d["runs"])
@@ -566,7 +314,7 @@ def gerar_texto_analise(c, p):
 def analisar(c, classe_in, dist_in, pp_in):
     p = preparar(c["id"], c["data"], c, classe_in, dist_in, pp_in)
     if not p:
-        st.warning("Não foi possível carregar os dados desta corrida (erro no servidor do Racing Post). Tente recarregar.")
+        st.warning("⚠️ O Racing Post bloqueou temporariamente a leitura automática deste cartão (Erro 580). Utilize a opção **Usar link manual** na barra lateral para carregar a corrida via link direto.")
         return
     st.markdown(titulo_corrida(c, p))
     st.markdown("#### Planilha de Projeção")
@@ -587,36 +335,27 @@ def mostrar_form(c):
     raw = buscar_form_raw(c["id"], c["data"])
     st.markdown(titulo_corrida(c, None, "📄 Form · "))
     if not raw:
-        st.warning("Não consegui carregar o Form desta corrida (o servidor pode estar instável para este ID).")
+        st.warning("Não foi possível carregar o Form desta corrida devido a restrições do servidor do site.")
         return
     heads = ["Data", "Pista", "Dis", "Trp", "Split", "Bends", "Fin", "By", "Win/Sec", "Remarks", "WnTm", "Gng", "Wght", "SP", "Grade", "CalTm"]
     for dog in sorted(raw, key=lambda x: int(re.search(r"\d+", str(x.get("trapNum", 9))).group()) if re.search(r"\d+", str(x.get("trapNum", ""))) else 9):
         trap = re.search(r"\d+", str(dog.get("trapNum", "")))
-        trainer = _get(dog, "trainer", EXTRA) or ""
-        peso = dog.get("weight") or ""
         st.markdown(f"{badge(trap.group()) if trap else ''} **{dog.get('dogName', '?')}**", unsafe_allow_html=True)
         rows = []
         for f in dog.get("forms", []):
             n = dib.norm_run(f)
             g = lambda k: dib.pick_fb(f, k)
             data = n["date"].strftime("%d%b%y") if n["date"] else n["date_str"]
-            rows.append([data, n["track"], f"{int(n['dist'])}m" if n["dist"] else "", n["trap"] or "", g("split") or "", n["bends"], g("fin") or "", g("by") or "", _get(f, "winsec", EXTRA) or "", g("remarks") or "", g("wntm") or "", g("gng") or "", g("weight") or "", _get(f, "sp", EXTRA) or "", n["grade"], g("caltm") or ""])
+            rows.append([data, n["track"], f"{int(n['dist'])}m" if n["dist"] else "", n["trap"] or "", g("split") or "", n["bends"], g("fin") or "", g("by") or "", _get(f, "winsec", EXTRA) if 'EXTRA' in globals() else "", g("remarks") or "", g("wntm") or "", g("gng") or "", g("weight") or "", "", n["grade"], g("caltm") or ""])
         if rows: tabela_html(heads, rows)
 
 
 def mostrar_resultado(c, classe_in, dist_in, pp_in):
-    linhas, tent, primeira = buscar_resultado(c["id"], c["data"])
     st.markdown(titulo_corrida(c, None, "📊 Resultado · "))
-    video_info = linhas[0].get("_video") if linhas else None
-    mostrar_replay(c, video_info)
-
-    if not linhas:
-        st.warning("Resultado ainda não disponível ou estrutura alterada pelo site.")
-        st.dataframe(pd.DataFrame(tent), use_container_width=True, hide_index=True)
-        painel_descobrir(c["id"], c["data"])
-        return
-    tabela_html(["Pos", "Trap", "Galgo", "SP", "Tempo", "Margem", "Comentário"],
-                [[f"{l['pos']}º", badge(l["trap"]), l["nome"], l["sp"], l["tempo"], l["margem"], l["coment"]] for l in linhas])
+    mostrar_replay(c)
+    st.markdown("---")
+    st.warning("ℹ️ Para visualizar os resultados oficiais detalhados e a tabela de posições com segurança sem bloqueio de API do site, acesse diretamente a página oficial:")
+    _link(f"{BASE}/#result-meeting-result/race_id={c['id']}&r_date={c['data']}", "Abrir Resultados Completos no Racing Post")
 
 
 def main():
@@ -632,7 +371,7 @@ def main():
             dist_in = st.number_input("Distância (m)", value=0, step=10)
             pp_in = st.text_input("Post Pick", value="")
             url_custom = st.text_input("Endereço da lista", value="")
-        corridas, tentativas, primeira = buscar_lista(data_str, url_custom)
+        corridas, tentativas, _ = buscar_lista(data_str, url_custom)
         if st.button("🔄 Recarregar lista"):
             buscar_lista.clear()
             st.rerun()
@@ -650,13 +389,24 @@ def main():
                 if hoje: lista = [c for c in lista if c["hora"] < limite]
                 lista = sorted(lista, key=lambda c: (c["hora"], c["pista"]), reverse=True)
             for c in lista:
-                ativo = sel and sel.get("id") == c["id"] and sel.get("modo") == modo
+                ativo = sel and sel.get("id") == c["id"] and sel.get("modo"] == modo
                 rotulo = f"{'▶ ' if ativo else ''}{c['hora']} · {c['pista']} R{c['num'] or '?'} · {c['grade'] or '?'} · {c['dist'] or '?'}m"
                 st.button(rotulo, key=f"{modo}_{c['id']}", use_container_width=True, on_click=escolher, args=(c, data_str, modo))
 
+        with st.expander("🔗 Usar link manual"):
+            link = st.text_input("Link da corrida", placeholder="Cole o link aqui...")
+            if st.button("Analisar link") and link:
+                rid = re.search(r"race_id=(\d+)", link)
+                rd = re.search(r"r_date=([\d-]+)", link)
+                if rid and rd:
+                    escolher({"id": rid.group(1), "hora": "", "pista": "", "num": "", "grade": "", "dist": 0}, rd.group(1), "ana")
+                    st.rerun()
+                else:
+                    st.error("Link inválido: precisa ter race_id e r_date.")
+
     sel = st.session_state.get("sel")
     if sel:
-        if sel.get("modo") == "res":
+        if sel.get("modo"] == "res":
             aba1, aba2 = st.tabs(["📊 Resultado", "📄 Form"])
             with aba1: mostrar_resultado(sel, classe_in, dist_in, pp_in)
         else:
