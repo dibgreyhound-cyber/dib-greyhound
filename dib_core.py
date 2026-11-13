@@ -31,7 +31,7 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 3.8.1)
+# CONFIGURAÇÃO GLOBAL (DIB 3.9)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
@@ -311,17 +311,13 @@ def analisar_galgo(dog, ctx):
 
     # --- INÍCIO DA CORREÇÃO DA CATEGORIA (DIB 3.7 mantida) ---
     today_n = ctx.get("classe_n")
-    
-    # 1. Bônus/Penalidade: Baseado na ÚLTIMA corrida vs Hoje
     last_n = grade_num(R[0]["grade"])
     mod = 0.0
     if today_n and last_n:
         mod = CFG["CAT_BONUS"] if today_n > last_n else (-CFG["CAT_BONUS"] if today_n < last_n else 0.0)
 
-    # 2. Base da Categoria: Média de todas as últimas corridas
     valid_grades = [grade_num(r["grade"]) for r in R if grade_num(r["grade"]) is not None]
     avg_grade_n = sum(valid_grades) / len(valid_grades) if valid_grades else (today_n or 0)
-    
     base = 16.0 - avg_grade_n
     
     d["cat_mod"], d["cat"] = mod, base + mod
@@ -427,70 +423,40 @@ def finalizar(ds, ctx):
     return ok, top3_ms
 
 def calc_prob(V, D, rank, ctx):
-    prob = 50.0
-    if V.get("tadj") is None or D.get("tadj") is None: return 50.0
-
-    diff_tadj = D["tadj"] - V["tadj"]
-    diff_mtime = D["mtime"] - V["mtime"] if D.get("mtime") is not None and V.get("mtime") is not None else 0
-    pts_vel = ((diff_tadj + diff_mtime) / 0.10) * 4.0
-    pts_vel = max(-15.0, min(15.0, pts_vel))
-    prob += pts_vel
+    # DIB 3.9: O AVB agora é ancorado no Overall (Leitura da Corrida)
+    diff_overall = V["overall"] - D["overall"]
     
-    if V.get("msplit") and D.get("msplit"):
-        diff_split = D["msplit"] - V["msplit"]
-        pts_split = (diff_split / 0.05) * 3.0
-        pts_split = max(-10.0, min(10.0, pts_split))
-        prob += pts_split
-    elif V.get("msplit_pos") and D.get("msplit_pos"):
-        diff_pos = D["msplit_pos"] - V["msplit_pos"]
-        pts_split = diff_pos * 4.0
-        prob += max(-10.0, min(10.0, pts_split))
+    # Cada 10 pontos de diferença de Overall valem 2% de probabilidade.
+    prob = 50.0 + (diff_overall * 0.20) 
+    
+    # Ajuste de tempo bruto (impacto reduzido)
+    if V.get("tadj") is not None and D.get("tadj") is not None:
+        diff_tadj = D["tadj"] - V["tadj"]
+        diff_mtime = (D.get("mtime") or 0) - (V.get("mtime") or 0)
+        pts_vel = ((diff_tadj + diff_mtime) / 0.10) * 1.5 # Reduzido de 4.0 para 1.5
+        prob += max(-5.0, min(5.0, pts_vel))
+    
+    # Ajuste de Pace (Early Pace)
+    v_early = sum(1 for r in V.get("runs", []) if any(re.match(r"^(ep|ald|snld|ld)", t) for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
+    d_early = sum(1 for r in D.get("runs", []) if any(re.match(r"^(ep|ald|snld|ld)", t) for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
+    if v_early > d_early: prob += 3.0
+    
+    # DIB 3.9: Trava de Alvo. Se é alvo, perde muita chance no duelo.
+    if V.get("alvo"): prob -= 15.0
+    if D.get("alvo"): prob += 15.0
         
-    if V.get("ritmo") and D.get("ritmo"):
-        diff_ritmo = D["ritmo"] - V["ritmo"]
-        pts_ritmo = (diff_ritmo / 0.05) * 2.0
-        pts_ritmo = max(-6.0, min(6.0, pts_ritmo))
-        prob += pts_ritmo
-        
-    pts_seguranca = 0.0
-    if V.get("rec") is not None and D.get("rec") is not None:
-        diff_rec = V["rec"] - D["rec"]
-        pts_seguranca += (diff_rec * 0.1)
-        pts_seguranca = max(-5.0, min(5.0, pts_seguranca))
-        
+    # Bônus de Perfil (O mesmo da leitura da corrida)
     val_perfil = {"Limpo": 0, "Irregular": 1, "Trombador": 2}
-    diff_perfil = val_perfil.get(D["perfil"], 1) - val_perfil.get(V["perfil"], 1)
-    pts_seguranca += (diff_perfil * 2.5)
-    prob += pts_seguranca
+    if D["perfil"] != V["perfil"]:
+        prob += (val_perfil.get(D["perfil"], 1) - val_perfil.get(V["perfil"], 1)) * 2.0
 
-    # --- DIB 3.8: OS FATORES AGORA PESAM NO AVB ---
-    pts_fatores_v = sum(v for _, v in V.get("fatores", []))
-    pts_fatores_d = sum(v for _, v in D.get("fatores", []))
-    diff_fatores = pts_fatores_v - pts_fatores_d
-    prob += (diff_fatores * 0.5) 
-    # ---------------------------------------------
-
-    top3_ms = ctx.get("top3_ms", set())
-    top3_ritmo = ctx.get("top3_ritmo", set())
-    epfs = [d for d in rank if d["name"] in top3_ms]
-
-    if V["name"] in top3_ms:
-        if D["name"] in top3_ms: prob -= 3.0 
-        else: prob -= 5.0 
-    elif D["name"] in top3_ms: prob += 5.0 
-
-    if V["name"] in top3_ritmo and V["name"] not in top3_ms:
-        if len(epfs) >= 2: prob += 5.0 
-
-    if V["trap"] in ctx["post_pick"]: prob += 2.0
+    # Vantagem de Trap (1, 2, 3 contra 4, 5, 6)
     if V["trap"] in [1,2,3] and D["trap"] in [4,5,6]: prob += 2.0
-    if any(abs(V["trap"] - v) == 1 for v in ctx["vazias"]): prob += 1.5
-    if any(abs(D["trap"] - v) == 1 for v in ctx["vazias"]): prob -= 1.5
 
     return max(25.0, min(75.0, prob))
 
 def montar_avbs(rank, ctx):
-    # DIB 3.8.1: Excluir galgos bloqueados ou com confiança < 60% da tabela de AVB
+    # DIB 3.9: Excluir bloqueados ou confiança < 60%
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and not d.get("bloqueado") and d.get("conf", 0) >= 60.0]
     if len(elig) < 2: return []
     
@@ -505,7 +471,7 @@ def montar_avbs(rank, ctx):
             else:
                 V, D, prob = B, A, 100.0 - prob_A
                 
-            # Não é mais necessário checar bloqueio aqui, pois já filtramos no 'elig'
+            # Como o alvo já está excluído no 'elig', não precisamos checar aqui
                 
             if prob >= 60.0:
                 s1.append((V, D, prob, True))
