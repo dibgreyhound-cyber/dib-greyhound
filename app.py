@@ -466,8 +466,9 @@ def grafico_predictor(ds):
         6: "repeating-linear-gradient(90deg, #111 0, #111 4px, #fff 4px, #fff 8px)"
     }
 
-    # SVG do cão correndo (silhueta)
-    svg_cao = """<svg viewBox="0 0 576 512" width="20" height="20" style="position:absolute; right: -12px; top: 50%; transform: translateY(-50%);"><path d="M544 224c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zm-112 0c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zM160 448c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zm288 0c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zM320 160c-35.3 0-64-28.7-64-64s28.7-64 64-64 64 28.7 64 64-28.7 64-64 64zm-64 64v128c0 17.7 14.3 32 32 32h64c17.7 0 32-14.3 32-32V224h-128zm256 0v128c0 17.7 14.3 32 32 32h32c17.7 0 32-14.3 32-32V224h-96zM96 224c-17.7 0-32 14.3-32 32v128c0 17.7 14.3 32 32 32h32c17.7 0 32-14.3 32-32V224H96z"/></svg>"""
+    # SVG do cão correndo (silhueta mais limpa e elegante)
+    # Fiz um desenho vetorial que remete a um galgo em movimento
+    svg_cao = """<svg viewBox="0 0 24 24" width="22" height="22" style="position:absolute; right: -11px; top: 50%; transform: translateY(-50%) scaleX(-1);"><path d="M20.5,5.5c0,0.8-0.7,1.5-1.5,1.5s-1.5-0.7-1.5-1.5S18.2,4,19,4S20.5,4.7,20.5,5.5z M17.8,10.3c-0.4-0.2-0.9-0.2-1.3,0l-2.8,1.6l-1.5-2.7c-0.2-0.3-0.5-0.5-0.9-0.5H9.5C9.2,8.7,9,8.9,9,9.2v3.3c0,0.3,0.2,0.5,0.5,0.5H11l1.7,3l-1.5,2.8c-0.1,0.2-0.2,0.4-0.2,0.7c0,0.8,0.7,1.5,1.5,1.5s1.5-0.7,1.5-1.5c0-0.2-0.1-0.5-0.2-0.7l1.3-2.4l3.1-1.7c0.4-0.2,0.6-0.7,0.4-1.1C18.5,10.7,18.2,10.5,17.8,10.3z M10,14.5H8c-0.3,0-0.5,0.2-0.5,0.5s0.2,0.5,0.5,0.5h2c0.3,0,0.5-0.2,0.5-0.5S10.3,14.5,10,14.5z M10,12.5H7c-0.3,0-0.5,0.2-0.5,0.5s0.2,0.5,0.5,0.5h3c0.3,0,0.5-0.2,0.5-0.5S10.3,12.5,10,12.5z" fill="#fff"/></svg>"""
 
     linhas = ""
     for d in sorted(ds, key=lambda x: x["trap"]):
@@ -483,7 +484,7 @@ def grafico_predictor(ds):
 
         # Ajusta a cor do cão para aparecer no fundo branco (trap 3) ou rajado (trap 6)
         svg_fill = "#000000" if t in (3, 6) else "#ffffff"
-        svg_atual = svg_cao.replace("<path", f"<path fill='{svg_fill}'")
+        svg_atual = svg_cao.replace('fill="#fff"', f'fill="{svg_fill}"')
 
         # TUDO EM UMA LINHA SÓ PARA O STREAMLIT NÃO ACHAR QUE É CÓDIGO
         linhas += f"<div style='display:flex; align-items:center; gap:10px; margin-bottom:6px;'><div style='width:24px; text-align:center; font-weight:bold; color:#fff; font-size:14px;'>{t}</div><div style='flex:1; height:22px; background:#0f172a; border-radius:12px; position:relative; border: 1px solid #334155;'><div title='{nome}' style='width:{pct}%; height:100%; background:{cor}; border-radius:12px; position:relative; transition: width 0.5s ease;'>{svg_atual if pct > 0 else ''}</div></div></div>"
