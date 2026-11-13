@@ -340,7 +340,7 @@ def mostrar_replay(c):
     else:
         st.caption("▶ Replay: esta corrida ainda não trouxe o código do vídeo (clipId vazio na lista). "
                    "Ele costuma aparecer depois que a corrida termina; toque em 🔄 para recarregar a lista.")
-    _link(f"{BASE}/#results-list/r_date={c['data']}", "Abrir os resultados no site (botão Watch Replay)")
+    _link(f"{BASE}/#card/race_id={c['id']}&r_date={c['data']}", "Abrir esta corrida no site")
 
 
 # ---------------------------------------------------------------- descobrir enderecos (lendo o JavaScript do site)
@@ -390,66 +390,76 @@ def _galgos_com_posicao(js):
     return n
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def varrer_site():
+    """Le a pagina inicial e os arquivos JavaScript do site (so na primeira vez)."""
+    html = _baixar(BASE + "/")
+    scripts = []
+    for u in re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html):
+        u = "https:" + u if u.startswith("//") else (BASE + u if u.startswith("/") else
+                                                      (u if u.startswith("http") else BASE + "/" + u))
+        if "racingpost" in u and u not in scripts:
+            scripts.append(u)
+    scripts = scripts[:8]
+    tudo = "\n".join(_baixar(u) for u in scripts)
+    return {
+        "html": len(html), "scripts": [u.replace(BASE, "") for u in scripts], "chars": len(tudo),
+        "caminhos": sorted({m.group(1) for m in _RE_SD.finditer(tudo)})[:120],
+        "blocos": sorted({m.group(1) for m in _RE_BLOCKS.finditer(tudo)})[:120],
+        "rotas": _contextos(tudo, r"(results?|meeting|card)[-_](list|details?|meeting)|#result", 80, 25),
+        "result": _contextos(tudo, r"result", 70, 25),
+        "replay": _contextos(tudo, r"replay|clipId|youtube|\.mp4|m3u8|video", 80, 25),
+    }
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def testar_enderecos(race_id, data_str, bases, nomes):
+    testes, achado = [], None
+    for p in bases:
+        for b in nomes:
+            u = f"{BASE}{p}?race_id={race_id}&r_date={data_str}&blocks={b}"
+            time.sleep(0.25)
+            try:
+                r = http().get(u, timeout=8)
+                js = r.json() if r.status_code == 200 else None
+            except Exception:
+                testes.append({"Status": "não é JSON", "Galgos": 0, "Chaves": "", "Endereço": u.replace(BASE, "")})
+                continue
+            n = _galgos_com_posicao(js) if js is not None else 0
+            testes.append({"Status": r.status_code, "Galgos": n, "Chaves": _chaves(js) if js is not None else "",
+                           "Endereço": u.replace(BASE, "")})
+            if n >= 2 and not achado:
+                achado = u
+    return testes, achado
+
+
 def painel_descobrir(race_id, data_str):
     st.markdown("---")
-    st.markdown("#### 🧪 Descobrir o endereço do resultado e do replay")
-    st.caption("Lê o código do site para achar de onde vêm o resultado e o vídeo. Leva alguns segundos.")
-    if not st.button("🧪 Descobrir agora", key="btn_descobrir"):
-        return
-    with st.spinner("Lendo o site..."):
-        html = _baixar(BASE + "/")
-        urls = re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html)
-        scripts = []
-        for u in urls:
-            u = "https:" + u if u.startswith("//") else (BASE + u if u.startswith("/") else
-                                                          (u if u.startswith("http") else BASE + "/" + u))
-            if "racingpost" in u and u not in scripts:
-                scripts.append(u)
-        scripts = scripts[:8]
-        tudo = "\n".join(_baixar(u) for u in scripts)
-        st.write(f"Página inicial: {len(html)} caracteres · {len(scripts)} arquivos JavaScript · "
-                 f"{len(tudo)} caracteres lidos")
-
-        caminhos = sorted({m.group(1) for m in _RE_SD.finditer(tudo)})
-        blocos = sorted({m.group(1) for m in _RE_BLOCKS.finditer(tudo)})
-        st.markdown("**Endereços .sd encontrados no site:**")
-        st.code("\n".join(caminhos[:80]) or "(nenhum)")
-        st.markdown("**Nomes de blocks encontrados:**")
-        st.code(", ".join(blocos[:80]) or "(nenhum)")
-        st.markdown("**Trechos do código com 'result':**")
-        st.code("\n\n".join(_contextos(tudo, r"result", 70, 15)) or "(nenhum)")
-        st.markdown("**Trechos do código sobre replay / vídeo:**")
-        st.code("\n\n".join(_contextos(tudo, r"replay|clipId|youtube|\.mp4|m3u8|video", 80, 20)) or "(nenhum)")
-
-        caminhos_res = [p for p in caminhos if "result" in p.lower()]
-        bases = caminhos_res[:6] + ["/results/blocks.sd", "/result/blocks.sd", "/card/blocks.sd"]
-        nomes = [b for b in blocos if "result" in b.lower()] + ["result", "results", "card", "header%2Ccard"]
-        testes, achado, vistos = [], None, set()
-        for p in bases:
-            p = p if p.startswith("/") else "/" + p
-            for b in list(dict.fromkeys(nomes))[:6]:
-                u = f"{BASE}{p}?race_id={race_id}&r_date={data_str}&blocks={b}"
-                if u in vistos or len(testes) >= 30:
-                    continue
-                vistos.add(u)
-                time.sleep(0.25)
-                try:
-                    r = http().get(u, timeout=8)
-                    js = r.json() if r.status_code == 200 else None
-                except Exception:
-                    testes.append({"Status": "não é JSON", "Galgos": 0, "Endereço": u.replace(BASE, "")})
-                    continue
-                n = _galgos_com_posicao(js) if js is not None else 0
-                testes.append({"Status": r.status_code, "Galgos": n, "Endereço": u.replace(BASE, "")})
-                if n >= 2 and not achado:
-                    achado = u
-        st.markdown("**Testes de endereço do resultado:**")
-        st.dataframe(pd.DataFrame(testes), use_container_width=True, hide_index=True)
-        if achado:
-            st.success("Achei um endereço com resultado! Me mande a foto desta tela.")
-            st.code(achado)
-        else:
-            st.warning("Ainda não achei. Me mande as fotos das listas acima.")
+    st.markdown("#### 🧪 Procurando o endereço do resultado e do replay")
+    with st.spinner("Lendo o código do site (só na primeira vez, leva alguns segundos)..."):
+        v = varrer_site()
+    caminhos_res = [p for p in v["caminhos"] if "result" in p.lower()]
+    bases = tuple(dict.fromkeys([(p if p.startswith("/") else "/" + p) for p in caminhos_res[:5]]
+                                + ["/results/blocks.sd", "/card/blocks.sd"]))
+    nomes = tuple(dict.fromkeys([b for b in v["blocos"] if "result" in b.lower()][:6]
+                                + ["result", "results", "resultDetails", "card%2Cresult"]))[:8]
+    with st.spinner("Testando endereços..."):
+        testes, achado = testar_enderecos(race_id, data_str, bases, nomes)
+    if achado:
+        st.success("Achei um endereço com resultado! Copie o relatório abaixo e cole no chat.")
+        st.code(achado)
+    else:
+        st.warning("Ainda não achei o endereço. Toque em copiar e cole o relatório no chat que eu ajusto.")
+    linhas = [f"Pagina inicial: {v['html']} caracteres | JavaScript: {len(v['scripts'])} arquivos, {v['chars']} caracteres",
+              "ARQUIVOS: " + ", ".join(v["scripts"]),
+              "ENDERECOS .sd: " + ", ".join(v["caminhos"]),
+              "BLOCKS: " + ", ".join(v["blocos"]),
+              "ROTAS:", *v["rotas"], "RESULT:", *v["result"], "REPLAY/VIDEO:", *v["replay"],
+              "TESTES:", *[f"{t['Status']} | galgos={t['Galgos']} | {t['Chaves']} | {t['Endereço']}" for t in testes]]
+    relatorio = "\n".join(linhas)
+    botao_copiar(relatorio)
+    st.text_area("Relatório (se o botão não copiar, selecione e copie daqui):", relatorio, height=220)
+    st.dataframe(pd.DataFrame(testes), use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------- grafico estilo "Predictor" (barras pelo Overall)
