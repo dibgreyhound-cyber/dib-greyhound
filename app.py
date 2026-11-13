@@ -2,7 +2,6 @@
 """
 app.py - Lista de corridas / Resultados na barra lateral + analise e Form na pagina principal.
 Usa o seu dib_core.py (calculo e tabelas) sem mudancas.
-Novidades: replay da corrida e painel "Descobrir" para achar o endereco do resultado.
 """
 import re
 import time
@@ -25,9 +24,9 @@ LISTA_CANDIDATOS = [
     BASE + "/meeting/list.sd?r_date={d}",
 ]
 RESULTADO_CANDIDATOS = (
-    [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult", "result-meeting-result")]
+    [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult", "result-meeting-result", "race", "details")]
     + [BASE + "/result/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "result-meeting-result")]
-    + [BASE + "/card/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "result-meeting-result")]
+    + [BASE + "/card/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "result-meeting-result", "card")]
     + [BASE + "/results/race.sd?race_id={rid}&r_date={d}"]
     + [BASE + "/result/race.sd?race_id={rid}&r_date={d}"]
 )
@@ -41,7 +40,7 @@ KEYS = {
     "clip": ["clipId", "clip_id", "videoId", "replayId"],
 }
 RES = {
-    "nome": ["dogName", "dog_name", "name"],
+    "nome": ["dogName", "dog_name", "name", "runnerName"],
     "pos": ["finishPos", "finPos", "outcomeDesc", "position", "pos", "fin", "outcome", "result"],
     "trap": ["trapNum", "trap", "dogTrap"],
     "sp": ["SP", "sp", "startingPrice", "price", "odds"],
@@ -70,9 +69,12 @@ class _Http:
             except Exception: pass
             self.pronto = True
         r = self.s.get(url, timeout=timeout)
-        if r.status_code in (403, 429):
+        if r.status_code in (403, 429, 580, 500, 502, 503):
             time.sleep(1.5)
-            r = self.s.get(url, timeout=timeout)
+            try:
+                r = self.s.get(url, timeout=timeout)
+            except Exception:
+                pass
         return r
 
 
@@ -117,24 +119,14 @@ dib.trap_label = lambda d: badge(d["trap"])
 
 # ---------------------------------------------------------------- botao copiar (JavaScript)
 def botao_copiar(texto):
-    """Cria um botão HTML nativo que copia o texto usando JavaScript."""
     texto_js = json.dumps(texto)
-    
     html = f"""
     <html>
     <head>
     <style>
     .copy-btn {{
-        background-color: #ff4b4b;
-        color: white;
-        border: none;
-        padding: 12px 20px;
-        border-radius: 8px;
-        cursor: pointer;
-        font-size: 16px;
-        font-weight: bold;
-        width: 100%;
-        transition: 0.2s;
+        background-color: #ff4b4b; color: white; border: none; padding: 12px 20px;
+        border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold; width: 100%; transition: 0.2s;
     }}
     .copy-btn:active {{ background-color: #cc0000; }}
     </style>
@@ -153,8 +145,7 @@ def botao_copiar(texto):
                 document.getElementById("copyBtn").style.backgroundColor = "#ff4b4b";
             }}, 4000);
         }} catch (err) {{
-            document.getElementById("copyBtn").innerText = "❌ Erro (Copie manualmente abaixo)";
-            document.getElementById("copyBtn").style.backgroundColor = "#ff9800";
+            document.getElementById("copyBtn").innerText = "❌ Erro";
         }}
     }});
     </script>
@@ -164,7 +155,6 @@ def botao_copiar(texto):
     components.html(html, height=65)
 
 
-# ---------------------------------------------------------------- leitura de JSON
 def _get(d, k, tabela=KEYS):
     for key in tabela[k]:
         if key in d and d[key] not in (None, "", {}, []):
@@ -188,13 +178,11 @@ def achar_corridas(obj):
             hora = _hhmm(_get(o, "hora"))
             if rid is not None and re.fullmatch(r"\d{5,9}", str(rid)) and hora:
                 g, d = _get(o, "grade"), _get(o, "dist")
-                
                 clip_val = ""
                 for k_clip in KEYS["clip"] + ["clip", "video", "replay", "mediaId", "media_id"]:
                     if k_clip in o and o[k_clip]:
                         clip_val = str(o[k_clip])
                         break
-                
                 achados[str(rid)] = {
                     "id": str(rid), "hora": hora, "pista": (pista_ctx or "?").title(),
                     "num": str(_get(o, "num") or "").replace("Race", "").strip(),
@@ -224,14 +212,19 @@ def achar_resultados(obj):
                     video_info["vid"] = str(o[k]).strip()
 
             nome = _get(o, "nome", RES)
-            m = re.search(r"\d+", str(_get(o, "pos", RES) or ""))
-            if isinstance(nome, str) and m and 1 <= int(m.group()) <= 8:
+            pos_raw = _get(o, "pos", RES)
+            m = re.search(r"\d+", str(pos_raw or "")) if pos_raw is not None else None
+            
+            # Se encontrou nome e posição válida ou se o objeto parece um corredor com trap e posição numérica
+            if isinstance(nome, str) and (m or isinstance(pos_raw, (int, float))):
+                pos_val = int(m.group()) if m else int(pos_raw)
                 t = re.search(r"\d+", str(_get(o, "trap", RES) or ""))
-                achados[nome] = {
-                    "pos": int(m.group()), "trap": int(t.group()) if t else None, "nome": nome,
-                    "sp": str(_get(o, "sp", RES) or ""), "tempo": str(_get(o, "tempo", RES) or ""),
-                    "margem": str(_get(o, "margem", RES) or ""), "coment": str(_get(o, "coment", RES) or ""),
-                }
+                if 1 <= pos_val <= 8:
+                    achados[nome] = {
+                        "pos": pos_val, "trap": int(t.group()) if t else None, "nome": nome,
+                        "sp": str(_get(o, "sp", RES) or ""), "tempo": str(_get(o, "tempo", RES) or ""),
+                        "margem": str(_get(o, "margem", RES) or ""), "coment": str(_get(o, "coment", RES) or ""),
+                    }
             for v in o.values(): walk(v)
         elif isinstance(o, list):
             for v in o: walk(v)
@@ -256,8 +249,7 @@ def tentar(urls, parser):
         try:
             r = http().get(u, timeout=8)
         except Exception as e:
-            tentativas.append({"Status": f"erro: {str(e)[:40]}", "Achados": 0, "Chaves": "", "Resposta": "",
-                               "Endereço": curto})
+            tentativas.append({"Status": f"erro: {str(e)[:40]}", "Achados": 0, "Chaves": "", "Resposta": "", "Endereço": curto})
             continue
         js, resposta = None, ""
         if r.status_code == 200:
@@ -267,8 +259,7 @@ def tentar(urls, parser):
                 resposta = r.text[:90].replace("\n", " ")
         res = parser(js) if js is not None else []
         tentativas.append({"Status": r.status_code, "Achados": len(res),
-                           "Chaves": _chaves(js) if js is not None else "", "Resposta": resposta,
-                           "Endereço": curto})
+                           "Chaves": _chaves(js) if js is not None else "", "Resposta": resposta, "Endereço": curto})
         if primeira is None and js is not None and not res: primeira = js
         if res:
             achado = res
@@ -292,13 +283,13 @@ def buscar_resultado(race_id, data_str):
 def buscar_form_raw(race_id, data_str):
     try:
         r = http().get(f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks=form", timeout=15)
-        r.raise_for_status()
+        if r.status_code != 200:
+            return []
         return r.json().get("form", {}).get("dogs", [])
     except Exception:
         return []
 
 
-# ---------------------------------------------------------------- utilidades
 def hora_br(hhmm):
     h, m = [int(x) for x in hhmm.split(":")]
     t = datetime(2000, 1, 1, h, m) - timedelta(hours=3)
@@ -344,12 +335,10 @@ def _link(url, rotulo):
         st.markdown(f"[{rotulo}]({url})")
 
 
-# ---------------------------------------------------------------- replay
 def mostrar_replay(c, video_info=None):
     video_info = video_info or {}
     url_m3u8 = video_info.get("url", "").strip()
     vid = video_info.get("vid", "").strip() or str(c.get("clip") or "").strip()
-
     link_site_replay = f"{BASE}/#result-meeting-result/race_id={c['id']}&r_date={c['data']}"
 
     if url_m3u8:
@@ -378,15 +367,13 @@ def mostrar_replay(c, video_info=None):
                 st.video(url_yt)
                 _link(url_yt, "Abrir no YouTube")
         else:
-            st.info(f"🎬 Replay disponível (ID: {vid}). Abra no site para assistir com o token atualizado:")
+            st.info(f"🎬 Replay disponível (ID: {vid}).")
     else:
-        st.caption("▶ Replay: esta corrida ainda não trouxe o código do vídeo. "
-                   "Ele costuma aparecer depois que a corrida termina; toque em 🔄 para recarregar a lista.")
+        st.caption("▶ Replay: o link do vídeo ainda não foi liberado para esta corrida.")
     
     _link(link_site_replay, "🎬 Ver Resultado e Replay no Racing Post")
 
 
-# ---------------------------------------------------------------- descobrir enderecos (lendo o JavaScript do site)
 _RE_SD = re.compile(r"""["']((?:/?[\w\-]+/)*[\w\-]*\.sd)(?:\?[^"']*)?["']""")
 _RE_BLOCKS = re.compile(r"""blocks\s*[:=]\s*["']([\w,%\-]+)["']""")
 
@@ -417,18 +404,16 @@ def _contextos(texto, padrao, n=70, limite=20):
 
 def _galgos_com_posicao(js):
     n = 0
-
     def walk(o):
         nonlocal n
         if isinstance(o, dict):
-            nome = o.get("dogName")
-            pos = re.search(r"\d+", str(o.get("outcomeDesc") or o.get("finishPos") or o.get("position") or ""))
+            nome = o.get("dogName") or o.get("name")
+            pos = re.search(r"\d+", str(o.get("outcomeDesc") or o.get("finishPos") or o.get("position") or o.get("pos") or ""))
             if isinstance(nome, str) and pos:
                 n += 1
             for v in o.values(): walk(v)
         elif isinstance(o, list):
             for v in o: walk(v)
-
     walk(js)
     return n
 
@@ -438,8 +423,7 @@ def varrer_site():
     html = _baixar(BASE + "/")
     scripts = []
     for u in re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html):
-        u = "https:" + u if u.startswith("//") else (BASE + u if u.startswith("/") else
-                                                      (u if u.startswith("http") else BASE + "/" + u))
+        u = "https:" + u if u.startswith("//") else (BASE + u if u.startswith("/") else (u if u.startswith("http") else BASE + "/" + u))
         if "racingpost" in u and u not in scripts:
             scripts.append(u)
     scripts = scripts[:8]
@@ -468,8 +452,7 @@ def testar_enderecos(race_id, data_str, bases, nomes):
                 testes.append({"Status": "não é JSON", "Galgos": 0, "Chaves": "", "Endereço": u.replace(BASE, "")})
                 continue
             n = _galgos_com_posicao(js) if js is not None else 0
-            testes.append({"Status": r.status_code, "Galgos": n, "Chaves": _chaves(js) if js is not None else "",
-                           "Endereço": u.replace(BASE, "")})
+            testes.append({"Status": r.status_code, "Galgos": n, "Chaves": _chaves(js) if js is not None else "", "Endereço": u.replace(BASE, "")})
             if n >= 2 and not achado:
                 achado = u
     return testes, achado
@@ -481,30 +464,20 @@ def painel_descobrir(race_id, data_str):
     with st.spinner("Lendo o código do site..."):
         v = varrer_site()
     caminhos_res = [p for p in v["caminhos"] if "result" in p.lower()]
-    bases = tuple(dict.fromkeys([(p if p.startswith("/") else "/" + p) for p in caminhos_res[:5]]
-                                + ["/results/blocks.sd", "/card/blocks.sd"]))
-    nomes = tuple(dict.fromkeys([b for b in v["blocos"] if "result" in b.lower()][:6]
-                                + ["result", "results", "resultDetails", "card%2Cresult"]))[:8]
+    bases = tuple(dict.fromkeys([(p if p.startswith("/") else "/" + p) for p in caminhos_res[:5]] + ["/results/blocks.sd", "/card/blocks.sd"]))
+    nomes = tuple(dict.fromkeys([b for b in v["blocos"] if "result" in b.lower()][:6] + ["result", "results", "resultDetails", "card%2Cresult"]))[:8]
     with st.spinner("Testando endereços..."):
         testes, achado = testar_enderecos(race_id, data_str, bases, nomes)
     if achado:
-        st.success("Achei um endereço com resultado! Copie o relatório abaixo e cole no chat.")
+        st.success("Achei um endereço com resultado!")
         st.code(achado)
-    else:
-        st.warning("Ainda não achei o endereço.")
-    linhas = [f"Pagina inicial: {v['html']} caracteres | JavaScript: {len(v['scripts'])} arquivos, {v['chars']} caracteres",
-              "ARQUIVOS: " + ", ".join(v["scripts"]),
-              "ENDERECOS .sd: " + ", ".join(v["caminhos"]),
-              "BLOCKS: " + ", ".join(v["blocos"]),
-              "ROTAS:", *v["rotas"], "RESULT:", *v["result"], "REPLAY/VIDEO:", *v["replay"],
-              "TESTES:", *[f"{t['Status']} | galgos={t['Galgos']} | {t['Chaves']} | {t['Endereço']}" for t in testes]]
+    linhas = [f"Pagina inicial: {v['html']} caracteres", "TESTES:", *[f"{t['Status']} | galgos={t['Galgos']} | {t['Chaves']} | {t['Endereço']}" for t in testes]]
     relatorio = "\n".join(linhas)
     botao_copiar(relatorio)
     st.text_area("Relatório:", relatorio, height=220)
     st.dataframe(pd.DataFrame(testes), use_container_width=True, hide_index=True)
 
 
-# ---------------------------------------------------------------- grafico estilo "Predictor" (barras pelo Overall)
 BAR_STYLE = {
     1: ("background:#c62828;", "invert"),
     2: ("background:#1d4ed8;", "invert"),
@@ -517,8 +490,7 @@ BAR_STYLE = {
 
 def grafico_predictor(ds):
     com = [d for d in ds if not d.get("nd") and d.get("overall") is not None]
-    if not com:
-        return ""
+    if not com: return ""
     mx = max(d["overall"] for d in com)
     linhas = []
     for d in sorted(ds, key=lambda x: x["trap"]):
@@ -530,21 +502,15 @@ def grafico_predictor(ds):
             w = 100.0 if mx <= 0 else max(4.0, min(100.0, d["overall"] / mx * 100.0))
             tip = f"{d['name']} · Overall {d['overall']:.1f}"
             filtro = "brightness(0)" if icone == "dark" else "brightness(0) invert(1)"
-            fill = (f"<div title=\"{tip}\" style='position:relative;width:{w:.1f}%;height:100%;"
-                    f"border-radius:14px;{estilo}'>"
-                    f"<span style='position:absolute;right:6px;top:50%;transform:translateY(-50%);"
-                    f"font-size:15px;line-height:1;filter:{filtro};'>🐕</span></div>")
+            fill = (f"<div title=\"{tip}\" style='position:relative;width:{w:.1f}%;height:100%;border-radius:14px;{estilo}'>"
+                    f"<span style='position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:15px;line-height:1;filter:{filtro};'>🐕</span></div>")
         linhas.append(f"<div style='display:flex;align-items:center;gap:8px;margin:7px 0'>{badge(t)}"
-                      f"<div style='flex:1;height:24px;background:#0a2a52;border-radius:14px;overflow:hidden'>"
-                      f"{fill}</div></div>")
-    return ("<div style='background:#143f6f;border-radius:16px;padding:16px 12px 8px;max-width:640px;margin:8px 0;"
-            "position:relative'>"
-            "<div style='position:absolute;top:-1px;left:10px;background:#d32f2f;color:#fff;font-weight:700;"
-            "font-size:13px;padding:3px 14px;border-radius:0 0 12px 12px'>Predictor</div>"
+                      f"<div style='flex:1;height:24px;background:#0a2a52;border-radius:14px;overflow:hidden'>{fill}</div></div>")
+    return ("<div style='background:#143f6f;border-radius:16px;padding:16px 12px 8px;max-width:640px;margin:8px 0;position:relative'>"
+            "<div style='position:absolute;top:-1px;left:10px;background:#d32f2f;color:#fff;font-weight:700;font-size:13px;padding:3px 14px;border-radius:0 0 12px 12px'>Predictor</div>"
             "<div style='height:10px'></div>" + "".join(linhas) + "</div>")
 
 
-# ---------------------------------------------------------------- analise
 def preparar(race_id, r_date, c, classe_in, dist_in, pp_in, so_antes=False):
     cache = st.session_state.setdefault("cache_corridas", {})
     chave = f"{race_id}|{r_date}"
@@ -575,62 +541,32 @@ def preparar(race_id, r_date, c, classe_in, dist_in, pp_in, so_antes=False):
 
 def titulo_corrida(c, p=None, prefixo=""):
     t = f"{c['pista']} {c['hora']} (BR {hora_br(c['hora'])})" if c.get("hora") else ""
-    extra = f" · {p['classe']} · {int(p['dist'])}m · POST PICK: {p['pp'] or '-'}" if p else \
-        f" · {c.get('grade', '')} · {c.get('dist', '')}m"
+    extra = f" · {p['classe']} · {int(p['dist'])}m · POST PICK: {p['pp'] or '-'}" if p else f" · {c.get('grade', '')} · {c.get('dist', '')}m"
     return f"### {prefixo}{t} · Race {c.get('num', '')}{extra}"
 
 
-# ---------------------------------------------------------------- exportar texto
 def gerar_texto_analise(c, p):
     txt = []
     txt.append(titulo_corrida(c, p).replace("### ", ""))
     txt.append("")
-    
     txt.append("**Planilha de Projeção**")
     txt.append("| Trp | Galgo | Overall | Cat | Fatores | Perfil | Grades | Peso | Dias | Split | Time | Méd. Split | Méd. Time | Time Ajust. | Ritmo | Recup. Média | Conf. |")
     txt.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
-    
     for d in p["ds"]:
         if d["nd"]:
             txt.append(f"| {d['trap']} | {d['name']} | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |")
             continue
-        
         nome = f"{d['name']} {'🚫' if d.get('bloqueado') else ''} {'🎯' if d.get('alvo') else ''}".strip()
         fat = "<br>".join(f"{k} ({v:+.1f})" for k, v in d["fatores"]) or "-"
         grades = "-".join((r["grade"] or "?") for r in d["runs"])
-        
-        f_split = f"{d['split']:.2f}" if d.get("split") else "-"
-        f_time = f"{d['time']:.2f}" if d.get("time") else "-"
-        f_msplit = f"{d['msplit']:.2f}" if d.get("msplit") else (f"Pos:{d['msplit_pos']:.1f}" if d.get("msplit_pos") else "-")
-        f_mtime = f"{d['mtime']:.2f}" if d.get("mtime") else "-"
-        f_tadj = f"{d['tadj']:.2f}" if d.get("tadj") else "-"
-        f_ritmo = f"{d['ritmo']:.2f}" if d.get("ritmo") else "-"
-        f_rec = f"{d['rec']:+.2f}%" if d.get("rec") is not None else "-"
-        f_peso = f"{d['peso']:.1f}" if d.get("peso") else "-"
-        
-        txt.append(f"| {d['trap']} | {nome} | {d['overall']:.1f} | {d['cat']:.1f} | {fat} | {d['perfil']} | {grades} | {f_peso} | {d['dias']} | {f_split} | {f_time} | {f_msplit} | {f_mtime} | {f_tadj} | {f_ritmo} | {f_rec} | {d['conf']:.0f}% |")
-    
-    txt.append("")
-    classif = " > ".join(f"{d['pos']}º [T{d['trap']}]" for d in p["rank"])
-    txt.append(f"**Classificação:** {classif}")
-    txt.append("")
-    
-    txt.append("**AVBs Principais (≥ 60%)**")
-    if not p["s1"]:
-        txt.append("Nenhum confronto atingiu 60%.")
-    else:
-        txt.append("| Vencedor (Trap/Nome) | Perdedor (Trap/Nome) | Probabilidade |")
-        txt.append("|---|---|---|")
-        for (V, D, prob, star) in p["s1"]:
-            txt.append(f"| {V['trap']} - {V['name']} | {D['trap']} - {D['name']} | {prob:.1f}% |")
-    
-    txt.append("")
+        txt.append(f"| {d['trap']} | {nome} | {d['overall']:.1f} | {d['cat']:.1f} | {fat} | {d['perfil']} | {grades} | {d['peso']:.1f} | {d['dias']} | {d['split']:.2f} | {d['time']:.2f} | {d['msplit']:.2f} | {d['mtime']:.2f} | {d['tadj']:.2f} | {d['ritmo']:.2f} | {d['rec']:+.2f}% | {d['conf']:.0f}% |")
     return "\n".join(txt)
 
 
 def analisar(c, classe_in, dist_in, pp_in):
     p = preparar(c["id"], c["data"], c, classe_in, dist_in, pp_in)
     if not p:
+        st.warning("Não foi possível carregar os dados desta corrida (erro no servidor do Racing Post). Tente recarregar.")
         return
     st.markdown(titulo_corrida(c, p))
     st.markdown("#### Planilha de Projeção")
@@ -640,120 +576,63 @@ def analisar(c, classe_in, dist_in, pp_in):
     dib.tabela_avb(p["s1"], "1ª Planilha — AVB Principal (Prob ≥ 60%)")
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
-        
     st.markdown("---")
-    with st.expander("📋 Exportar Análise (Copiar e Colar para o Chat)"):
+    with st.expander("📋 Exportar Análise"):
         texto_gerado = gerar_texto_analise(c, p)
         botao_copiar(texto_gerado)
-        st.text_area("Se o botão acima não funcionar, copie o texto aqui:", texto_gerado, height=200)
+        st.text_area("Copiar texto:", texto_gerado, height=200)
 
 
-# ---------------------------------------------------------------- aba Form
 def mostrar_form(c):
     raw = buscar_form_raw(c["id"], c["data"])
     st.markdown(titulo_corrida(c, None, "📄 Form · "))
     if not raw:
-        st.warning("Não consegui carregar o Form desta corrida.")
+        st.warning("Não consegui carregar o Form desta corrida (o servidor pode estar instável para este ID).")
         return
-    dib.descobrir_chaves(raw)
-    heads = ["Data", "Pista", "Dis", "Trp", "Split", "Bends", "Fin", "By", "Win/Sec", "Remarks",
-             "WnTm", "Gng", "Wght", "SP", "Grade", "CalTm"]
-    for dog in sorted(raw, key=lambda x: int(re.search(r"\d+", str(x.get("trapNum", 9))).group())
-                      if re.search(r"\d+", str(x.get("trapNum", ""))) else 9):
+    heads = ["Data", "Pista", "Dis", "Trp", "Split", "Bends", "Fin", "By", "Win/Sec", "Remarks", "WnTm", "Gng", "Wght", "SP", "Grade", "CalTm"]
+    for dog in sorted(raw, key=lambda x: int(re.search(r"\d+", str(x.get("trapNum", 9))).group()) if re.search(r"\d+", str(x.get("trapNum", ""))) else 9):
         trap = re.search(r"\d+", str(dog.get("trapNum", "")))
         trainer = _get(dog, "trainer", EXTRA) or ""
         peso = dog.get("weight") or ""
-        st.markdown(f"{badge(trap.group()) if trap else ''} **{dog.get('dogName', '?')}**"
-                    f"{' · Tnr: ' + str(trainer) if trainer else ''}{' · ' + str(peso) + ' kg' if peso else ''}",
-                    unsafe_allow_html=True)
+        st.markdown(f"{badge(trap.group()) if trap else ''} **{dog.get('dogName', '?')}**", unsafe_allow_html=True)
         rows = []
         for f in dog.get("forms", []):
             n = dib.norm_run(f)
             g = lambda k: dib.pick_fb(f, k)
             data = n["date"].strftime("%d%b%y") if n["date"] else n["date_str"]
-            rows.append([data, n["track"], f"{int(n['dist'])}m" if n["dist"] else "", n["trap"] or "",
-                         g("split") or "", n["bends"], g("fin") or "", g("by") or "",
-                         _get(f, "winsec", EXTRA) or "", g("remarks") or "", g("wntm") or "",
-                         g("gng") or "", g("weight") or "", _get(f, "sp", EXTRA) or "",
-                         n["grade"], g("caltm") or ""])
-        if rows:
-            tabela_html(heads, rows)
-        else:
-            st.caption("Sem corridas anteriores.")
+            rows.append([data, n["track"], f"{int(n['dist'])}m" if n["dist"] else "", n["trap"] or "", g("split") or "", n["bends"], g("fin") or "", g("by") or "", _get(f, "winsec", EXTRA) or "", g("remarks") or "", g("wntm") or "", g("gng") or "", g("weight") or "", _get(f, "sp", EXTRA) or "", n["grade"], g("caltm") or ""])
+        if rows: tabela_html(heads, rows)
 
 
-# ---------------------------------------------------------------- resultados
 def mostrar_resultado(c, classe_in, dist_in, pp_in):
     linhas, tent, primeira = buscar_resultado(c["id"], c["data"])
     st.markdown(titulo_corrida(c, None, "📊 Resultado · "))
-    
     video_info = linhas[0].get("_video") if linhas else None
     mostrar_replay(c, video_info)
 
     if not linhas:
-        st.warning("Não consegui ler o resultado desta corrida (ela pode ainda não ter sido disputada). "
-                   "Veja o diagnóstico abaixo.")
+        st.warning("Resultado ainda não disponível ou estrutura alterada pelo site.")
         st.dataframe(pd.DataFrame(tent), use_container_width=True, hide_index=True)
-        if primeira is not None:
-            st.caption("Primeira resposta recebida:")
-            st.json(primeira if len(str(primeira)) < 6000 else {"(cortado)": str(primeira)[:6000]})
         painel_descobrir(c["id"], c["data"])
         return
     tabela_html(["Pos", "Trap", "Galgo", "SP", "Tempo", "Margem", "Comentário"],
-                [[f"{l['pos']}º", badge(l["trap"]), l["nome"], l["sp"], l["tempo"], l["margem"], l["coment"]]
-                 for l in linhas])
-    try:
-        p = preparar(c["id"], c["data"], c, classe_in, dist_in, pp_in, so_antes=True)
-        if not p or not p["rank"]:
-            return
-        prev = {d["trap"]: d["pos"] for d in p["rank"]}
-        real = {l["trap"]: l["pos"] for l in linhas if l["trap"]}
-        st.markdown("#### 🔍 Previsto × Real (projeção só com corridas anteriores)")
-        tabela_html(["Real", "Galgo", "Previsto"],
-                    [[f"{l['pos']}º", f"{badge(l['trap'])} {l['nome']}", f"{prev.get(l['trap'], '-')}º"]
-                     for l in linhas])
-        fav, venc = p["rank"][0], linhas[0]
-        top3_prev = {d["trap"] for d in p["rank"][:3]}
-        top3_real = {l["trap"] for l in linhas[:3] if l["trap"]}
-        st.markdown(f"- **Vencedor:** previsto {badge(fav['trap'])} {fav['name']} → "
-                    f"{'✅ acertou' if fav['trap'] == venc['trap'] else '❌ venceu ' + venc['nome']}",
-                    unsafe_allow_html=True)
-        st.markdown(f"- **Top 3:** {len(top3_prev & top3_real)} de 3 galgos previstos entre os 3 primeiros.")
-        if p["s1"]:
-            st.markdown("**AVBs (≥ 60%):**")
-            for (V, D, prob, star) in p["s1"]:
-                pv, pd_ = real.get(V["trap"]), real.get(D["trap"])
-                ok = ("✅" if pv < pd_ else "❌") if (pv and pd_) else ("✅" if pv else ("❌" if pd_ else "—"))
-                st.markdown(f"- {ok} {badge(V['trap'])} {V['name']} ({pv or '-'}º) vence "
-                            f"{badge(D['trap'])} {D['name']} ({pd_ or '-'}º) · {prob:.1f}%", unsafe_allow_html=True)
-    except Exception as e:
-        st.caption(f"Não foi possível comparar com a projeção: {e}")
+                [[f"{l['pos']}º", badge(l["trap"]), l["nome"], l["sp"], l["tempo"], l["margem"], l["coment"]] for l in linhas])
 
 
-# ---------------------------------------------------------------- tela
 def main():
     st.title("🐾 DIB GREYHOUND")
-
     with st.sidebar:
         modo_txt = st.radio("Ver", ["🏁 Corridas", "📊 Resultados"], horizontal=True, label_visibility="collapsed")
         modo = "res" if "Resultados" in modo_txt else "ana"
         data = st.date_input("Data", value=agora_uk().date())
         data_str = data.strftime("%Y-%m-%d")
         ocultar = st.checkbox("Ocultar corridas já realizadas", value=True) if modo == "ana" else False
-        with st.expander("⚙️ Ajustes (opcional)"):
-            classe_in = st.text_input("Classe (vazio = da lista)", value="")
-            dist_in = st.number_input("Distância (m) - 0 = da lista", value=0, step=10)
-            pp_in = st.text_input("Post Pick (ex: 1-2-3)", value="")
-            url_custom = st.text_input("Endereço da lista (use {data})", value="")
+        with st.expander("⚙️ Ajustes"):
+            classe_in = st.text_input("Classe", value="")
+            dist_in = st.number_input("Distância (m)", value=0, step=10)
+            pp_in = st.text_input("Post Pick", value="")
+            url_custom = st.text_input("Endereço da lista", value="")
         corridas, tentativas, primeira = buscar_lista(data_str, url_custom)
-        memoria = st.session_state.setdefault("lista_ok", {})
-        if corridas:
-            memoria[data_str] = corridas
-        elif data_str in memoria:
-            corridas = memoria[data_str]
-            st.caption("⚠️ Usando a última lista carregada.")
-        if not corridas and any(t.get("Status") == 403 for t in tentativas):
-            st.error("O site recusou o acesso (403).")
         if st.button("🔄 Recarregar lista"):
             buscar_lista.clear()
             st.rerun()
@@ -761,7 +640,7 @@ def main():
         sel = st.session_state.get("sel")
         if corridas:
             pistas = sorted({c["pista"] for c in corridas})
-            filtro = st.multiselect("Pistas (vazio = todas)", pistas)
+            filtro = st.multiselect("Pistas", pistas)
             lista = [c for c in corridas if not filtro or c["pista"] in filtro]
             hoje = data == agora_uk().date()
             limite = agora_uk().strftime("%H:%M")
@@ -770,29 +649,10 @@ def main():
             if modo == "res":
                 if hoje: lista = [c for c in lista if c["hora"] < limite]
                 lista = sorted(lista, key=lambda c: (c["hora"], c["pista"]), reverse=True)
-            st.caption(f"{len(lista)} corridas")
             for c in lista:
                 ativo = sel and sel.get("id") == c["id"] and sel.get("modo") == modo
-                rotulo = f"{'▶ ' if ativo else ''}{c['hora']} · {c['pista']} R{c['num'] or '?'} · " \
-                         f"{c['grade'] or '?'} · {c['dist'] or '?'}m"
-                st.button(rotulo, key=f"{modo}_{c['id']}", use_container_width=True,
-                          on_click=escolher, args=(c, data_str, modo))
-        else:
-            st.warning("Não consegui carregar a lista.")
-
-        with st.expander("🔎 Diagnóstico da lista"):
-            st.dataframe(pd.DataFrame(tentativas), use_container_width=True, hide_index=True)
-        with st.expander("🔗 Usar link manual"):
-            link = st.text_input("Link da corrida", placeholder="Cole o link aqui...")
-            if st.button("Analisar link") and link:
-                rid = re.search(r"race_id=(\d+)", link)
-                rd = re.search(r"r_date=([\d-]+)", link)
-                if rid and rd:
-                    escolher({"id": rid.group(1), "hora": "", "pista": "", "num": "", "grade": "", "dist": 0},
-                             rd.group(1), "ana")
-                    st.rerun()
-                else:
-                    st.error("Link inválido: precisa ter race_id e r_date.")
+                rotulo = f"{'▶ ' if ativo else ''}{c['hora']} · {c['pista']} R{c['num'] or '?'} · {c['grade'] or '?'} · {c['dist'] or '?'}m"
+                st.button(rotulo, key=f"{modo}_{c['id']}", use_container_width=True, on_click=escolher, args=(c, data_str, modo))
 
     sel = st.session_state.get("sel")
     if sel:
@@ -802,10 +662,7 @@ def main():
         else:
             aba1, aba2 = st.tabs(["📋 Análise", "📄 Form"])
             with aba1: analisar(sel, classe_in, dist_in, pp_in)
-        with aba2:
-            mostrar_form(sel)
-        if st.session_state.pop("fechar", False):
-            fechar_sidebar()
-
+        with aba2: mostrar_form(sel)
+        if st.session_state.pop("fechar", False): fechar_sidebar()
 
 main()
