@@ -31,7 +31,7 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 3.8)
+# CONFIGURAÇÃO GLOBAL (DIB 4.3)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
@@ -120,13 +120,24 @@ def parts_of(rem):
 def count_traf(rem):
     return sum(1 for p in parts_of(rem) if RE_TRAF.search(p))
 
-def traffic_penalty(rem):
+def traffic_penalty(rem, peso=31.0):
+    """Calcula a penalidade de tráfego, ajustada pelo peso do galgo.
+    Cães pesados (>30kg) perdem menos tempo (x0.8).
+    Cães leves (<28kg) perdem mais tempo (x1.2)."""
     s = str(rem or "").lower()
+    base_pen = 0.0
     for key in ("baulk", "crd", "bmp", "fcd"):
         if key in s and key in CFG["TRAFFIC_ADJ"]:
-            return CFG["TRAFFIC_ADJ"][key] if key == "baulk" else max(
+            base_pen = CFG["TRAFFIC_ADJ"][key] if key == "baulk" else max(
                 CFG["TRAFFIC_ADJ"][k] for k in ("crd", "bmp", "fcd") if k in s)
-    return 0.0
+    
+    if base_pen == 0: return 0.0
+    
+    if peso > 30.0: fator = 0.8
+    elif peso < 28.0: fator = 1.2
+    else: fator = 1.0
+    
+    return base_pen * fator
 
 def not_free(rem):
     return bool(RE_NOFREE.search(str(rem or "").lower()))
@@ -309,9 +320,8 @@ def analisar_galgo(dog, ctx):
         if count_t >= 2: d["forma_trial"] = True
     if not R: return d
 
-    # --- INÍCIO DA CORREÇÃO DA CATEGORIA (DIB 3.7) ---
+    # Categoria Média
     today_n = ctx.get("classe_n")
-    
     last_n = grade_num(R[0]["grade"])
     mod = 0.0
     if today_n and last_n:
@@ -320,9 +330,7 @@ def analisar_galgo(dog, ctx):
     valid_grades = [grade_num(r["grade"]) for r in R if grade_num(r["grade"]) is not None]
     avg_grade_n = sum(valid_grades) / len(valid_grades) if valid_grades else (today_n or 0)
     base = 16.0 - avg_grade_n
-    
     d["cat_mod"], d["cat"] = mod, base + mod
-    # --- FIM DA CORREÇÃO DA CATEGORIA ---
 
     d["peso"] = dog.get("peso_atual") or R[0]["weight"]
     d["split"], d["time"] = R[0]["split"], R[0]["caltm"]
@@ -343,7 +351,9 @@ def analisar_galgo(dog, ctx):
     else:
         d["ritmo"] = d["mtime"]
     
-    adj_times = [r["caltm"] - (traffic_penalty(r["remarks"]) + ((r["dist"] - 300) / 1000.0 if traffic_penalty(r["remarks"]) > 0 else 0.0)) for r in R]
+    # Aplica o peso na penalidade de tráfego do Tadj
+    peso_atual = d["peso"] or 31.0
+    adj_times = [r["caltm"] - (traffic_penalty(r["remarks"], peso_atual) + ((r["dist"] - 300) / 1000.0 if traffic_penalty(r["remarks"], peso_atual) > 0 else 0.0)) for r in R]
     d["tadj"] = float(np.mean(adj_times)) if adj_times else None
     
     cal = [r["caltm"] for r in R]
@@ -424,42 +434,51 @@ def finalizar(ds, ctx):
     return ok, top3_ms
 
 def calc_prob(V, D, rank, ctx):
+    """
+    DIB 4.3 - AVB com Peso e Recuperação Valorizados.
+    """
     prob = 50.0
     if V.get("tadj") is None or D.get("tadj") is None: return 50.0
 
+    # 1. Velocidade (Tadj) - Peso Máximo: 25%
     diff_tadj = D["tadj"] - V["tadj"]
-    diff_mtime = D["mtime"] - V["mtime"] if D.get("mtime") is not None and V.get("mtime") is not None else 0
-    pts_vel = ((diff_tadj + diff_mtime) / 0.10) * 4.0
-    pts_vel = max(-15.0, min(15.0, pts_vel))
+    pts_vel = (diff_tadj / 0.10) * 5.0
+    pts_vel = max(-25.0, min(25.0, pts_vel))
     prob += pts_vel
     
+    # 2. Largada (Split) - Peso Máximo: 20%
     if V.get("msplit") and D.get("msplit"):
         diff_split = D["msplit"] - V["msplit"]
-        pts_split = (diff_split / 0.05) * 3.0
-        pts_split = max(-10.0, min(10.0, pts_split))
+        pts_split = (diff_split / 0.05) * 4.0
+        pts_split = max(-20.0, min(20.0, pts_split))
         prob += pts_split
     elif V.get("msplit_pos") and D.get("msplit_pos"):
         diff_pos = D["msplit_pos"] - V["msplit_pos"]
-        pts_split = diff_pos * 4.0
-        prob += max(-10.0, min(10.0, pts_split))
+        pts_split = diff_pos * 5.0
+        pts_split = max(-20.0, min(20.0, pts_split))
+        prob += pts_split
         
-    if V.get("ritmo") and D.get("ritmo"):
-        diff_ritmo = D["ritmo"] - V["ritmo"]
-        pts_ritmo = (diff_ritmo / 0.05) * 2.0
-        pts_ritmo = max(-6.0, min(6.0, pts_ritmo))
-        prob += pts_ritmo
-        
-    pts_seguranca = 0.0
+    # 3. Recuperação (Valorizado para os Closers) - Peso Máximo: 10%
     if V.get("rec") is not None and D.get("rec") is not None:
         diff_rec = V["rec"] - D["rec"]
-        pts_seguranca += (diff_rec * 0.1)
-        pts_seguranca = max(-5.0, min(5.0, pts_seguranca))
+        pts_rec = (diff_rec * 0.2)
+        pts_rec = max(-10.0, min(10.0, pts_rec))
+        prob += pts_rec
         
+    # 4. Perfil (Segurança)
     val_perfil = {"Limpo": 0, "Irregular": 1, "Trombador": 2}
     diff_perfil = val_perfil.get(D["perfil"], 1) - val_perfil.get(V["perfil"], 1)
-    pts_seguranca += (diff_perfil * 2.5)
-    prob += pts_seguranca
+    prob += (diff_perfil * 2.5)
 
+    # 5. Peso (Resistência a Toques)
+    peso_v = V.get("peso") or 31.0
+    peso_d = D.get("peso") or 31.0
+    diff_peso = peso_v - peso_d
+    pts_peso = diff_peso * 1.5 # 1kg de vantagem = 1.5%
+    pts_peso = max(-5.0, min(5.0, pts_peso))
+    prob += pts_peso
+
+    # 6. Top 3 Pace
     top3_ms = ctx.get("top3_ms", set())
     top3_ritmo = ctx.get("top3_ritmo", set())
     epfs = [d for d in rank if d["name"] in top3_ms]
@@ -472,6 +491,7 @@ def calc_prob(V, D, rank, ctx):
     if V["name"] in top3_ritmo and V["name"] not in top3_ms:
         if len(epfs) >= 2: prob += 5.0 
 
+    # 7. Trap / Post Pick
     if V["trap"] in ctx["post_pick"]: prob += 2.0
     if V["trap"] in [1,2,3] and D["trap"] in [4,5,6]: prob += 2.0
     if any(abs(V["trap"] - v) == 1 for v in ctx["vazias"]): prob += 1.5
@@ -501,7 +521,7 @@ def montar_avbs(rank, ctx):
                 
             # Regra 3: O Vencedor tem que ter um Tempo Ajustado melhor (menor) que o Desafiante
             if V.get("tadj") is not None and D.get("tadj") is not None:
-                if V["tadj"] >= D["tadj"]: # Se o tempo do Vencedor for maior ou igual (pior), descarta
+                if V["tadj"] >= D["tadj"]: 
                     continue
                 
             if prob >= 60.0:
