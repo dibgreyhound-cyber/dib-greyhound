@@ -31,13 +31,13 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 3.6)
+# CONFIGURAÇÃO GLOBAL (DIB 3.7)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
-    "TRAP_VAZIA": 5.0, "TRAFEGO_SEVERO": -15.0, "CONF_MIN_VENCEDOR": 40.0, # <-- Aumentado impacto da Trap Vazia e Tráfego Severo
+    "TRAP_VAZIA": 5.0, "TRAFEGO_SEVERO": -15.0, "CONF_MIN_VENCEDOR": 40.0,
     
     "VEL_PTS": {"tadj": 100, "mtime": 80, "msplit": 80, "ritmo": 60},
     "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 10, 
@@ -309,13 +309,25 @@ def analisar_galgo(dog, ctx):
         if count_t >= 2: d["forma_trial"] = True
     if not R: return d
 
+    # --- INÍCIO DA CORREÇÃO DA CATEGORIA (DIB 3.7) ---
     today_n = ctx.get("classe_n")
+    
+    # 1. Bônus/Penalidade: Baseado na ÚLTIMA corrida vs Hoje
     last_n = grade_num(R[0]["grade"])
-    base = 16.0 - (today_n if today_n else (last_n or 0))
     mod = 0.0
     if today_n and last_n:
+        # Se hoje é A3 (3) e a última foi A2 (2), ele desceu de categoria: bônus positivo.
         mod = CFG["CAT_BONUS"] if today_n > last_n else (-CFG["CAT_BONUS"] if today_n < last_n else 0.0)
+
+    # 2. Base da Categoria: Média de todas as últimas corridas
+    valid_grades = [grade_num(r["grade"]) for r in R if grade_num(r["grade"]) is not None]
+    avg_grade_n = sum(valid_grades) / len(valid_grades) if valid_grades else (today_n or 0)
+    
+    # A base usa a média (Ex: se a média é A2.6, base = 16.0 - 2.6 = 13.4)
+    base = 16.0 - avg_grade_n
+    
     d["cat_mod"], d["cat"] = mod, base + mod
+    # --- FIM DA CORREÇÃO DA CATEGORIA ---
 
     d["peso"] = dog.get("peso_atual") or R[0]["weight"]
     d["split"], d["time"] = R[0]["split"], R[0]["caltm"]
@@ -395,15 +407,15 @@ def finalizar(ds, ctx):
         
         f = []
         if d["early_cnt"] > 0 and d["perfil"] == "Limpo": 
-            f.append(("Ritmo Acelerado", d["early_cnt"] * 5.0)) # <-- AUMENTADO
+            f.append(("Ritmo Acelerado", d["early_cnt"] * 5.0))
         if d["saw_cnt"] > 0: 
-            f.append(("Largada Lenta", d["saw_cnt"] * -8.0)) # <-- AUMENTADO
+            f.append(("Largada Lenta", d["saw_cnt"] * -8.0))
         if d["fbt_cnt"] > 0: 
-            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -8.0)) # <-- AUMENTADO
+            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -8.0))
         if any(abs(d["trap"] - v) == 1 for v in vac): 
             f.append(("Trap Vazia", CFG["TRAP_VAZIA"]))
         if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
-            f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"])) # <-- AUMENTADO
+            f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"]))
             
         d["fatores"] = f
         d["overall"] = vel + pts_cat + pts_perfil + pts_prop("sd", CFG["CONSIST_PTS"], d, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_prop("rec", CFG["RECUP_PTS"], d, False) + sum(v for _, v in f)
@@ -667,7 +679,7 @@ def gerar_observacoes(rank, avbs, ctx):
         r_trap = TRAP_EMOJI.get(top_ritmo['trap'], str(top_ritmo['trap']))
         st.markdown(f"- **💡 Análise de Pace:** O **{s_trap}** tem a melhor largada (Split), mas o **{r_trap}** tem o melhor ritmo final.")
         
-        # Alerta de Zebra (DIB 3.5)
+        # Alerta de Zebra
         if top_split["pos"] > 3:
             st.markdown(f"- **🦓 Alerta de Zebra:** O **{s_trap}** (Posição {top_split['pos']}) tem o melhor Early Pace da corrida. Se ele não for atrapalhado, pode ditar o ritmo e surpreender os favoritos.")
             
