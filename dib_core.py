@@ -31,7 +31,7 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 3.8)
+# CONFIGURAÇÃO GLOBAL (DIB 3.8.1)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
@@ -467,7 +467,7 @@ def calc_prob(V, D, rank, ctx):
     pts_fatores_v = sum(v for _, v in V.get("fatores", []))
     pts_fatores_d = sum(v for _, v in D.get("fatores", []))
     diff_fatores = pts_fatores_v - pts_fatores_d
-    prob += (diff_fatores * 0.5) # Ex: se V tem +10 e D tem -15, diff = 25. prob += 12.5%
+    prob += (diff_fatores * 0.5) 
     # ---------------------------------------------
 
     top3_ms = ctx.get("top3_ms", set())
@@ -490,7 +490,8 @@ def calc_prob(V, D, rank, ctx):
     return max(25.0, min(75.0, prob))
 
 def montar_avbs(rank, ctx):
-    elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd")]
+    # DIB 3.8.1: Excluir galgos bloqueados ou com confiança < 60% da tabela de AVB
+    elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and not d.get("bloqueado") and d.get("conf", 0) >= 60.0]
     if len(elig) < 2: return []
     
     s1 = []
@@ -504,8 +505,7 @@ def montar_avbs(rank, ctx):
             else:
                 V, D, prob = B, A, 100.0 - prob_A
                 
-            if V.get("bloqueado", False):
-                continue
+            # Não é mais necessário checar bloqueio aqui, pois já filtramos no 'elig'
                 
             if prob >= 60.0:
                 s1.append((V, D, prob, True))
