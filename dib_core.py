@@ -31,7 +31,7 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 3.9)
+# CONFIGURAÇÃO GLOBAL (DIB 4.6)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
@@ -309,7 +309,7 @@ def analisar_galgo(dog, ctx):
         if count_t >= 2: d["forma_trial"] = True
     if not R: return d
 
-    # --- INÍCIO DA CORREÇÃO DA CATEGORIA (DIB 3.7 mantida) ---
+    # Categoria Média (DIB 3.7)
     today_n = ctx.get("classe_n")
     last_n = grade_num(R[0]["grade"])
     mod = 0.0
@@ -319,9 +319,7 @@ def analisar_galgo(dog, ctx):
     valid_grades = [grade_num(r["grade"]) for r in R if grade_num(r["grade"]) is not None]
     avg_grade_n = sum(valid_grades) / len(valid_grades) if valid_grades else (today_n or 0)
     base = 16.0 - avg_grade_n
-    
     d["cat_mod"], d["cat"] = mod, base + mod
-    # --- FIM DA CORREÇÃO DA CATEGORIA ---
 
     d["peso"] = dog.get("peso_atual") or R[0]["weight"]
     d["split"], d["time"] = R[0]["split"], R[0]["caltm"]
@@ -423,40 +421,52 @@ def finalizar(ds, ctx):
     return ok, top3_ms
 
 def calc_prob(V, D, rank, ctx):
-    # DIB 3.9: O AVB agora é ancorado no Overall (Leitura da Corrida)
-    diff_overall = V["overall"] - D["overall"]
+    """
+    DIB 4.6 - Duelo de Estilos: Compara Ponto Forte vs Ponto Fraco.
+    """
+    prob = 50.0
     
-    # Cada 10 pontos de diferença de Overall valem 2% de probabilidade.
-    prob = 50.0 + (diff_overall * 0.20) 
-    
-    # Ajuste de tempo bruto (impacto reduzido)
+    # 1. Tempo Ajustado (Tadj) - O cão mais rápido leva vantagem
     if V.get("tadj") is not None and D.get("tadj") is not None:
         diff_tadj = D["tadj"] - V["tadj"]
-        diff_mtime = (D.get("mtime") or 0) - (V.get("mtime") or 0)
-        pts_vel = ((diff_tadj + diff_mtime) / 0.10) * 1.5 # Reduzido de 4.0 para 1.5
-        prob += max(-5.0, min(5.0, pts_vel))
+        prob += (diff_tadj * 100.0) # Cada 0.1s de vantagem = 10% de chance a mais
+        
+    # 2. Largada (Split) - O cão que larga bem leva vantagem
+    if V.get("msplit") is not None and D.get("msplit") is not None:
+        diff_split = D["msplit"] - V["msplit"]
+        prob += (diff_split * 50.0) # Cada 0.1s de vantagem na largada = 5%
+    elif V.get("msplit_pos") is not None and D.get("msplit_pos") is not None:
+        diff_pos = D["msplit_pos"] - V["msplit_pos"]
+        prob += (diff_pos * 3.0)
+        
+    # 3. Ritmo Final - O cão com melhor "punch" na reta
+    if V.get("ritmo") is not None and D.get("ritmo") is not None:
+        diff_ritmo = D["ritmo"] - V["ritmo"]
+        prob += (diff_ritmo * 30.0)
+        
+    # 4. Perfil de Risco (Limpo vs Trombador)
+    val_perfil = {"Limpo": 0, "Irregular": 1, "Trombador": 2}
+    diff_perfil = val_perfil.get(D["perfil"], 1) - val_perfil.get(V["perfil"], 1)
+    prob += (diff_perfil * 8.0)
     
-    # Ajuste de Pace (Early Pace)
+    # 5. Early Pace (Histórico de Liderar)
     v_early = sum(1 for r in V.get("runs", []) if any(re.match(r"^(ep|ald|snld|ld)", t) for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
     d_early = sum(1 for r in D.get("runs", []) if any(re.match(r"^(ep|ald|snld|ld)", t) for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
-    if v_early > d_early: prob += 3.0
-    
-    # DIB 3.9: Trava de Alvo. Se é alvo, perde muita chance no duelo.
+    if v_early > d_early: prob += 5.0
+    if d_early > v_early: prob -= 5.0
+        
+    # 6. Trava de Alvo
     if V.get("alvo"): prob -= 15.0
     if D.get("alvo"): prob += 15.0
         
-    # Bônus de Perfil (O mesmo da leitura da corrida)
-    val_perfil = {"Limpo": 0, "Irregular": 1, "Trombador": 2}
-    if D["perfil"] != V["perfil"]:
-        prob += (val_perfil.get(D["perfil"], 1) - val_perfil.get(V["perfil"], 1)) * 2.0
-
-    # Vantagem de Trap (1, 2, 3 contra 4, 5, 6)
-    if V["trap"] in [1,2,3] and D["trap"] in [4,5,6]: prob += 2.0
+    # 7. Vantagem de Trap (Interior vs Exterior)
+    if V["trap"] in [1,2,3] and D["trap"] in [4,5,6]: prob += 4.0
+    if D["trap"] in [1,2,3] and V["trap"] in [4,5,6]: prob -= 4.0
 
     return max(25.0, min(75.0, prob))
 
 def montar_avbs(rank, ctx):
-    # DIB 3.9: Excluir bloqueados ou confiança < 60%
+    # Remove bloqueados e com baixa confiança
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and not d.get("bloqueado") and d.get("conf", 0) >= 60.0]
     if len(elig) < 2: return []
     
@@ -464,6 +474,8 @@ def montar_avbs(rank, ctx):
     for i in range(len(elig)):
         for j in range(i+1, len(elig)):
             A, B = elig[i], elig[j]
+            
+            # Duelo de Estilos (Sem limite de Overall)
             prob_A = calc_prob(A, B, rank, ctx)
             
             if prob_A >= 50.0:
@@ -471,8 +483,14 @@ def montar_avbs(rank, ctx):
             else:
                 V, D, prob = B, A, 100.0 - prob_A
                 
-            # Como o alvo já está excluído no 'elig', não precisamos checar aqui
+            if V.get("bloqueado", False):
+                continue
                 
+            # REGRA DE OURO DO USUÁRIO: O Desafiante não pode ter um tempo ajustado menor (melhor) que o Vencedor.
+            if V.get("tadj") is not None and D.get("tadj") is not None:
+                if D["tadj"] < V["tadj"]:
+                    continue
+
             if prob >= 60.0:
                 s1.append((V, D, prob, True))
                 
@@ -540,7 +558,7 @@ def tabela_projecao(ds):
 
 def tabela_avb(lista, titulo):
     st.markdown(f"#### {titulo}")
-    if not lista: st.info("Nenhum confronto com vantagem superior a 60% nesta corrida."); return
+    if not lista: st.info("Nenhum confronto equilibrado com vantagem superior a 60% nesta corrida."); return
 
     def fmt_pair(val_v, val_d, is_time=False, precision=2, is_pct=False):
         if val_v is None or val_d is None: return "-", "-"
