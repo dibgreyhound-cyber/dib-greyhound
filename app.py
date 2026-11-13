@@ -453,44 +453,44 @@ def painel_descobrir(race_id, data_str):
 
 
 # ---------------------------------------------------------------- grafico estilo "Predictor" (barras pelo Overall)
+BAR_STYLE = {
+    1: ("background:#c62828;", "invert"),
+    2: ("background:#1d4ed8;", "invert"),
+    3: ("background:#eeeeee;", "dark"),
+    4: ("background:#151515;", "invert"),
+    5: ("background:#f26b21;", "invert"),
+    6: ("background:repeating-linear-gradient(180deg,#111 0 3px,#fff 3px 6px);", "invert"),
+}
+
+
 def grafico_predictor(ds):
-    """Gráfico no estilo Racing Post Predictor com SVG do cão correndo."""
+    """Uma barra por galgo (na ordem das traps). Tamanho = Overall / maior Overall; o maior Overall enche a barra."""
     com = [d for d in ds if not d.get("nd") and d.get("overall") is not None]
     if not com:
         return ""
     mx = max(d["overall"] for d in com)
-    
-    # Cores idênticas às do Racing Post
-    cores_trap = {
-        1: "#d62828", 2: "#1d4ed8", 3: "#ffffff", 4: "#111111", 5: "#f97316",
-        6: "repeating-linear-gradient(90deg, #111 0, #111 4px, #fff 4px, #fff 8px)"
-    }
-
-    # SVG do cão correndo (silhueta mais limpa e elegante)
-    # Fiz um desenho vetorial que remete a um galgo em movimento
-    svg_cao = """<svg viewBox="0 0 24 24" width="22" height="22" style="position:absolute; right: -11px; top: 50%; transform: translateY(-50%) scaleX(-1);"><path d="M20.5,5.5c0,0.8-0.7,1.5-1.5,1.5s-1.5-0.7-1.5-1.5S18.2,4,19,4S20.5,4.7,20.5,5.5z M17.8,10.3c-0.4-0.2-0.9-0.2-1.3,0l-2.8,1.6l-1.5-2.7c-0.2-0.3-0.5-0.5-0.9-0.5H9.5C9.2,8.7,9,8.9,9,9.2v3.3c0,0.3,0.2,0.5,0.5,0.5H11l1.7,3l-1.5,2.8c-0.1,0.2-0.2,0.4-0.2,0.7c0,0.8,0.7,1.5,1.5,1.5s1.5-0.7,1.5-1.5c0-0.2-0.1-0.5-0.2-0.7l1.3-2.4l3.1-1.7c0.4-0.2,0.6-0.7,0.4-1.1C18.5,10.7,18.2,10.5,17.8,10.3z M10,14.5H8c-0.3,0-0.5,0.2-0.5,0.5s0.2,0.5,0.5,0.5h2c0.3,0,0.5-0.2,0.5-0.5S10.3,14.5,10,14.5z M10,12.5H7c-0.3,0-0.5,0.2-0.5,0.5s0.2,0.5,0.5,0.5h3c0.3,0,0.5-0.2,0.5-0.5S10.3,12.5,10,12.5z" fill="#fff"/></svg>"""
-
-    linhas = ""
+    linhas = []
     for d in sorted(ds, key=lambda x: x["trap"]):
         t = d["trap"]
-        cor = cores_trap.get(t, "#ffffff")
-        
+        estilo, icone = BAR_STYLE.get(t, ("background:#888;", "invert"))
         if d.get("nd") or d.get("overall") is None:
-            pct = 0
-            nome = "Sem dados"
+            fill, tip = "", "sem dados"
         else:
-            pct = max(5.0, min(100.0, d["overall"] / mx * 100.0))
-            nome = f"{d['name']} - {d['overall']:.1f}"
-
-        # Ajusta a cor do cão para aparecer no fundo branco (trap 3) ou rajado (trap 6)
-        svg_fill = "#000000" if t in (3, 6) else "#ffffff"
-        svg_atual = svg_cao.replace('fill="#fff"', f'fill="{svg_fill}"')
-
-        # TUDO EM UMA LINHA SÓ PARA O STREAMLIT NÃO ACHAR QUE É CÓDIGO
-        linhas += f"<div style='display:flex; align-items:center; gap:10px; margin-bottom:6px;'><div style='width:24px; text-align:center; font-weight:bold; color:#fff; font-size:14px;'>{t}</div><div style='flex:1; height:22px; background:#0f172a; border-radius:12px; position:relative; border: 1px solid #334155;'><div title='{nome}' style='width:{pct}%; height:100%; background:{cor}; border-radius:12px; position:relative; transition: width 0.5s ease;'>{svg_atual if pct > 0 else ''}</div></div></div>"
-
-    # TUDO EM UMA LINHA SÓ AQUI TAMBÉM
-    return f"<div style='background:#1e293b; border-radius:12px; padding:20px 15px 15px; max-width:600px; margin: 10px 0; position:relative; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);'><div style='position:absolute; top:0; left:15px; background:#dc2626; color:#fff; font-weight:bold; font-size:12px; padding:4px 12px; border-radius:0 0 8px 8px; text-transform: uppercase; letter-spacing: 0.5px;'>Predictor</div><div style='height:15px;'></div>{linhas}</div>"
+            w = 100.0 if mx <= 0 else max(4.0, min(100.0, d["overall"] / mx * 100.0))
+            tip = f"{d['name']} · Overall {d['overall']:.1f}"
+            filtro = "brightness(0)" if icone == "dark" else "brightness(0) invert(1)"
+            fill = (f"<div title=\"{tip}\" style='position:relative;width:{w:.1f}%;height:100%;"
+                    f"border-radius:14px;{estilo}'>"
+                    f"<span style='position:absolute;right:6px;top:50%;transform:translateY(-50%);"
+                    f"font-size:15px;line-height:1;filter:{filtro};'>🐕</span></div>")
+        linhas.append(f"<div style='display:flex;align-items:center;gap:8px;margin:7px 0'>{badge(t)}"
+                      f"<div style='flex:1;height:24px;background:#0a2a52;border-radius:14px;overflow:hidden'>"
+                      f"{fill}</div></div>")
+    return ("<div style='background:#143f6f;border-radius:16px;padding:16px 12px 8px;max-width:640px;margin:8px 0;"
+            "position:relative'>"
+            "<div style='position:absolute;top:-1px;left:10px;background:#d32f2f;color:#fff;font-weight:700;"
+            "font-size:13px;padding:3px 14px;border-radius:0 0 12px 12px'>Predictor</div>"
+            "<div style='height:10px'></div>" + "".join(linhas) + "</div>")
 
 
 # ---------------------------------------------------------------- analise
@@ -611,6 +611,7 @@ def gerar_texto_analise(c, p):
         nomes_alvo = ", ".join([d['name'] for d in alvos])
         txt.append(f"- 🎯 Alvo(s): {nomes_alvo} (fora do Top 3 largada e recuperação ≤ 0%).")
 
+    # DIB 3.5: Alerta de pista irlandesa e Alerta de Zebra
     all_splits = [d["msplit"] for d in p["rank"] if d.get("msplit") is not None]
     is_irish_metric = all(s < 2.0 for s in all_splits) if all_splits else False
 
