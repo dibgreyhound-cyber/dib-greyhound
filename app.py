@@ -2,6 +2,7 @@
 """
 app.py - Lista de corridas / Resultados na barra lateral + analise e Form na pagina principal.
 Usa o seu dib_core.py (calculo e tabelas) sem mudancas.
+Novidades: replay da corrida e painel "Descobrir" para achar o endereco do resultado.
 """
 import re
 import time
@@ -36,6 +37,7 @@ KEYS = {
     "num": ["raceTitle", "raceNum", "raceNumber", "rNum", "number", "raceNo"],
     "grade": ["raceClass", "raceGrade", "grade", "class", "raceClassDesc"],
     "dist": ["distMetres", "distMeters", "distance", "dist", "raceDistance"],
+    "clip": ["clipId", "clip_id", "videoId", "replayId"],
 }
 RES = {
     "nome": ["dogName", "dog_name", "name"],
@@ -190,6 +192,7 @@ def achar_corridas(obj):
                     "num": str(_get(o, "num") or "").replace("Race", "").strip(),
                     "grade": re.sub(r"[()\s]", "", str(g or "")).upper(),
                     "dist": int(re.sub(r"\D", "", str(d))) if d and re.search(r"\d", str(d)) else 0,
+                    "clip": str(_get(o, "clip") or ""),
                 }
             for v in o.values(): walk(v, pista_ctx)
         elif isinstance(o, list):
@@ -222,7 +225,7 @@ def achar_resultados(obj):
 
 
 def _chaves(js):
-    if not isinstance(js, dict): return type(js).__name__
+    if not isinstance(js, dict): return f"({type(js).__name__} com {len(js) if hasattr(js, '__len__') else '?'} itens)"
     return ", ".join(f"{k}{'(erro)' if isinstance(v, dict) and 'errorCode' in v else ''}" for k, v in js.items())[:90]
 
 
@@ -233,13 +236,20 @@ def tentar(urls, parser):
         time.sleep(0.3)
         try:
             r = http().get(u, timeout=8)
-            js = r.json() if r.status_code == 200 else None
         except Exception as e:
-            tentativas.append({"Endereço": curto, "Status": f"erro: {str(e)[:40]}", "Achados": 0, "Chaves": ""})
+            tentativas.append({"Status": f"erro: {str(e)[:40]}", "Achados": 0, "Chaves": "", "Resposta": "",
+                               "Endereço": curto})
             continue
+        js, resposta = None, ""
+        if r.status_code == 200:
+            try:
+                js = r.json()
+            except Exception:   # resposta que nao e JSON: mostra o comeco para entender
+                resposta = r.text[:90].replace("\n", " ")
         res = parser(js) if js is not None else []
-        tentativas.append({"Endereço": curto, "Status": r.status_code, "Achados": len(res),
-                           "Chaves": _chaves(js) if js is not None else ""})
+        tentativas.append({"Status": r.status_code, "Achados": len(res),
+                           "Chaves": _chaves(js) if js is not None else "", "Resposta": resposta,
+                           "Endereço": curto})
         if primeira is None and js is not None and not res: primeira = js
         if res:
             achado = res
@@ -306,6 +316,140 @@ def fechar_sidebar():
 
 def tabela_html(headers, rows):
     st.markdown(dib.tbl(headers, rows), unsafe_allow_html=True)
+
+
+def _link(url, rotulo):
+    try:
+        st.link_button(rotulo, url)
+    except Exception:
+        st.markdown(f"[{rotulo}]({url})")
+
+
+# ---------------------------------------------------------------- replay
+def mostrar_replay(c):
+    clip = str(c.get("clip") or "").strip()
+    if clip:
+        url = f"https://www.youtube.com/watch?v={clip}"
+        with st.expander("▶ Replay da corrida (tentativa)", expanded=False):
+            try:
+                st.video(url)
+            except Exception:
+                st.write("Não consegui incorporar o vídeo aqui.")
+            _link(url, "Abrir o vídeo em outra aba")
+            st.caption(f"Código do replay recebido da lista: {clip}")
+    else:
+        st.caption("▶ Replay: esta corrida ainda não trouxe o código do vídeo (clipId vazio na lista). "
+                   "Ele costuma aparecer depois que a corrida termina; toque em 🔄 para recarregar a lista.")
+    _link(f"{BASE}/#results-list/r_date={c['data']}", "Abrir os resultados no site (botão Watch Replay)")
+
+
+# ---------------------------------------------------------------- descobrir enderecos (lendo o JavaScript do site)
+_RE_SD = re.compile(r"""["']((?:/?[\w\-]+/)*[\w\-]*\.sd)(?:\?[^"']*)?["']""")
+_RE_BLOCKS = re.compile(r"""blocks\s*[:=]\s*["']([\w,%\-]+)["']""")
+
+
+def _baixar(url, tam=3_000_000):
+    try:
+        r = http().get(url, timeout=15)
+        if r.status_code == 200:
+            return r.text[:tam]
+    except Exception:
+        pass
+    return ""
+
+
+def _contextos(texto, padrao, n=70, limite=20):
+    vistos, res = set(), []
+    for m in re.finditer(padrao, texto, flags=re.I):
+        ini, fim = max(0, m.start() - n), min(len(texto), m.end() + n)
+        trecho = texto[ini:fim].replace("\n", " ")
+        chave = trecho[n - 10:n + 20]
+        if chave not in vistos:
+            vistos.add(chave)
+            res.append(trecho)
+        if len(res) >= limite:
+            break
+    return res
+
+
+def _galgos_com_posicao(js):
+    n = 0
+
+    def walk(o):
+        nonlocal n
+        if isinstance(o, dict):
+            nome = o.get("dogName")
+            pos = re.search(r"\d+", str(o.get("outcomeDesc") or o.get("finishPos") or o.get("position") or ""))
+            if isinstance(nome, str) and pos:
+                n += 1
+            for v in o.values(): walk(v)
+        elif isinstance(o, list):
+            for v in o: walk(v)
+
+    walk(js)
+    return n
+
+
+def painel_descobrir(race_id, data_str):
+    st.markdown("---")
+    st.markdown("#### 🧪 Descobrir o endereço do resultado e do replay")
+    st.caption("Lê o código do site para achar de onde vêm o resultado e o vídeo. Leva alguns segundos.")
+    if not st.button("🧪 Descobrir agora", key="btn_descobrir"):
+        return
+    with st.spinner("Lendo o site..."):
+        html = _baixar(BASE + "/")
+        urls = re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html)
+        scripts = []
+        for u in urls:
+            u = "https:" + u if u.startswith("//") else (BASE + u if u.startswith("/") else
+                                                          (u if u.startswith("http") else BASE + "/" + u))
+            if "racingpost" in u and u not in scripts:
+                scripts.append(u)
+        scripts = scripts[:8]
+        tudo = "\n".join(_baixar(u) for u in scripts)
+        st.write(f"Página inicial: {len(html)} caracteres · {len(scripts)} arquivos JavaScript · "
+                 f"{len(tudo)} caracteres lidos")
+
+        caminhos = sorted({m.group(1) for m in _RE_SD.finditer(tudo)})
+        blocos = sorted({m.group(1) for m in _RE_BLOCKS.finditer(tudo)})
+        st.markdown("**Endereços .sd encontrados no site:**")
+        st.code("\n".join(caminhos[:80]) or "(nenhum)")
+        st.markdown("**Nomes de blocks encontrados:**")
+        st.code(", ".join(blocos[:80]) or "(nenhum)")
+        st.markdown("**Trechos do código com 'result':**")
+        st.code("\n\n".join(_contextos(tudo, r"result", 70, 15)) or "(nenhum)")
+        st.markdown("**Trechos do código sobre replay / vídeo:**")
+        st.code("\n\n".join(_contextos(tudo, r"replay|clipId|youtube|\.mp4|m3u8|video", 80, 20)) or "(nenhum)")
+
+        caminhos_res = [p for p in caminhos if "result" in p.lower()]
+        bases = caminhos_res[:6] + ["/results/blocks.sd", "/result/blocks.sd", "/card/blocks.sd"]
+        nomes = [b for b in blocos if "result" in b.lower()] + ["result", "results", "card", "header%2Ccard"]
+        testes, achado, vistos = [], None, set()
+        for p in bases:
+            p = p if p.startswith("/") else "/" + p
+            for b in list(dict.fromkeys(nomes))[:6]:
+                u = f"{BASE}{p}?race_id={race_id}&r_date={data_str}&blocks={b}"
+                if u in vistos or len(testes) >= 30:
+                    continue
+                vistos.add(u)
+                time.sleep(0.25)
+                try:
+                    r = http().get(u, timeout=8)
+                    js = r.json() if r.status_code == 200 else None
+                except Exception:
+                    testes.append({"Status": "não é JSON", "Galgos": 0, "Endereço": u.replace(BASE, "")})
+                    continue
+                n = _galgos_com_posicao(js) if js is not None else 0
+                testes.append({"Status": r.status_code, "Galgos": n, "Endereço": u.replace(BASE, "")})
+                if n >= 2 and not achado:
+                    achado = u
+        st.markdown("**Testes de endereço do resultado:**")
+        st.dataframe(pd.DataFrame(testes), use_container_width=True, hide_index=True)
+        if achado:
+            st.success("Achei um endereço com resultado! Me mande a foto desta tela.")
+            st.code(achado)
+        else:
+            st.warning("Ainda não achei. Me mande as fotos das listas acima.")
 
 
 # ---------------------------------------------------------------- analise
@@ -522,6 +666,7 @@ def mostrar_form(c):
 def mostrar_resultado(c, classe_in, dist_in, pp_in):
     linhas, tent, primeira = buscar_resultado(c["id"], c["data"])
     st.markdown(titulo_corrida(c, None, "📊 Resultado · "))
+    mostrar_replay(c)
     if not linhas:
         st.warning("Não consegui ler o resultado desta corrida (ela pode ainda não ter sido disputada). "
                    "Veja o diagnóstico abaixo.")
@@ -529,6 +674,7 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
         if primeira is not None:
             st.caption("Primeira resposta recebida:")
             st.json(primeira if len(str(primeira)) < 6000 else {"(cortado)": str(primeira)[:6000]})
+        painel_descobrir(c["id"], c["data"])
         return
     tabela_html(["Pos", "Trap", "Galgo", "SP", "Tempo", "Margem", "Comentário"],
                 [[f"{l['pos']}º", badge(l["trap"]), l["nome"], l["sp"], l["tempo"], l["margem"], l["coment"]]
@@ -588,7 +734,7 @@ def main():
         if not corridas and any(t.get("Status") == 403 for t in tentativas):
             st.error("O site recusou o acesso (403). Costuma ser bloqueio temporário por muitas consultas "
                      "ou data ainda indisponível. Espere alguns minutos, escolha o dia anterior ou toque em Tentar de novo.")
-        if not corridas and st.button("🔄 Tentar de novo"):
+        if st.button("🔄 Recarregar lista"):
             buscar_lista.clear()
             st.rerun()
 
