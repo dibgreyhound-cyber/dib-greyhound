@@ -453,16 +453,6 @@ def painel_descobrir(race_id, data_str):
 
 
 # ---------------------------------------------------------------- grafico estilo "Predictor" (barras pelo Overall)
-BAR_STYLE = {
-    1: ("background:#c62828;", "invert"),
-    2: ("background:#1d4ed8;", "invert"),
-    3: ("background:#eeeeee;", "dark"),
-    4: ("background:#151515;", "invert"),
-    5: ("background:#f26b21;", "invert"),
-    6: ("background:repeating-linear-gradient(180deg,#111 0 3px,#fff 3px 6px);", "invert"),
-}
-
-
 def grafico_predictor(ds):
     """Gráfico no estilo Racing Post Predictor com SVG do cão correndo."""
     com = [d for d in ds if not d.get("nd") and d.get("overall") is not None]
@@ -495,29 +485,11 @@ def grafico_predictor(ds):
         svg_fill = "#000000" if t in (3, 6) else "#ffffff"
         svg_atual = svg_cao.replace("<path", f"<path fill='{svg_fill}'")
 
-        linhas += f"""
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
-            <!-- Número da Trap -->
-            <div style="width:24px; text-align:center; font-weight:bold; color:#fff; font-size:14px;">{t}</div>
-            
-            <!-- Container da Barra -->
-            <div style="flex:1; height:22px; background:#0f172a; border-radius:12px; position:relative; border: 1px solid #334155;">
-                <!-- Barra Colorida -->
-                <div title="{nome}" style="width:{pct}%; height:100%; background:{cor}; border-radius:12px; position:relative; transition: width 0.5s ease;">
-                    {svg_atual if pct > 0 else ''}
-                </div>
-            </div>
-        </div>"""
+        # TUDO EM UMA LINHA SÓ PARA O STREAMLIT NÃO ACHAR QUE É CÓDIGO
+        linhas += f"<div style='display:flex; align-items:center; gap:10px; margin-bottom:6px;'><div style='width:24px; text-align:center; font-weight:bold; color:#fff; font-size:14px;'>{t}</div><div style='flex:1; height:22px; background:#0f172a; border-radius:12px; position:relative; border: 1px solid #334155;'><div title='{nome}' style='width:{pct}%; height:100%; background:{cor}; border-radius:12px; position:relative; transition: width 0.5s ease;'>{svg_atual if pct > 0 else ''}</div></div></div>"
 
-    return f"""
-    <div style="background:#1e293b; border-radius:12px; padding:20px 15px 15px; max-width:600px; margin: 10px 0; position:relative; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
-        <div style="position:absolute; top:0; left:15px; background:#dc2626; color:#fff; font-weight:bold; font-size:12px; padding:4px 12px; border-radius:0 0 8px 8px; text-transform: uppercase; letter-spacing: 0.5px;">
-            Predictor
-        </div>
-        <div style="height:15px;"></div>
-        {linhas}
-    </div>
-    """
+    # TUDO EM UMA LINHA SÓ AQUI TAMBÉM
+    return f"<div style='background:#1e293b; border-radius:12px; padding:20px 15px 15px; max-width:600px; margin: 10px 0; position:relative; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);'><div style='position:absolute; top:0; left:15px; background:#dc2626; color:#fff; font-weight:bold; font-size:12px; padding:4px 12px; border-radius:0 0 8px 8px; text-transform: uppercase; letter-spacing: 0.5px;'>Predictor</div><div style='height:15px;'></div>{linhas}</div>"
 
 
 # ---------------------------------------------------------------- analise
