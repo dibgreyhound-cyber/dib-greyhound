@@ -25,10 +25,11 @@ LISTA_CANDIDATOS = [
     BASE + "/meeting/list.sd?r_date={d}",
 ]
 RESULTADO_CANDIDATOS = (
-    [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult")]
-    + [BASE + "/result/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results")]
-    + [BASE + "/card/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results")]
+    [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult", "result-meeting-result")]
+    + [BASE + "/result/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "result-meeting-result")]
+    + [BASE + "/card/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "result-meeting-result")]
     + [BASE + "/results/race.sd?race_id={rid}&r_date={d}"]
+    + [BASE + "/result/race.sd?race_id={rid}&r_date={d}"]
 )
 KEYS = {
     "id": ["raceId", "race_id", "rid"],
@@ -187,12 +188,19 @@ def achar_corridas(obj):
             hora = _hhmm(_get(o, "hora"))
             if rid is not None and re.fullmatch(r"\d{5,9}", str(rid)) and hora:
                 g, d = _get(o, "grade"), _get(o, "dist")
+                
+                clip_val = ""
+                for k_clip in KEYS["clip"] + ["clip", "video", "replay", "mediaId", "media_id"]:
+                    if k_clip in o and o[k_clip]:
+                        clip_val = str(o[k_clip])
+                        break
+                
                 achados[str(rid)] = {
                     "id": str(rid), "hora": hora, "pista": (pista_ctx or "?").title(),
                     "num": str(_get(o, "num") or "").replace("Race", "").strip(),
                     "grade": re.sub(r"[()\s]", "", str(g or "")).upper(),
                     "dist": int(re.sub(r"\D", "", str(d))) if d and re.search(r"\d", str(d)) else 0,
-                    "clip": str(_get(o, "clip") or ""),
+                    "clip": clip_val,
                 }
             for v in o.values(): walk(v, pista_ctx)
         elif isinstance(o, list):
@@ -204,9 +212,17 @@ def achar_corridas(obj):
 
 def achar_resultados(obj):
     achados = {}
+    video_info = {"url": "", "vid": ""}
 
     def walk(o):
         if isinstance(o, dict):
+            for k in ("videoFileName", "videoUrl", "streamUrl", "m3u8", "replayUrl"):
+                if o.get(k) and isinstance(o[k], str) and "http" in o[k]:
+                    video_info["url"] = o[k]
+            for k in ("video_id", "videoId", "clipId", "clip_id", "replayId"):
+                if o.get(k) and str(o[k]).strip():
+                    video_info["vid"] = str(o[k]).strip()
+
             nome = _get(o, "nome", RES)
             m = re.search(r"\d+", str(_get(o, "pos", RES) or ""))
             if isinstance(nome, str) and m and 1 <= int(m.group()) <= 8:
@@ -221,7 +237,10 @@ def achar_resultados(obj):
             for v in o: walk(v)
 
     walk(obj)
-    return sorted(achados.values(), key=lambda x: x["pos"])
+    lista = sorted(achados.values(), key=lambda x: x["pos"])
+    if lista and (video_info["url"] or video_info["vid"]):
+        lista[0]["_video"] = video_info
+    return lista
 
 
 def _chaves(js):
@@ -244,7 +263,7 @@ def tentar(urls, parser):
         if r.status_code == 200:
             try:
                 js = r.json()
-            except Exception:   # resposta que nao e JSON: mostra o comeco para entender
+            except Exception:
                 resposta = r.text[:90].replace("\n", " ")
         res = parser(js) if js is not None else []
         tentativas.append({"Status": r.status_code, "Achados": len(res),
@@ -326,21 +345,45 @@ def _link(url, rotulo):
 
 
 # ---------------------------------------------------------------- replay
-def mostrar_replay(c):
-    clip = str(c.get("clip") or "").strip()
-    if clip:
-        url = f"https://www.youtube.com/watch?v={clip}"
-        with st.expander("▶ Replay da corrida (tentativa)", expanded=False):
-            try:
-                st.video(url)
-            except Exception:
-                st.write("Não consegui incorporar o vídeo aqui.")
-            _link(url, "Abrir o vídeo em outra aba")
-            st.caption(f"Código do replay recebido da lista: {clip}")
+def mostrar_replay(c, video_info=None):
+    video_info = video_info or {}
+    url_m3u8 = video_info.get("url", "").strip()
+    vid = video_info.get("vid", "").strip() or str(c.get("clip") or "").strip()
+
+    link_site_replay = f"{BASE}/#result-meeting-result/race_id={c['id']}&r_date={c['data']}"
+
+    if url_m3u8:
+        with st.expander("▶ Replay da Corrida", expanded=True):
+            player_html = f"""
+            <video id="video" controls autoplay playsinline style="width:100%; max-height:420px; background:#000; border-radius:8px;"></video>
+            <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+            <script>
+              var video = document.getElementById('video');
+              var videoSrc = {json.dumps(url_m3u8)};
+              if (Hls.isSupported()) {{
+                var hls = new Hls();
+                hls.loadSource(videoSrc);
+                hls.attachMedia(video);
+              }} else if (video.canPlayType('application/vnd.apple.mpegurl')) {{
+                video.src = videoSrc;
+              }}
+            </script>
+            """
+            components.html(player_html, height=380)
+            _link(url_m3u8, "Abrir stream (.m3u8) em outra aba")
+    elif vid:
+        if not vid.isdigit():
+            url_yt = f"https://www.youtube.com/watch?v={vid}"
+            with st.expander("▶ Replay da Corrida", expanded=True):
+                st.video(url_yt)
+                _link(url_yt, "Abrir no YouTube")
+        else:
+            st.info(f"🎬 Replay disponível (ID: {vid}). Abra no site para assistir com o token atualizado:")
     else:
-        st.caption("▶ Replay: esta corrida ainda não trouxe o código do vídeo (clipId vazio na lista). "
+        st.caption("▶ Replay: esta corrida ainda não trouxe o código do vídeo. "
                    "Ele costuma aparecer depois que a corrida termina; toque em 🔄 para recarregar a lista.")
-    _link(f"{BASE}/#card/race_id={c['id']}&r_date={c['data']}", "Abrir esta corrida no site")
+    
+    _link(link_site_replay, "🎬 Ver Resultado e Replay no Racing Post")
 
 
 # ---------------------------------------------------------------- descobrir enderecos (lendo o JavaScript do site)
@@ -392,7 +435,6 @@ def _galgos_com_posicao(js):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def varrer_site():
-    """Le a pagina inicial e os arquivos JavaScript do site (so na primeira vez)."""
     html = _baixar(BASE + "/")
     scripts = []
     for u in re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html):
@@ -436,7 +478,7 @@ def testar_enderecos(race_id, data_str, bases, nomes):
 def painel_descobrir(race_id, data_str):
     st.markdown("---")
     st.markdown("#### 🧪 Procurando o endereço do resultado e do replay")
-    with st.spinner("Lendo o código do site (só na primeira vez, leva alguns segundos)..."):
+    with st.spinner("Lendo o código do site..."):
         v = varrer_site()
     caminhos_res = [p for p in v["caminhos"] if "result" in p.lower()]
     bases = tuple(dict.fromkeys([(p if p.startswith("/") else "/" + p) for p in caminhos_res[:5]]
@@ -449,7 +491,7 @@ def painel_descobrir(race_id, data_str):
         st.success("Achei um endereço com resultado! Copie o relatório abaixo e cole no chat.")
         st.code(achado)
     else:
-        st.warning("Ainda não achei o endereço. Toque em copiar e cole o relatório no chat que eu ajusto.")
+        st.warning("Ainda não achei o endereço.")
     linhas = [f"Pagina inicial: {v['html']} caracteres | JavaScript: {len(v['scripts'])} arquivos, {v['chars']} caracteres",
               "ARQUIVOS: " + ", ".join(v["scripts"]),
               "ENDERECOS .sd: " + ", ".join(v["caminhos"]),
@@ -458,7 +500,7 @@ def painel_descobrir(race_id, data_str):
               "TESTES:", *[f"{t['Status']} | galgos={t['Galgos']} | {t['Chaves']} | {t['Endereço']}" for t in testes]]
     relatorio = "\n".join(linhas)
     botao_copiar(relatorio)
-    st.text_area("Relatório (se o botão não copiar, selecione e copie daqui):", relatorio, height=220)
+    st.text_area("Relatório:", relatorio, height=220)
     st.dataframe(pd.DataFrame(testes), use_container_width=True, hide_index=True)
 
 
@@ -474,7 +516,6 @@ BAR_STYLE = {
 
 
 def grafico_predictor(ds):
-    """Uma barra por galgo (na ordem das traps). Tamanho = Overall / maior Overall; o maior Overall enche a barra."""
     com = [d for d in ds if not d.get("nd") and d.get("overall") is not None]
     if not com:
         return ""
@@ -570,7 +611,6 @@ def gerar_texto_analise(c, p):
         txt.append(f"| {d['trap']} | {nome} | {d['overall']:.1f} | {d['cat']:.1f} | {fat} | {d['perfil']} | {grades} | {f_peso} | {d['dias']} | {f_split} | {f_time} | {f_msplit} | {f_mtime} | {f_tadj} | {f_ritmo} | {f_rec} | {d['conf']:.0f}% |")
     
     txt.append("")
-    
     classif = " > ".join(f"{d['pos']}º [T{d['trap']}]" for d in p["rank"])
     txt.append(f"**Classificação:** {classif}")
     txt.append("")
@@ -585,76 +625,6 @@ def gerar_texto_analise(c, p):
             txt.append(f"| {V['trap']} - {V['name']} | {D['trap']} - {D['name']} | {prob:.1f}% |")
     
     txt.append("")
-    
-    txt.append("**🏁 O Cenário da Corrida:**")
-    
-    elegiveis = [d for d in p["rank"] if not d.get("bloqueado")]
-    bloqueados = [d for d in p["rank"] if d.get("bloqueado")]
-    alvos = [d for d in p["rank"] if d.get("alvo")]
-    top_ritmo = min([d for d in p["rank"] if d.get("ritmo") is not None], key=lambda x: x["ritmo"], default=None)
-    top_split = min([d for d in p["rank"] if d.get("msplit") is not None], key=lambda x: x["msplit"], default=None) if any(d.get("msplit") for d in p["rank"]) else None
-
-    if elegiveis:
-        fav = elegiveis[0]
-        bloc_acima = [d for d in bloqueados if d["pos"] < fav["pos"]]
-        if bloc_acima:
-            b_name = bloc_acima[0]['name']
-            f_name = fav['name']
-            txt.append(f"- 🏆 Melhor Elegível: O favorito absoluto ({b_name}) está bloqueado 🚫. O cão mais seguro é o {f_name} (Posição {fav['pos']} | Recup: {fav['rec']:+.1f}%).")
-        else:
-            f_name = fav['name']
-            txt_rec = f" Ele tem recuperação excelente ({fav['rec']:+.1f}%)." if fav['rec'] > 10 else ""
-            txt.append(f"- 🏆 Favorito Claro: O {f_name} domina o Overall ({fav['overall']:.1f}).{txt_rec}")
-
-    if bloqueados:
-        b = bloqueados[0]
-        b_name = b['name']
-        avb_info = ""
-        if elegiveis:
-            for V, D, prob, star in p["s1"]:
-                if (V["trap"] == elegiveis[0]["trap"] and D["trap"] == b["trap"]) or (D["trap"] == elegiveis[0]["trap"] and V["trap"] == b["trap"]):
-                    avb_info = f" AVB apertado contra o elegível ({prob:.1f}%)."
-                    break
-        txt.append(f"- 🚫 Falso Favorito Bloqueado: O {b_name} tem Overall alto ({b['overall']:.1f}), mas foi pego pela Trava (Conf. {b['conf']:.0f}%).{avb_info}")
-
-    if alvos:
-        nomes_alvo = ", ".join([d['name'] for d in alvos])
-        txt.append(f"- 🎯 Alvo(s): {nomes_alvo} (fora do Top 3 largada e recuperação ≤ 0%).")
-
-    # DIB 3.5: Alerta de pista irlandesa e Alerta de Zebra
-    all_splits = [d["msplit"] for d in p["rank"] if d.get("msplit") is not None]
-    is_irish_metric = all(s < 2.0 for s in all_splits) if all_splits else False
-
-    if top_split and top_split["msplit"] < 5.0 and not is_irish_metric:
-        s_name = top_split['name']
-        txt.append(f"- ⚠️ Alerta de Dados: O {s_name} tem Split muito rápido ({top_split['msplit']:.2f}). Pode ser erro na base (considerado 'Melhor Pace').")
-    elif top_ritmo and top_split and top_ritmo["trap"] != top_split["trap"]:
-        s_name = top_split['name']
-        r_name = top_ritmo['name']
-        txt.append(f"- 💡 Análise de Pace: O {s_name} tem a melhor largada, mas o {r_name} tem o melhor ritmo final.")
-        if top_split["pos"] > 3:
-            txt.append(f"- 🦓 Alerta de Zebra: O {s_name} (Posição {top_split['pos']}) tem o melhor Early Pace. Pode surpreender.")
-    elif not top_split and top_ritmo:
-        top_split_pos = min([d for d in p["rank"] if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"], default=None)
-        if top_split_pos and top_ritmo["trap"] != top_split_pos["trap"]:
-             s_name = top_split_pos['name']
-             r_name = top_ritmo['name']
-             txt.append(f"- 💡 Análise de Pace: O {s_name} assume a liderança na 1ª curva, mas o {r_name} tem o melhor ritmo de prova final.")
-
-    pior_rec = min([d for d in p["rank"] if d.get("rec") is not None], key=lambda x: x["rec"], default=None)
-    if pior_rec and pior_rec["rec"] < -10.0:
-        rec_name = pior_rec['name']
-        txt.append(f"- ⚠️ Tráfego: O {rec_name} tem recuperação ruim ({pior_rec['rec']:+.1f}%).")
-
-    dropping = [d for d in p["rank"] if d.get("cat_mod", 0) > 0]
-    if dropping:
-        nomes = ", ".join([d['name'] for d in dropping])
-        txt.append(f"- 📉 Queda de Classe: {nomes} desceu(ram) de categoria hoje.")
-
-    top3_ms = p["ctx"].get("top3_ms", set())
-    if len(top3_ms) >= 3:
-        txt.append("- ⚠️ Conflito de Pace: Múltiplos cães com largada rápida (Top 3 Split). Risco de trombada na 1ª curva.")
-
     return "\n".join(txt)
 
 
@@ -671,11 +641,10 @@ def analisar(c, classe_in, dist_in, pp_in):
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
         
-    # BOTÃO DE EXPORTAR COM CÓPIA AUTOMÁTICA
     st.markdown("---")
     with st.expander("📋 Exportar Análise (Copiar e Colar para o Chat)"):
         texto_gerado = gerar_texto_analise(c, p)
-        botao_copiar(texto_gerado) # Chama o botão JS
+        botao_copiar(texto_gerado)
         st.text_area("Se o botão acima não funcionar, copie o texto aqui:", texto_gerado, height=200)
 
 
@@ -710,14 +679,17 @@ def mostrar_form(c):
         if rows:
             tabela_html(heads, rows)
         else:
-            st.caption("Sem corridas anteriores (galgo vacant ou sem histórico).")
+            st.caption("Sem corridas anteriores.")
 
 
 # ---------------------------------------------------------------- resultados
 def mostrar_resultado(c, classe_in, dist_in, pp_in):
     linhas, tent, primeira = buscar_resultado(c["id"], c["data"])
     st.markdown(titulo_corrida(c, None, "📊 Resultado · "))
-    mostrar_replay(c)
+    
+    video_info = linhas[0].get("_video") if linhas else None
+    mostrar_replay(c, video_info)
+
     if not linhas:
         st.warning("Não consegui ler o resultado desta corrida (ela pode ainda não ter sido disputada). "
                    "Veja o diagnóstico abaixo.")
@@ -754,8 +726,6 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
                 ok = ("✅" if pv < pd_ else "❌") if (pv and pd_) else ("✅" if pv else ("❌" if pd_ else "—"))
                 st.markdown(f"- {ok} {badge(V['trap'])} {V['name']} ({pv or '-'}º) vence "
                             f"{badge(D['trap'])} {D['name']} ({pd_ or '-'}º) · {prob:.1f}%", unsafe_allow_html=True)
-        else:
-            st.markdown("- Nenhum AVB ≥ 60% nesta corrida.")
     except Exception as e:
         st.caption(f"Não foi possível comparar com a projeção: {e}")
 
@@ -781,10 +751,9 @@ def main():
             memoria[data_str] = corridas
         elif data_str in memoria:
             corridas = memoria[data_str]
-            st.caption("⚠️ Usando a última lista carregada (o site não respondeu agora).")
+            st.caption("⚠️ Usando a última lista carregada.")
         if not corridas and any(t.get("Status") == 403 for t in tentativas):
-            st.error("O site recusou o acesso (403). Costuma ser bloqueio temporário por muitas consultas "
-                     "ou data ainda indisponível. Espere alguns minutos, escolha o dia anterior ou toque em Tentar de novo.")
+            st.error("O site recusou o acesso (403).")
         if st.button("🔄 Recarregar lista"):
             buscar_lista.clear()
             st.rerun()
@@ -801,7 +770,7 @@ def main():
             if modo == "res":
                 if hoje: lista = [c for c in lista if c["hora"] < limite]
                 lista = sorted(lista, key=lambda c: (c["hora"], c["pista"]), reverse=True)
-            st.caption(f"{len(lista)} corridas · horário da pista (Brasil = −3h)")
+            st.caption(f"{len(lista)} corridas")
             for c in lista:
                 ativo = sel and sel.get("id") == c["id"] and sel.get("modo") == modo
                 rotulo = f"{'▶ ' if ativo else ''}{c['hora']} · {c['pista']} R{c['num'] or '?'} · " \
@@ -809,13 +778,10 @@ def main():
                 st.button(rotulo, key=f"{modo}_{c['id']}", use_container_width=True,
                           on_click=escolher, args=(c, data_str, modo))
         else:
-            st.warning("Não consegui carregar a lista. Veja o diagnóstico abaixo.")
+            st.warning("Não consegui carregar a lista.")
 
         with st.expander("🔎 Diagnóstico da lista"):
             st.dataframe(pd.DataFrame(tentativas), use_container_width=True, hide_index=True)
-            if not corridas and primeira is not None:
-                st.caption("Resposta recebida:")
-                st.json(primeira if len(str(primeira)) < 6000 else {"(cortado)": str(primeira)[:6000]})
         with st.expander("🔗 Usar link manual"):
             link = st.text_input("Link da corrida", placeholder="Cole o link aqui...")
             if st.button("Analisar link") and link:
