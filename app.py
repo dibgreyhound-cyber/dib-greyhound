@@ -473,58 +473,42 @@ BAR_STYLE = {
 }
 
 
-# casaca de cada trap: (cor da casaca, cor do número)
-JACKET = {
-    1: ("#d62828", "#fff"),
-    2: ("#1d4ed8", "#fff"),
-    3: ("#f2f2f2", "#111"),
-    4: ("#111111", "#fff"),
-    5: ("#f97316", "#fff"),
-    6: ("url(#gh6)", "#e11"),
-}
-
-
 def greyhound_svg(trap):
-    """Greyhound escuro correndo (galope estendido, olhando p/ a direita) com a casaca e o número do trap."""
-    jc, nc = JACKET.get(trap, ("#888", "#fff"))
-    # contorno claro só onde o fundo da barra é escuro/listrado (traps 4 e 6)
-    halo = "filter:drop-shadow(0 0 .8px #fff) drop-shadow(0 0 .8px #fff);" if trap in (4, 6) else \
-        "filter:drop-shadow(0 0 .6px rgba(0,0,0,.5));"
-    corpo = "#2b2724"
-    contorno = " stroke='#fff' stroke-width='1.6' paint-order='stroke'" if trap == 6 else ""
-    defs = ("<defs><pattern id='gh6' width='3' height='3' patternUnits='userSpaceOnUse'>"
-            "<rect width='3' height='3' fill='#fff'/><rect width='3' height='1.5' fill='#111'/></pattern></defs>")
+    """Silhueta de greyhound em galope estendido (de lado, olhando p/ a direita).
+    Branca; preta na barra 3 (fundo claro); com contorno escuro na barra 6 (listrada)."""
+    cor = "#111" if trap == 3 else "#fff"
+    if trap == 6:
+        sh = "filter:drop-shadow(0 0 .8px #000) drop-shadow(0 0 .8px #000) drop-shadow(0 0 .8px #000);"
+    elif trap == 3:
+        sh = ""
+    else:
+        sh = "filter:drop-shadow(0 0 .7px rgba(0,0,0,.8));"
     return (
-        f"<svg viewBox='0 0 104 42' width='76' height='31' xmlns='http://www.w3.org/2000/svg' "
-        f"style='display:block;{halo}'>{defs}"
-        f"<g fill='{corpo}' stroke='{corpo}' stroke-linecap='round' stroke-linejoin='round'>"
-        # corpo, pescoço longo e cabeça
-        "<path stroke-width='0.4' d='M22 12 C28 8.4 38 8.6 46 8.8 C54 9 60 4.6 68 3.2 C74 2.2 79 3 83 4.4 "
-        "C86 5 88 5.6 90 7 L99 13.2 C100.4 14.2 100 15.4 98.6 15.6 L92 16.6 C90 17 88.5 16.4 87 16.2 "
-        "C83 18 80 21.5 75 22.2 C70 23 65 21 60 19.2 C54 17.6 48 16.6 42 16.2 C35 16 28 16.6 24 15 Z'/>"
+        f"<svg viewBox='0 0 104 42' width='72' height='29' xmlns='http://www.w3.org/2000/svg' "
+        f"style='display:block;{sh}'>"
+        f"<g fill='{cor}' stroke='{cor}' stroke-linecap='round' stroke-linejoin='round'>"
+        # tronco, pescoço fino e cabeça comprida
+        "<path stroke-width='0.4' d='M24 13 C32 9.6 44 8.8 54 8.6 C62 8.4 68 7.2 74 6 C78 5 81 4.2 84 3.8 "
+        "C87 3.4 89 4 91 5 L99 9 C100.4 9.8 100.4 11 99 11.6 L94 12.4 C91 12.6 89.4 11.4 87 11.2 "
+        "C83 11.6 80 13 78.4 15.6 C77.4 19.2 75 22.6 70 22.6 C65 22.6 60 20 55 18.4 C50 16.8 44 15.8 38 16 "
+        "C32 16 27 16.6 24 14.8 Z'/>"
         # orelha
-        "<path stroke-width='0.3' d='M86.5 5 L82.4 4.4 L85.8 8.2 Z'/>"
-        # patas dianteiras
-        "<path fill='none' stroke-width='2.8' d='M74 19.5 L84 22.6'/>"
-        "<path fill='none' stroke-width='1.8' d='M84 22.6 L95.5 24.4'/>"
-        "<path fill='none' stroke-width='2.6' d='M73 20.5 L77 27'/>"
-        "<path fill='none' stroke-width='1.7' d='M77 27 L75.5 33'/>"
-        # patas traseiras encolhidas
-        "<path fill='none' stroke-width='5' d='M27 12.5 L18.5 19'/>"
-        "<path fill='none' stroke-width='2.4' d='M18.5 19 L11 24'/>"
-        "<path fill='none' stroke-width='1.7' d='M11 24 L4.5 26'/>"
-        "<path fill='none' stroke-width='3.6' d='M28 14.5 L22.5 23'/>"
-        "<path fill='none' stroke-width='2.2' d='M22.5 23 L15.5 31'/>"
-        "<path fill='none' stroke-width='1.7' d='M15.5 31 L8 33.4'/>"
-        # rabo
-        "<path fill='none' stroke-width='1.3' d='M22 12 C16 10 11 11 6 15.5'/>"
-        "</g>"
-        # casaca colorida sobre o dorso
-        f"<path d='M48 9.2 C54 9.6 60 5.4 66 3.8 L74.5 3.6 L76 12.4 C70 15.8 60 15.6 52 13 Z' "
-        f"fill='{jc}' stroke='rgba(255,255,255,.85)' stroke-width='.7' stroke-linejoin='round'/>"
-        f"<text x='63.5' y='12' text-anchor='middle' font-family='Arial,Helvetica,sans-serif' font-weight='700' "
-        f"font-size='8.6' fill='{nc}'{contorno}>{trap}</text>"
-        "</svg>"
+        "<path stroke-width='0.3' d='M85.4 3.8 L86.4 0.6 L88.8 3.4 Z'/>"
+        # patas dianteiras esticadas para a frente
+        "<path fill='none' stroke-width='2.6' d='M77 15.4 L88 18'/>"
+        "<path fill='none' stroke-width='1.6' d='M88 18 L98 18.6'/>"
+        "<path fill='none' stroke-width='2.4' d='M76 17 L85 21.6'/>"
+        "<path fill='none' stroke-width='1.6' d='M85 21.6 L94 22.4'/>"
+        # patas traseiras esticadas para trás
+        "<path fill='none' stroke-width='5' d='M29 13.6 L19 19.4'/>"
+        "<path fill='none' stroke-width='2.4' d='M19 19.4 L10 24.6'/>"
+        "<path fill='none' stroke-width='1.7' d='M10 24.6 L4 26.4'/>"
+        "<path fill='none' stroke-width='3.8' d='M30 15.6 L23 24'/>"
+        "<path fill='none' stroke-width='2.2' d='M23 24 L15 30.4'/>"
+        "<path fill='none' stroke-width='1.7' d='M15 30.4 L8.4 32.6'/>"
+        # rabo fino
+        "<path fill='none' stroke-width='1.2' d='M24 12.6 C18 14.2 12 15 5 13.4'/>"
+        "</g></svg>"
     )
 
 
