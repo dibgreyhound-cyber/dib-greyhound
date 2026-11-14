@@ -31,13 +31,15 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 4.3)
+# CONFIGURAÇÃO GLOBAL (DIB 4.4 - Calibrado após Ciclo 1)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
-    "TRAP_VAZIA": 5.0, "TRAFEGO_SEVERO": -15.0, "CONF_MIN_VENCEDOR": 40.0,
+    "TRAP_VAZIA": 5.0, 
+    "TRAFEGO_SEVERO": -8.0, # Ajuste 1: Reduzido de -15 para -8
+    "CONF_MIN_VENCEDOR": 40.0,
 
     "VEL_PTS": {"tadj": 100, "mtime": 80, "msplit": 80, "ritmo": 60},
     "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 10,
@@ -125,9 +127,6 @@ def count_traf(rem):
     return sum(1 for p in parts_of(rem) if RE_TRAF.search(p))
 
 def traffic_penalty(rem, peso=31.0):
-    """Calcula a penalidade de tráfego, ajustada pelo peso do galgo.
-    Cães pesados (>30kg) perdem menos tempo (x0.8).
-    Cães leves (<28kg) perdem mais tempo (x1.2)."""
     s = str(rem or "").lower()
     base_pen = 0.0
     for key in ("baulk", "crd", "bmp", "fcd"):
@@ -136,11 +135,9 @@ def traffic_penalty(rem, peso=31.0):
                 CFG["TRAFFIC_ADJ"][k] for k in ("crd", "bmp", "fcd") if k in s)
 
     if base_pen == 0: return 0.0
-
     if peso > 30.0: fator = 0.8
     elif peso < 28.0: fator = 1.2
     else: fator = 1.0
-
     return base_pen * fator
 
 def not_free(rem):
@@ -319,6 +316,12 @@ def analisar_galgo(dog, ctx):
     runs = sorted(dog["runs"], key=lambda r: r["date"] or datetime.min, reverse=True)[:CFG["N_RUNS"]]
     R = [r for r in runs if oficial(r, ctx)]
 
+    # Ajuste 3: Sanitização de Split Errado (Filtro anti-bug)
+    # Se a distância for 400m+ e o split < 3.80s, tratamos como erro de digitação e anulamos.
+    for r in R:
+        if r["split"] and r["dist"] and r["dist"] >= 400 and r["split"] < 3.80:
+            r["split"] = None
+
     n_trials = sum(1 for r in runs if is_trial_grade(r["grade"]))
 
     d = {"name": dog["name"], "trap": dog["trap"], "runs": runs, "val": R, "nd": not R,
@@ -330,7 +333,6 @@ def analisar_galgo(dog, ctx):
 
     if not R: return d
 
-    # Categoria Média
     today_n = ctx.get("classe_n")
     last_n = grade_num(R[0]["grade"])
     mod = 0.0
@@ -361,7 +363,6 @@ def analisar_galgo(dog, ctx):
     else:
         d["ritmo"] = d["mtime"]
 
-    # Aplica o peso na penalidade de tráfego do Tadj
     peso_atual = d["peso"] or 31.0
     adj_times = [r["caltm"] - (traffic_penalty(r["remarks"], peso_atual) + ((r["dist"] - 300) / 1000.0 if traffic_penalty(r["remarks"], peso_atual) > 0 else 0.0)) for r in R]
     d["tadj"] = float(np.mean(adj_times)) if adj_times else None
@@ -424,9 +425,9 @@ def finalizar(ds, ctx):
         if d["early_cnt"] > 0 and d["perfil"] == "Limpo":
             f.append(("Ritmo Acelerado", d["early_cnt"] * 5.0))
         if d["saw_cnt"] > 0:
-            f.append(("Largada Lenta", d["saw_cnt"] * -8.0))
+            f.append(("Largada Lenta", d["saw_cnt"] * -4.0)) # Ajuste 1: reduzido de -8 para -4
         if d["fbt_cnt"] > 0:
-            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -8.0))
+            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -4.0)) # Ajuste 1: reduzido de -8 para -4
         if any(abs(d["trap"] - v) == 1 for v in vac):
             f.append(("Trap Vazia", CFG["TRAP_VAZIA"]))
         if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
@@ -439,24 +440,23 @@ def finalizar(ds, ctx):
     for i, d in enumerate(ok, 1):
         d["pos"] = i
         d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"]
-        d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d["rec"] <= 0)
+        
+        # Ajuste 2: Regra do Alvo mais flexível
+        top2_safe = (i <= 2) and (d.get("rec", -100) > -10.0)
+        d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d["rec"] <= 0) and not top2_safe
+        
         d["elegivel"] = not d["bloqueado"]
     return ok, top3_ms
 
 def calc_prob(V, D, rank, ctx):
-    """
-    DIB 4.3 - AVB com Peso e Recuperação Valorizados.
-    """
     prob = 50.0
     if V.get("tadj") is None or D.get("tadj") is None: return 50.0
 
-    # 1. Velocidade (Tadj) - Peso Máximo: 25%
     diff_tadj = D["tadj"] - V["tadj"]
     pts_vel = (diff_tadj / 0.10) * 5.0
     pts_vel = max(-25.0, min(25.0, pts_vel))
     prob += pts_vel
 
-    # 2. Largada (Split) - Peso Máximo: 20%
     if V.get("msplit") and D.get("msplit"):
         diff_split = D["msplit"] - V["msplit"]
         pts_split = (diff_split / 0.05) * 4.0
@@ -468,41 +468,35 @@ def calc_prob(V, D, rank, ctx):
         pts_split = max(-20.0, min(20.0, pts_split))
         prob += pts_split
 
-    # 3. Recuperação (Valorizado para os Closers) - Peso Máximo: 10%
     if V.get("rec") is not None and D.get("rec") is not None:
         diff_rec = V["rec"] - D["rec"]
         pts_rec = (diff_rec * 0.2)
         pts_rec = max(-10.0, min(10.0, pts_rec))
         prob += pts_rec
 
-    # 4. Perfil (Segurança)
     val_perfil = {"Limpo": 0, "Irregular": 1, "Trombador": 2}
     diff_perfil = val_perfil.get(D["perfil"], 1) - val_perfil.get(V["perfil"], 1)
     prob += (diff_perfil * 2.5)
 
-    # 5. Peso (Resistência a Toques)
     peso_v = V.get("peso") or 31.0
     peso_d = D.get("peso") or 31.0
     diff_peso = peso_v - peso_d
-    pts_peso = diff_peso * 1.5 # 1kg de vantagem = 1.5%
+    pts_peso = diff_peso * 1.5
     pts_peso = max(-5.0, min(5.0, pts_peso))
     prob += pts_peso
 
-    # 6. Top 3 Pace
     top3_ms = ctx.get("top3_ms", set())
     top3_ritmo = ctx.get("top3_ritmo", set())
     epfs = [d for d in rank if d["name"] in top3_ms]
 
     if V["name"] in top3_ms:
-        if D["name"] in top3_ms: prob -= 3.0
-        else: prob -= 5.0
-    elif D["name"] in top3_ms: prob += 5.0
+        if D["name"] in top3_ms: prob -= 3.0 
+        else: prob -= 5.0 
+    elif D["name"] in top3_ms: prob += 5.0 
 
     if V["name"] in top3_ritmo and V["name"] not in top3_ms:
-        if len(epfs) >= 2: prob += 5.0
+        if len(epfs) >= 2: prob += 5.0 
 
-    # 7. Trap / Post Pick
-    # fix: evita TypeError (V["trap"] é int, ctx["post_pick"] é str tipo "3-4-5")
     pp = str(ctx.get("post_pick") or "")
     if pp and str(V["trap"]) in pp: prob += 2.0
     if V["trap"] in [1,2,3] and D["trap"] in [4,5,6]: prob += 2.0
@@ -512,7 +506,6 @@ def calc_prob(V, D, rank, ctx):
     return max(25.0, min(75.0, prob))
 
 def montar_avbs(rank, ctx):
-    # Regra 2: Galgo precisa ter no mínimo 40% de confiança para participar do AVB
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 40.0]
     if len(elig) < 2: return []
 
@@ -527,14 +520,17 @@ def montar_avbs(rank, ctx):
             else:
                 V, D, prob = B, A, 100.0 - prob_A
 
-            # Regra 1: Galgo com Alvo ou Bloqueado não pode ser Vencedor no AVB
             if V.get("bloqueado", False) or V.get("alvo", False):
                 continue
 
-            # Regra 3: O Vencedor tem que ter um Tempo Ajustado melhor (menor) que o Desafiante
+            # Ajuste 4: Regra 3 com Exceção de Tolerância
             if V.get("tadj") is not None and D.get("tadj") is not None:
                 if V["tadj"] >= D["tadj"]:
-                    continue
+                    # Exceção: Permite se a probabilidade for >= 68% e o atraso for pequeno (até 0.15s)
+                    if prob >= 68.0 and (V["tadj"] - D["tadj"]) <= 0.15:
+                        pass
+                    else:
+                        continue
 
             if prob >= 60.0:
                 s1.append((V, D, prob, True))
@@ -672,7 +668,6 @@ def gerar_observacoes(rank, avbs, ctx):
     top_ritmo = min([d for d in rank if d.get("ritmo") is not None], key=lambda x: x["ritmo"], default=None)
     top_split = min([d for d in rank if d.get("msplit") is not None], key=lambda x: x["msplit"], default=None) if any(d.get("msplit") for d in rank) else None
 
-    # 1. Favorito Claro / Melhor Elegível
     if elegiveis:
         fav = elegiveis[0]
         bloc_acima = [d for d in bloqueados if d["pos"] < fav["pos"]]
@@ -685,7 +680,6 @@ def gerar_observacoes(rank, avbs, ctx):
             txt_rec = f" Ele tem recuperação excelente ({fav['rec']:+.1f}%)." if fav['rec'] > 10 else ""
             st.markdown(f"- **🏆 Favorito Claro:** O **{f_trap}** domina o Overall ({fav['overall']:.1f}).{txt_rec}")
 
-    # 2. O "Falso Favorito" Bloqueado
     if bloqueados:
         b = bloqueados[0]
         b_trap = TRAP_EMOJI.get(b['trap'], str(b['trap']))
@@ -697,12 +691,10 @@ def gerar_observacoes(rank, avbs, ctx):
                     break
         st.markdown(f"- **🚫 Falso Favorito Bloqueado:** O **{b_trap}** tem Overall alto ({b['overall']:.1f}), mas foi pego pela Trava (Conf. {b['conf']:.0f}%).{avb_info}")
 
-    # 3. O Alvo 🎯
     if alvos:
         nomes_alvo = ", ".join([TRAP_EMOJI.get(d['trap'], str(d['trap'])) for d in alvos])
         st.markdown(f"- **🎯 Alvo(s):** O(s) cão(es) **{nomes_alvo}** foram marcados como alvo (fora do Top 3 largada e recuperação ≤ 0%). Vulneráveis no bolo.")
 
-    # 4. Alerta de Dados / Pace / Zebra
     all_splits = [d["msplit"] for d in rank if d.get("msplit") is not None]
     is_irish_metric = all(s < 2.0 for s in all_splits) if all_splits else False
 
@@ -714,7 +706,6 @@ def gerar_observacoes(rank, avbs, ctx):
         r_trap = TRAP_EMOJI.get(top_ritmo['trap'], str(top_ritmo['trap']))
         st.markdown(f"- **💡 Análise de Pace:** O **{s_trap}** tem a melhor largada (Split), mas o **{r_trap}** tem o melhor ritmo final.")
 
-        # Alerta de Zebra
         if top_split["pos"] > 3:
             st.markdown(f"- **🦓 Alerta de Zebra:** O **{s_trap}** (Posição {top_split['pos']}) tem o melhor Early Pace da corrida. Se ele não for atrapalhado, pode ditar o ritmo e surpreender os favoritos.")
 
@@ -725,19 +716,16 @@ def gerar_observacoes(rank, avbs, ctx):
              r_trap = TRAP_EMOJI.get(top_ritmo['trap'], str(top_ritmo['trap']))
              st.markdown(f"- **💡 Análise de Pace:** O **{s_trap}** assume a liderança na 1ª curva, mas o **{r_trap}** tem o melhor ritmo de prova final.")
 
-    # 5. Alerta de Tráfego
     pior_rec = min([d for d in rank if d.get("rec") is not None], key=lambda x: x["rec"], default=None)
     if pior_rec and pior_rec["rec"] < -10.0:
         rec_trap = TRAP_EMOJI.get(pior_rec['trap'], str(pior_rec['trap']))
         st.markdown(f"- **⚠️ Alerta de Tráfego:** O **{rec_trap}** tem uma recuperação média ruim ({pior_rec['rec']:+.1f}%). Pode perder posições na reta.")
 
-    # 6. Queda de Classe
     dropping_class = [d for d in rank if d.get("cat_mod", 0) > 0]
     if dropping_class:
         nomes = ", ".join([TRAP_EMOJI.get(d['trap'], str(d['trap'])) for d in dropping_class])
         st.markdown(f"- **📉 Queda de Classe:** O(s) cão(es) {nomes} desceu(ram) de categoria e corre(m) contra rivais mais fracos hoje.")
 
-    # 7. Conflito de Pace
     top3_ms = ctx.get("top3_ms", set())
     if len(top3_ms) >= 3:
         st.markdown("- **Atenção (Conflito de Pace):** Múltiplos cães com largada rápida (Top 3 Split). Risco de trombada na 1ª curva.")
