@@ -129,10 +129,13 @@ def count_traf(rem):
 def traffic_penalty(rem, peso=31.0):
     s = str(rem or "").lower()
     base_pen = 0.0
-    for key in ("baulk", "crd", "bmp", "fcd"):
-        if key in s and key in CFG["TRAFFIC_ADJ"]:
-            base_pen = CFG["TRAFFIC_ADJ"][key] if key == "baulk" else max(
-                CFG["TRAFFIC_ADJ"][k] for k in ("crd", "bmp", "fcd") if k in s)
+    # Bug Fix: Prioriza Baulk
+    if "baulk" in s:
+        base_pen = CFG["TRAFFIC_ADJ"]["baulk"]
+    elif any(k in s for k in ("crd", "bmp", "fcd")):
+        base_pen = max(CFG["TRAFFIC_ADJ"][k] for k in ("crd", "bmp", "fcd") if k in s)
+    else:
+        base_pen = 0.0
 
     if base_pen == 0: return 0.0
     if peso > 30.0: fator = 0.8
@@ -146,7 +149,8 @@ def not_free(rem):
 def first_bend_traffic(rem):
     s = str(rem or "").lower()
     if "baulk" in s: return True
-    return any(RE_TRAF.search(p) and "1" in re.findall(r"\d", p) for p in parts_of(rem))
+    # Bug Fix: Regex para pegar "crd 1", "crd-1", "crd1"
+    return bool(re.search(rf"{RE_TRAF.pattern}\s*[,/\-]?\s*1\b", s))
 
 HINTS = {
     "dist": (("dist", "metre", "meter"), ("btn", "beat", "by")),
@@ -315,12 +319,6 @@ def analisar_galgo(dog, ctx):
 
     runs = sorted(dog["runs"], key=lambda r: r["date"] or datetime.min, reverse=True)[:CFG["N_RUNS"]]
     R = [r for r in runs if oficial(r, ctx)]
-
-    # Ajuste 3: Sanitização de Split Errado (Filtro anti-bug)
-    # Se a distância for 400m+ e o split < 3.80s, tratamos como erro de digitação e anulamos.
-    for r in R:
-        if r["split"] and r["dist"] and r["dist"] >= 400 and r["split"] < 3.80:
-            r["split"] = None
 
     n_trials = sum(1 for r in runs if is_trial_grade(r["grade"]))
 
@@ -526,7 +524,6 @@ def montar_avbs(rank, ctx):
             # Ajuste 4: Regra 3 com Exceção de Tolerância
             if V.get("tadj") is not None and D.get("tadj") is not None:
                 if V["tadj"] >= D["tadj"]:
-                    # Exceção: Permite se a probabilidade for >= 68% e o atraso for pequeno (até 0.15s)
                     if prob >= 68.0 and (V["tadj"] - D["tadj"]) <= 0.15:
                         pass
                     else:
