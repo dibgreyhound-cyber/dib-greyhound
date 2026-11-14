@@ -484,7 +484,7 @@ def greyhound_svg(trap):
     else:
         sh = "filter:drop-shadow(0 0 .7px rgba(0,0,0,.8));"
     return (
-        f"<svg viewBox='0 0 104 42' width='32' height='13' xmlns='http://www.w3.org/2000/svg' "
+        f"<svg viewBox='0 0 104 42' width='28' height='11' xmlns='http://www.w3.org/2000/svg' "
         f"style='display:block;{sh}'>"
         f"<g fill='{cor}' stroke='{cor}' stroke-linecap='round' stroke-linejoin='round'>"
         # tronco, pescoço fino e cabeça comprida
@@ -514,8 +514,8 @@ def greyhound_svg(trap):
 
 def badge_p(t):
     """Número da trap em tamanho reduzido (só para o gráfico)."""
-    return (badge(t).replace("min-width:24px;height:24px;line-height:24px", "min-width:18px;height:18px;line-height:18px")
-            .replace("font-size:14px", "font-size:12px"))
+    return (badge(t).replace("min-width:24px;height:24px;line-height:24px", "min-width:16px;height:16px;line-height:16px")
+            .replace("font-size:14px", "font-size:11px"))
 
 
 def grafico_predictor(ds):
@@ -532,16 +532,16 @@ def grafico_predictor(ds):
         if d.get("nd") or d.get("overall") is None:
             fill = ""
         else:
-            w = 100.0 if mx <= 0 else max(13.0, min(100.0, d["overall"] / mx * 100.0))
+            w = 100.0 if mx <= 0 else max(11.0, min(100.0, d["overall"] / mx * 100.0))
             tip = f"{d['name']} · Overall {d['overall']:.1f}"
             fill = (f"<div title=\"{tip}\" style='position:relative;width:{w:.1f}%;height:100%;"
-                    f"border-radius:10px;{estilo}'>"
-                    f"<span style='position:absolute;right:5px;top:50%;transform:translateY(-50%);"
+                    f"border-radius:8px;{estilo}'>"
+                    f"<span style='position:absolute;right:4px;top:50%;transform:translateY(-50%);"
                     f"line-height:0;'>{greyhound_svg(t)}</span></div>")
         linhas.append(f"<div style='display:flex;align-items:center;gap:6px;margin:4px 0'>{badge_p(t)}"
-                      f"<div style='flex:1;height:18px;background:#0a2a52;border-radius:10px;overflow:hidden'>"
+                      f"<div style='flex:1;height:15px;background:#0a2a52;border-radius:8px;overflow:hidden'>"
                       f"{fill}</div></div>")
-    return ("<div style='background:#143f6f;border-radius:16px;padding:12px 10px 5px;max-width:420px;margin:6px 0;"
+    return ("<div style='background:#143f6f;border-radius:16px;padding:12px 10px 5px;max-width:640px;margin:6px 0;"
             "position:relative'>"
             "<div style='position:absolute;top:-1px;left:10px;background:#d32f2f;color:#fff;font-weight:700;"
             "font-size:11px;padding:2px 12px;border-radius:0 0 10px 10px'>Predictor</div>"
