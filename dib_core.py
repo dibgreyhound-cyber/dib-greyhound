@@ -559,9 +559,9 @@ def tbl(headers, rows):
 
 def nome_marcado(d):
     n = html.escape(d["name"])
-    if d.get("alerta_trial", False): n = "⚠️ " + n
+    if d.get("alerta_trial", False): n += " ⚠️"
+    if d.get("alvo", False): n += " 🎯"
     if d.get("bloqueado", False): n += " 🚫"
-    if d.get("alvo", False): n = "🎯 " + n
     return n
 
 def trap_label(d): return f"{TRAP_EMOJI.get(d['trap'], '')} {d['trap']}"
