@@ -550,6 +550,7 @@ def grafico_predictor(ds):
 
 # ---------------------------------------------------------------- post pick (galgos indicados pelo Racing Post)
 _RE_PP_TXT = re.compile(r"post\s*pick\s*[:\-]?\s*((?:[1-6]\s*[-,/]\s*)*[1-6])(?!\d)", re.I)
+_RE_SEQ = re.compile(r"[1-6](?:\s*[-,/]\s*[1-6]){1,5}")
 _TRAP_KEYS = ("trapNum", "trap", "dogTrap")
 
 
@@ -575,8 +576,10 @@ def _nums_pp(v):
 
 
 def extrair_post_pick(obj):
-    """Procura o post pick em qualquer lugar do JSON: chave 'postPick'/'post_pick' ou texto 'POST PICK: 1-2-5'."""
-    achados = []
+    """Procura o Post Pick em qualquer lugar do JSON, em ordem de confianca:
+    1) chave 'postPick'/'post_pick'; 2) texto 'POST PICK: 1-2-5'; 3) chave com 'pick';
+    4) chave com 'tip' cujo valor e uma sequencia de traps (ex.: '1-2-5')."""
+    n1, n2, n3, n4 = [], [], [], []
 
     def walk(o, caminho):
         if isinstance(o, dict):
@@ -584,8 +587,13 @@ def extrair_post_pick(obj):
                 nk = re.sub(r"[^a-z]", "", str(k).lower())
                 if "postpick" in nk:
                     n = _nums_pp(v)
-                    if n:
-                        achados.append((n, f"{caminho}/{k}"))
+                    if n: n1.append((n, f"{caminho}/{k}"))
+                elif "pick" in nk:
+                    n = _nums_pp(v)
+                    if n: n3.append((n, f"{caminho}/{k}"))
+                elif "tip" in nk and isinstance(v, (str, list)):
+                    if isinstance(v, str) and _RE_SEQ.fullmatch(v.strip()):
+                        n4.append((_nums_pp(v), f"{caminho}/{k}"))
                 walk(v, f"{caminho}/{k}")
         elif isinstance(o, list):
             for i, v in enumerate(o):
@@ -593,32 +601,87 @@ def extrair_post_pick(obj):
         elif isinstance(o, str):
             m = _RE_PP_TXT.search(o)
             if m:
-                achados.append(([int(x) for x in re.findall(r"[1-6]", m.group(1))], caminho + " (texto)"))
+                n2.append(([int(x) for x in re.findall(r"[1-6]", m.group(1))], caminho + " (texto)"))
 
     walk(obj, "")
-    for n, onde in achados:
-        n = list(dict.fromkeys(n))[:6]
-        if n:
-            return n, onde
+    for grupo in (n1, n2, n3, n4):
+        for n, onde in grupo:
+            n = list(dict.fromkeys(n))[:6]
+            if n:
+                return n, onde
     return [], ""
+
+
+def pistas_post_pick(obj, limite=15):
+    """Lista (caminho = valor) das chaves/textos que parecem ligados a post pick/tips, para diagnostico."""
+    res = []
+
+    def walk(o, caminho):
+        if len(res) >= limite:
+            return
+        if isinstance(o, dict):
+            for k, v in o.items():
+                nk = re.sub(r"[^a-z]", "", str(k).lower())
+                if any(x in nk for x in ("pick", "tip", "verdict", "forecast")) and not isinstance(v, (dict, list)):
+                    res.append(f"{caminho}/{k} = {str(v)[:60]}")
+                elif "pick" in nk:
+                    res.append(f"{caminho}/{k} = {str(v)[:60]}")
+                walk(v, f"{caminho}/{k}")
+        elif isinstance(o, list):
+            for i, v in enumerate(o[:12]):
+                walk(v, f"{caminho}[{i}]")
+        elif isinstance(o, str) and re.search(r"post\s*pick", o, re.I):
+            res.append(f"{caminho} = {o[:60]}")
+
+    walk(obj, "")
+    return res[:limite]
+
+
+def _corrida_no_json(obj, race_id):
+    """Dentro do JSON da lista de corridas, devolve o trecho (dict) da corrida pedida."""
+    achado = []
+
+    def walk(o):
+        if achado:
+            return
+        if isinstance(o, dict):
+            if str(o.get("raceId", o.get("race_id", ""))) == str(race_id):
+                achado.append(o)
+                return
+            for v in o.values(): walk(v)
+        elif isinstance(o, list):
+            for v in o: walk(v)
+
+    walk(obj)
+    return achado[0] if achado else None
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def buscar_post_pick(race_id, data_str):
-    """Tenta algumas respostas do site ate achar o post pick. Devolve ('1-2-5', diagnostico)."""
+    """Tenta varias respostas do site ate achar o Post Pick. Devolve ('1-2-5', diagnostico)."""
     diag = []
-    for blocos in ("card", "header%2Ccard", "header", "card%2Ctips", "tips", "form"):
-        u = f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks={blocos}"
+    urls = [f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks={b}"
+            for b in ("card", "header%2Ccard", "header", "card%2Ctips", "tips", "form")]
+    urls.append(f"{BASE}/meeting/blocks.sd?r_date={data_str}&blocks=header%2Clist")
+    urls.append(f"{BASE}/meeting/blocks.sd?r_date={data_str}&blocks=list")
+    for u in urls:
         curto = u.replace(BASE, "")
         time.sleep(0.2)
         try:
             r = http().get(u, timeout=8)
             js = r.json() if r.status_code == 200 else None
         except Exception as e:
-            diag.append({"Status": f"erro: {str(e)[:30]}", "Achado": "", "Endereço": curto})
+            diag.append({"Status": f"erro: {str(e)[:30]}", "Achado": "", "Chaves": "", "Pistas": [],
+                         "Endereço": curto})
             continue
-        nums, onde = extrair_post_pick(js) if js is not None else ([], "")
-        diag.append({"Status": r.status_code, "Achado": f"{'-'.join(map(str, nums))} em {onde}" if nums else "",
+        alvo = js
+        if js is not None and "/meeting/" in u:      # lista do dia: olhar so a corrida pedida
+            alvo = _corrida_no_json(js, race_id)
+        nums, onde = extrair_post_pick(alvo) if alvo is not None else ([], "")
+        diag.append({"Status": r.status_code,
+                     "Achado": f"{'-'.join(map(str, nums))} em {onde}" if nums else "",
+                     "Chaves": _chaves(js) if js is not None else "",
+                     "Pistas": pistas_post_pick(alvo) if alvo is not None else [],
                      "Endereço": curto})
         if nums:
             return "-".join(map(str, nums)), diag
@@ -664,7 +727,7 @@ def preparar(race_id, r_date, c, classe_in, dist_in, pp_in, so_antes=False):
 
 def titulo_corrida(c, p=None, prefixo=""):
     t = f"{c['pista']} {c['hora']} (BR {hora_br(c['hora'])})" if c.get("hora") else ""
-    extra = f" · {p['classe']} · {int(p['dist'])}m · post pick: {p['pp'] or '-'}" if p else \
+    extra = f" · {p['classe']} · {int(p['dist'])}m · Post Pick: {p['pp'] or '-'}" if p else \
         f" · {c.get('grade', '')} · {c.get('dist', '')}m"
     return f"### {prefixo}{t} · Race {c.get('num', '')}{extra}"
 
@@ -798,9 +861,17 @@ def analisar(c, classe_in, dist_in, pp_in):
     st.markdown(grafico_predictor(p["ds"]), unsafe_allow_html=True)
     st.markdown(titulo_corrida(c, p))
     if not p["pp"]:
-        st.caption("post pick não encontrado automaticamente. Você pode digitar em ⚙️ Ajustes (ex: 1-2-5).")
-        with st.expander("🔎 Diagnóstico do post pick"):
-            st.dataframe(pd.DataFrame(buscar_post_pick(c["id"], c["data"])[1]),
+        st.caption("Post Pick não encontrado automaticamente. Você pode digitar em ⚙️ Ajustes (ex: 1-2-5).")
+        with st.expander("🔎 Diagnóstico do Post Pick (copie e cole no chat)"):
+            diag = buscar_post_pick(c["id"], c["data"])[1]
+            linhas = [f"corrida {c['id']} {c['data']}"]
+            for d_ in diag:
+                linhas.append(f"{d_['Status']} | {d_['Endereço']} | chaves: {d_['Chaves']}")
+                linhas += [f"    {x}" for x in d_["Pistas"]]
+            relatorio = "\n".join(linhas)
+            botao_copiar(relatorio)
+            st.text_area("Relatório:", relatorio, height=200)
+            st.dataframe(pd.DataFrame([{k: v for k, v in d_.items() if k != "Pistas"} for d_ in diag]),
                          use_container_width=True, hide_index=True)
     dib.tabela_avb(p["s1"], "1ª Planilha — AVB Principal (Prob ≥ 60%)")
     if hasattr(dib, "gerar_observacoes"):
@@ -908,7 +979,7 @@ def main():
         with st.expander("⚙️ Ajustes (opcional)"):
             classe_in = st.text_input("Classe (vazio = da lista)", value="")
             dist_in = st.number_input("Distância (m) - 0 = da lista", value=0, step=10)
-            pp_in = st.text_input("post pick (ex: 1-2-3)", value="")
+            pp_in = st.text_input("Post Pick (ex: 1-2-3)", value="")
             url_custom = st.text_input("Endereço da lista (use {data})", value="")
         corridas, tentativas, primeira = buscar_lista(data_str, url_custom)
         memoria = st.session_state.setdefault("lista_ok", {})
