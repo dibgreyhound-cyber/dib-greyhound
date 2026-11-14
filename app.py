@@ -479,34 +479,73 @@ def grafico_predictor(ds):
     if not com:
         return ""
     mx = max(d["overall"] for d in com)
-    
-    # SVG do galgo correndo (silhueta idêntica ao Racing Post)
-    svg_galgo = """<svg viewBox="0 0 640 512" width="22" height="22" style="position:absolute; right: -11px; top: 50%; transform: translateY(-50%);"><path d="M544 160c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zm-96 0c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zM160 448c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zm288 0c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zM320 160c-35.3 0-64-28.7-64-64s28.7-64 64-64 64 28.7 64 64-28.7 64-64 64zm-64 64v128c0 17.7 14.3 32 32 32h64c17.7 0 32-14.3 32-32V224h-128zm256 0v128c0 17.7 14.3 32 32 32h32c17.7 0 32-14.3 32-32V224h-96zM96 224c-17.7 0-32 14.3-32 32v128c0 17.7 14.3 32 32 32h32c17.7 0 32-14.3 32-32V224H96z"/></svg>"""
+
+    def get_dog_svg(trap):
+        # Path do cachorro (FontAwesome Dog) - Desenhado correndo para a direita
+        dog_path = "M309.6 158.5L332.7 19.8C334.6 8.4 344.5 0 356.1 0c7.5 0 14.5 3.5 19 9.5L392 32h52.1c12.7 0 24.9 5.1 33.9 14.1L496 64h56c13.3 0 24 10.7 24 24v24c0 44.2-35.8 80-80 80H464 448 426.7l-5.1 30.5-112-64zM416 256.1L416 480c0 17.7-14.3 32-32 32H352c-17.7 0-32-14.3-32-32V384H256v96c0 17.7-14.3 32-32 32H192c-17.7 0-32-14.3-32-32V256.1L69.7 284.1c-8.2 2.1-16.5-2.8-18.6-11L47.4 262.4c-2.1-8.2 2.8-16.5 11-18.6l126.7-32.8c8.2-2.1 16.5 2.8 18.6 11l3.7 10.7 80.3-20.8v-6.4c0-17.7 14.3-32 32-32h11.2c17 0 33.1 4.5 47.4 12.9L416 256.1z"
+
+        # Definição das cores da jaqueta de acordo com a trap
+        if trap == 1: saddle, stroke = "#c62828", "#000"
+        elif trap == 2: saddle, stroke = "#1d4ed8", "#000"
+        elif trap == 3: saddle, stroke = "#eeeeee", "#000"
+        elif trap == 4: saddle, stroke = "#151515", "#fff" # Borda branca para destacar do corpo preto
+        elif trap == 5: saddle, stroke = "#f26b21", "#000"
+        elif trap == 6: saddle, stroke = f"url(#stripes-{trap})", "#000"
+        else: saddle, stroke = "#888888", "#000"
+
+        # Padrão listrado para a Trap 6 (id único por trap para evitar conflito)
+        padrao_6 = f"""
+        <pattern id="stripes-{trap}" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <rect width="10" height="10" fill="#fff"/>
+            <rect width="5" height="10" fill="#111"/>
+        </pattern>
+        """
+
+        # O clip-path recorta o retângulo colorido no exato formato do corpo do cachorro
+        return f"""
+        <svg viewBox="0 0 576 512" width="34" height="34" style="position:absolute; right: -17px; top: 50%; transform: translateY(-50%) scaleX(-1); filter: drop-shadow(0px 0px 2px rgba(0,0,0,0.8)); z-index: 10;">
+            <defs>
+                <clipPath id="dog-clip-{trap}">
+                    <path d="{dog_path}"/>
+                </clipPath>
+                {padrao_6 if trap == 6 else ''}
+            </defs>
+            <!-- Corpo do Cachorro -->
+            <path d="{dog_path}" fill="#111" stroke="#fff" stroke-width="12"/>
+            <!-- Jaqueta Colorida -->
+            <g clip-path="url(#dog-clip-{trap})">
+                <rect x="150" y="120" width="220" height="150" fill="{saddle}" stroke="{stroke}" stroke-width="4"/>
+            </g>
+        </svg>
+        """
 
     linhas = []
     for d in sorted(ds, key=lambda x: x["trap"]):
         t = d["trap"]
-        estilo, icone = BAR_STYLE.get(t, ("background:#888;", "invert"))
+        estilo, _ = BAR_STYLE.get(t, ("background:#888;", "invert"))
+        
         if d.get("nd") or d.get("overall") is None:
-            fill, tip = "", "sem dados"
+            fill_html = ""
+            tip = "sem dados"
         else:
             w = 100.0 if mx <= 0 else max(4.0, min(100.0, d["overall"] / mx * 100.0))
             tip = f"{d['name']} · Overall {d['overall']:.1f}"
+            svg_atual = get_dog_svg(t)
             
-            # Define a cor do galgo: preto para traps claras (3, 6), branco para escuras (1, 2, 4, 5)
-            svg_fill = "#000000" if icone == "dark" else "#ffffff"
-            svg_atual = svg_galgo.replace("<path", f"<path fill='{svg_fill}'")
+            # position:absolute; left:0 faz a barra crescer da esquerda para a direita
+            fill_html = (f"<div title=\"{tip}\" style='position:absolute; left:0; width:{w:.1f}%; height:100%; "
+                         f"border-radius:12px; {estilo}'>"
+                         f"{svg_atual}</div>")
             
-            fill = (f"<div title=\"{tip}\" style='position:relative;width:{w:.1f}%;height:100%;"
-                    f"border-radius:14px;{estilo}'>"
-                    f"{svg_atual}</div>")
-        linhas.append(f"<div style='display:flex;align-items:center;gap:8px;margin:7px 0'>{badge(t)}"
-                      f"<div style='flex:1;height:24px;background:#0a2a52;border-radius:14px;overflow:hidden'>"
-                      f"{fill}</div></div>")
-    return ("<div style='background:#143f6f;border-radius:16px;padding:16px 12px 8px;max-width:640px;margin:8px 0;"
-            "position:relative'>"
+        # margin-right:18px garante que o cachorro não seja cortado no final do painel
+        linhas.append(f"<div style='display:flex;align-items:center;gap:8px;margin:8px 0'>{badge(t)}"
+                      f"<div style='flex:1;height:24px;background:#0a2a52;border-radius:12px;position:relative;margin-right:18px;'>"
+                      f"{fill_html}</div></div>")
+                      
+    return ("<div style='background:#1e3a5f;border-radius:16px;padding:16px 12px 8px;max-width:640px;margin:8px 0;"
+            "position:relative; box-shadow: 0 4px 10px rgba(0,0,0,0.3)'>"
             "<div style='position:absolute;top:-1px;left:10px;background:#d32f2f;color:#fff;font-weight:700;"
-            "font-size:13px;padding:3px 14px;border-radius:0 0 12px 12px'>Predictor</div>"
+            "font-size:13px;padding:3px 14px;border-radius:0 0 12px 12px;z-index:20'>Predictor</div>"
             "<div style='height:10px'></div>" + "".join(linhas) + "</div>")
 
 
