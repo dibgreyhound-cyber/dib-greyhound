@@ -469,7 +469,7 @@ BAR_STYLE = {
     3: ("background:#eeeeee;", "dark"),
     4: ("background:#151515;", "invert"),
     5: ("background:#f26b21;", "invert"),
-    6: ("background:repeating-linear-gradient(180deg,#111 0 3px,#fff 3px 6px);", "invert"),
+    6: ("background:repeating-linear-gradient(180deg,#111 0 4px,#fff 4px 8px);", "invert"),
 }
 
 
@@ -482,15 +482,18 @@ def grafico_predictor(ds):
     mx = max(d["overall"] for d in com)
 
     def get_dog_svg(trap):
-        dog_path = "M309.6 158.5L332.7 19.8C334.6 8.4 344.5 0 356.1 0c7.5 0 14.5 3.5 19 9.5L392 32h52.1c12.7 0 24.9 5.1 33.9 14.1L496 64h56c13.3 0 24 10.7 24 24v24c0 44.2-35.8 80-80 80H464 448 426.7l-5.1 30.5-112-64zM416 256.1L416 480c0 17.7-14.3 32-32 32H352c-17.7 0-32-14.3-32-32V384H256v96c0 17.7-14.3 32-32 32H192c-17.7 0-32-14.3-32-32V256.1L69.7 284.1c-8.2 2.1-16.5-2.8-18.6-11L47.4 262.4c-2.1-8.2 2.8-16.5 11-18.6l126.7-32.8c8.2-2.1 16.5 2.8 18.6 11l3.7 10.7 80.3-20.8v-6.4c0-17.7 14.3-32 32-32h11.2c17 0 33.1 4.5 47.4 12.9L416 256.1z"
+        # Um desenho personalizado de um galgo super esguio correndo (silhueta real)
+        dog_shape = "M 185 85 C 180 75, 170 65, 160 65 C 150 60, 140 65, 130 75 C 110 70, 80 70, 50 80 C 40 75, 30 65, 15 60 C 10 60, 5 65, 10 70 C 20 80, 30 85, 40 90 C 30 110, 20 130, 15 150 C 15 155, 25 155, 30 150 C 40 135, 50 120, 60 110 C 80 110, 100 110, 120 115 C 120 130, 125 145, 130 160 C 135 165, 145 160, 145 150 C 140 135, 135 120, 140 110 C 155 105, 165 95, 180 90 C 185 90, 190 88, 185 85 Z"
+        # O "saddle" (colete) desenhado perfeitamente nas costas do galgo
+        saddle_shape = "M 65 78 C 80 73, 95 73, 105 78 L 105 95 C 95 100, 80 100, 65 95 Z"
 
-        if trap == 1: saddle, stroke = "#c62828", "#000"
-        elif trap == 2: saddle, stroke = "#1d4ed8", "#000"
-        elif trap == 3: saddle, stroke = "#eeeeee", "#000"
-        elif trap == 4: saddle, stroke = "#151515", "#fff"
-        elif trap == 5: saddle, stroke = "#f26b21", "#000"
-        elif trap == 6: saddle, stroke = f"url(#stripes-{trap})", "#000"
-        else: saddle, stroke = "#888888", "#000"
+        if trap == 1: saddle, stroke = "#d62828", "none"
+        elif trap == 2: saddle, stroke = "#1d4ed8", "none"
+        elif trap == 3: saddle, stroke = "#eeeeee", "none"
+        elif trap == 4: saddle, stroke = "#151515", "#fff" # Borda branca para o trap 4 não sumir no cão preto
+        elif trap == 5: saddle, stroke = "#f97316", "none"
+        elif trap == 6: saddle, stroke = f"url(#stripes-{trap})", "none"
+        else: saddle, stroke = "#888888", "none"
 
         padrao_6 = f"""
         <pattern id="stripes-{trap}" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -500,17 +503,12 @@ def grafico_predictor(ds):
         """
 
         return f"""
-        <svg viewBox="0 0 576 512" width="34" height="34" style="position:absolute; right: -17px; top: 50%; transform: translateY(-50%) scaleX(-1); filter: drop-shadow(0px 0px 2px rgba(0,0,0,0.8)); z-index: 10;">
-            <defs>
-                <clipPath id="dog-clip-{trap}">
-                    <path d="{dog_path}"/>
-                </clipPath>
-                {padrao_6 if trap == 6 else ''}
-            </defs>
-            <path d="{dog_path}" fill="#111" stroke="#fff" stroke-width="12"/>
-            <g clip-path="url(#dog-clip-{trap})">
-                <rect x="150" y="120" width="220" height="150" fill="{saddle}" stroke="{stroke}" stroke-width="4"/>
-            </g>
+        <svg viewBox="0 0 200 200" width="44" height="38" style="position:absolute; right: -22px; top: 50%; transform: translateY(-50%) scaleX(-1); z-index: 10;">
+            <defs>{padrao_6 if trap == 6 else ''}</defs>
+            <!-- Silhueta do Galgo -->
+            <path d="{dog_shape}" fill="#222" />
+            <!-- Colete (Saddle) -->
+            <path d="{saddle_shape}" fill="{saddle}" stroke="{stroke}" stroke-width="2" />
         </svg>
         """
 
@@ -531,19 +529,18 @@ def grafico_predictor(ds):
                          f"border-radius:12px; {estilo}'>"
                          f"{svg_atual}</div>")
             
-        linhas.append(f"<div style='display:flex;align-items:center;gap:8px;margin:8px 0'>{badge(t)}"
-                      f"<div style='flex:1;height:24px;background:#0a2a52;border-radius:12px;position:relative;margin-right:18px;'>"
+        linhas.append(f"<div style='display:flex;align-items:center;gap:10px;margin:10px 0'>{badge(t)}"
+                      f"<div style='flex:1;height:26px;background:#0a2a52;border-radius:13px;position:relative;margin-right:22px;'>"
                       f"{fill_html}</div></div>")
                       
-    html = ("<html><head><style>body { background-color: transparent; margin: 0; padding: 0; font-family: sans-serif; }</style></head><body>"
-            "<div style='background:#1e3a5f;border-radius:16px;padding:16px 12px 8px;max-width:640px;margin:8px 0;"
+    html = ("<html><head><style>body { background-color: transparent; margin: 0; padding: 0; font-family: sans-serif; overflow: hidden; }</style></head><body>"
+            "<div style='background:#1e3a5f;border-radius:16px;padding:20px 16px 12px;max-width:640px;margin:8px 0;"
             "position:relative; box-shadow: 0 4px 10px rgba(0,0,0,0.3)'>"
             "<div style='position:absolute;top:-1px;left:10px;background:#d32f2f;color:#fff;font-weight:700;"
             "font-size:13px;padding:3px 14px;border-radius:0 0 12px 12px;z-index:20'>Predictor</div>"
             "<div style='height:10px'></div>" + "".join(linhas) + "</div></body></html>")
             
-    # Renderiza o HTML em um iframe isolado para não ser corrompido pelo markdown
-    components.html(html, height=280)
+    components.html(html, height=320)
 
 
 # ---------------------------------------------------------------- analise
@@ -664,7 +661,6 @@ def gerar_texto_analise(c, p):
         nomes_alvo = ", ".join([d['name'] for d in alvos])
         txt.append(f"- 🎯 Alvo(s): {nomes_alvo} (fora do Top 3 largada e recuperação ≤ 0%).")
 
-    # DIB 3.5: Alerta de pista irlandesa e Alerta de Zebra
     all_splits = [d["msplit"] for d in p["rank"] if d.get("msplit") is not None]
     is_irish_metric = all(s < 2.0 for s in all_splits) if all_splits else False
 
@@ -709,7 +705,7 @@ def analisar(c, classe_in, dist_in, pp_in):
     st.markdown("#### Planilha de Projeção")
     st.markdown(dib.tabela_projecao(p["ds"]), unsafe_allow_html=True)
     
-    # CHAMADA ALTERADA AQUI: Não usa mais st.markdown
+    # Chamando o gráfico corrigido
     grafico_predictor(p["ds"])
     
     st.markdown(titulo_corrida(c, p))
