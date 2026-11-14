@@ -38,9 +38,9 @@ CFG = {
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
     "TRAP_VAZIA": 5.0, "TRAFEGO_SEVERO": -15.0, "CONF_MIN_VENCEDOR": 40.0,
-    
+
     "VEL_PTS": {"tadj": 100, "mtime": 80, "msplit": 80, "ritmo": 60},
-    "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 10, 
+    "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 10,
 }
 
 FIELD_MAP = {
@@ -103,6 +103,10 @@ def grade_num(g):
     m = re.fullmatch(r"([ADSB])(\d{1,2})", str(g or "").strip().upper())
     return int(m.group(2)) if m else None
 
+def is_trial_grade(g):
+    """Retorna True para grades de trial: 'T', 'T1', 'T2', ..."""
+    return bool(re.match(r"^T\d*$", str(g or "").strip().upper()))
+
 def parse_date(s):
     if not s: return None
     s = str(s)[:10]
@@ -130,13 +134,13 @@ def traffic_penalty(rem, peso=31.0):
         if key in s and key in CFG["TRAFFIC_ADJ"]:
             base_pen = CFG["TRAFFIC_ADJ"][key] if key == "baulk" else max(
                 CFG["TRAFFIC_ADJ"][k] for k in ("crd", "bmp", "fcd") if k in s)
-    
+
     if base_pen == 0: return 0.0
-    
+
     if peso > 30.0: fator = 0.8
     elif peso < 28.0: fator = 1.2
     else: fator = 1.0
-    
+
     return base_pen * fator
 
 def not_free(rem):
@@ -208,13 +212,13 @@ def extrair_metadados_json(data, info_card, dogs):
             if isinstance(src.get("form"), dict):
                 fontes.append(src["form"])
                 if isinstance(src["form"].get("race"), dict): fontes.append(src["form"]["race"])
-    
+
     for src in fontes:
         pista = pick(src, ["trackName", "track", "meetingName", "courseName"])
         if pista: info["pista"] = str(pista).strip(); break
     if not info["pista"] and dogs and dogs[0].get("runs"):
         info["pista"] = str(dogs[0]["runs"][0].get("track", "Desconhecida")).strip()
-        
+
     for src in fontes:
         for k in ["offTime", "scheduledTime", "displayTime", "time", "raceTime"]:
             val = src.get(k)
@@ -255,7 +259,7 @@ def extrair_dados_racingpost(url):
             st.error("Não foi possível extrair o ID da corrida do link.")
             return None, None, None
         race_id, r_date_str = race_id_match.group(1), r_date_match.group(1)
-        
+
         card_api_url = f"https://greyhoundbet.racingpost.com/card/race.sd?race_id={race_id}&r_date={r_date_str}"
         info_card = {}
         try:
@@ -273,7 +277,7 @@ def extrair_dados_racingpost(url):
         if not dogs:
             st.warning("Nenhum dado encontrado para esta corrida.")
             return None, None, None
-            
+
         descobrir_chaves(dogs)
         out = []
         for dog in dogs:
@@ -283,13 +287,13 @@ def extrair_dados_racingpost(url):
                 "name": dog.get("dogName", "Desconhecido"),
                 "trap": trap or 0, "peso_atual": to_float(dog.get("weight")), "runs": runs,
             })
-            
+
         existing_traps = {d["trap"] for d in out}
         for t in range(1, 7):
             if t not in existing_traps:
                 out.append({"name": "vacant", "trap": t, "peso_atual": None, "runs": []})
         out.sort(key=lambda x: x["trap"])
-            
+
         meta_info = extrair_metadados_json(data, info_card, out)
         return out, {"r_date": r_date_str, "raw_first": dogs[0]}, meta_info
     except Exception as e:
@@ -297,27 +301,33 @@ def extrair_dados_racingpost(url):
         return None, None, None
 
 def oficial(r, ctx):
-    return (grade_num(r["grade"]) is not None and r["dist"] is not None
-            and abs(r["dist"] - ctx["dist"]) < 1 and r["caltm"] is not None and r["caltm"] > 0)
+    has_valid_grade = (
+        grade_num(r["grade"]) is not None
+        or is_trial_grade(r["grade"])
+    )
+    return (has_valid_grade
+            and r["dist"] is not None
+            and abs(r["dist"] - ctx["dist"]) < 1
+            and r["caltm"] is not None and r["caltm"] > 0)
 
 def analisar_galgo(dog, ctx):
     if dog.get("name") == "vacant":
         return {"name": "vacant", "trap": dog["trap"], "runs": [], "val": [], "nd": True,
-                "conf": 0.0, "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False}
-                
+                "conf": 0.0, "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False,
+                "alerta_trial": False, "n_trials": 0}
+
     runs = sorted(dog["runs"], key=lambda r: r["date"] or datetime.min, reverse=True)[:CFG["N_RUNS"]]
     R = [r for r in runs if oficial(r, ctx)]
-    
+
+    n_trials = sum(1 for r in runs if is_trial_grade(r["grade"]))
+
     d = {"name": dog["name"], "trap": dog["trap"], "runs": runs, "val": R, "nd": not R,
-         "conf": min(100.0, len(R) * 20.0), "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False}
-    
+         "conf": min(100.0, len(R) * 20.0), "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False,
+         "alerta_trial": n_trials >= 3, "n_trials": n_trials}
+
     ultima_any = runs[0] if runs else None
     d["dias"] = (ctx["today"] - ultima_any["date"]).days if ultima_any and ultima_any["date"] else 0
-    
-    d["forma_trial"] = False
-    if ultima_any and re.match(r"^T", ultima_any["grade"] or ""):
-        count_t = sum(1 for r in runs if re.match(r"^T", r["grade"] or ""))
-        if count_t >= 2: d["forma_trial"] = True
+
     if not R: return d
 
     # Categoria Média
@@ -334,7 +344,7 @@ def analisar_galgo(dog, ctx):
 
     d["peso"] = dog.get("peso_atual") or R[0]["weight"]
     d["split"], d["time"] = R[0]["split"], R[0]["caltm"]
-    
+
     has_split = any(r["split"] for r in R)
     if has_split:
         d["msplit"] = float(np.mean([r["split"] for r in R if r["split"] is not None]))
@@ -345,17 +355,17 @@ def analisar_galgo(dog, ctx):
         d["msplit_pos"] = float(np.mean(pos_curve)) if pos_curve else None
 
     d["mtime"] = float(np.mean([r["caltm"] for r in R if r["caltm"] is not None])) if any(r["caltm"] for r in R) else None
-    
+
     if has_split:
         d["ritmo"] = d["mtime"] - d["msplit"] if d["mtime"] and d["msplit"] else None
     else:
         d["ritmo"] = d["mtime"]
-    
+
     # Aplica o peso na penalidade de tráfego do Tadj
     peso_atual = d["peso"] or 31.0
     adj_times = [r["caltm"] - (traffic_penalty(r["remarks"], peso_atual) + ((r["dist"] - 300) / 1000.0 if traffic_penalty(r["remarks"], peso_atual) > 0 else 0.0)) for r in R]
     d["tadj"] = float(np.mean(adj_times)) if adj_times else None
-    
+
     cal = [r["caltm"] for r in R]
     d["sd"] = float(np.std(cal)) if len(cal) > 1 else 0.0
     d["pico"] = min(cal) if cal else None
@@ -366,30 +376,30 @@ def analisar_galgo(dog, ctx):
 
     n_traf = sum(count_traf(r["remarks"]) for r in R)
     d["perfil"] = "Limpo" if n_traf <= 1 else ("Irregular" if n_traf == 2 else "Trombador")
-    
+
     d["early_cnt"] = sum(1 for r in R if any(re.match(r"^(ep|ald|snld|ld)", t) for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
     d["saw_cnt"] = sum(1 for r in R if any(t.startswith("saw") or t.startswith("vsaw") for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
     d["fbt_cnt"] = sum(1 for r in R if first_bend_traffic(r["remarks"]))
-    
+
     d["remarks_translated"] = []
     for r in R:
         for token in re.split(r"[,\s]+", str(r["remarks"]).lower()):
             if token in DICIONARIO_REMARKS:
                 d["remarks_translated"].append(DICIONARIO_REMARKS[token])
-                
+
     return d
 
 def finalizar(ds, ctx):
     ok = [d for d in ds if not d["nd"]]
     vac = [t for t in range(1, 7) if t not in {d["trap"] for d in ds if d["name"] != "vacant"}]
-    
+
     ms_rank = sorted([d for d in ok if d.get("msplit") is not None], key=lambda x: x["msplit"])
     if not ms_rank:
         ms_rank = sorted([d for d in ok if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"])
     top3_ms = {d["name"] for d in ms_rank[:3]}
     top_split_name = ms_rank[0]["name"] if ms_rank else None
     ctx["top3_ms"] = top3_ms
-    
+
     ritmo_rank = sorted([d for d in ok if d.get("ritmo")], key=lambda x: x["ritmo"])
     top3_ritmo = {d["name"] for d in ritmo_rank[:3]}
     ctx["top3_ritmo"] = top3_ritmo
@@ -404,31 +414,31 @@ def finalizar(ds, ctx):
     for d in ok:
         pts_cat = d["cat"] * 1.5
         pts_perfil = CFG["PERFIL_PTS"][d["perfil"]]
-        
-        vel = (pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) + 
-               pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) + 
-               (pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d) if d["msplit"] else (CFG["VEL_PTS"]["msplit"] * (1 - (d["msplit_pos"] / 6)) if d.get("msplit_pos") else 0)) + 
+
+        vel = (pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) +
+               pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) +
+               (pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d) if d["msplit"] else (CFG["VEL_PTS"]["msplit"] * (1 - (d["msplit_pos"] / 6)) if d.get("msplit_pos") else 0)) +
                pts_prop("ritmo", CFG["VEL_PTS"]["ritmo"], d))
-        
+
         f = []
-        if d["early_cnt"] > 0 and d["perfil"] == "Limpo": 
+        if d["early_cnt"] > 0 and d["perfil"] == "Limpo":
             f.append(("Ritmo Acelerado", d["early_cnt"] * 5.0))
-        if d["saw_cnt"] > 0: 
+        if d["saw_cnt"] > 0:
             f.append(("Largada Lenta", d["saw_cnt"] * -8.0))
-        if d["fbt_cnt"] > 0: 
+        if d["fbt_cnt"] > 0:
             f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -8.0))
-        if any(abs(d["trap"] - v) == 1 for v in vac): 
+        if any(abs(d["trap"] - v) == 1 for v in vac):
             f.append(("Trap Vazia", CFG["TRAP_VAZIA"]))
         if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
             f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"]))
-            
+
         d["fatores"] = f
         d["overall"] = vel + pts_cat + pts_perfil + pts_prop("sd", CFG["CONSIST_PTS"], d, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_prop("rec", CFG["RECUP_PTS"], d, False) + sum(v for _, v in f)
 
     ok.sort(key=lambda x: -x["overall"])
     for i, d in enumerate(ok, 1):
         d["pos"] = i
-        d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"] or d["forma_trial"]
+        d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"]
         d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d["rec"] <= 0)
         d["elegivel"] = not d["bloqueado"]
     return ok, top3_ms
@@ -445,7 +455,7 @@ def calc_prob(V, D, rank, ctx):
     pts_vel = (diff_tadj / 0.10) * 5.0
     pts_vel = max(-25.0, min(25.0, pts_vel))
     prob += pts_vel
-    
+
     # 2. Largada (Split) - Peso Máximo: 20%
     if V.get("msplit") and D.get("msplit"):
         diff_split = D["msplit"] - V["msplit"]
@@ -457,14 +467,14 @@ def calc_prob(V, D, rank, ctx):
         pts_split = diff_pos * 5.0
         pts_split = max(-20.0, min(20.0, pts_split))
         prob += pts_split
-        
+
     # 3. Recuperação (Valorizado para os Closers) - Peso Máximo: 10%
     if V.get("rec") is not None and D.get("rec") is not None:
         diff_rec = V["rec"] - D["rec"]
         pts_rec = (diff_rec * 0.2)
         pts_rec = max(-10.0, min(10.0, pts_rec))
         prob += pts_rec
-        
+
     # 4. Perfil (Segurança)
     val_perfil = {"Limpo": 0, "Irregular": 1, "Trombador": 2}
     diff_perfil = val_perfil.get(D["perfil"], 1) - val_perfil.get(V["perfil"], 1)
@@ -484,15 +494,17 @@ def calc_prob(V, D, rank, ctx):
     epfs = [d for d in rank if d["name"] in top3_ms]
 
     if V["name"] in top3_ms:
-        if D["name"] in top3_ms: prob -= 3.0 
-        else: prob -= 5.0 
-    elif D["name"] in top3_ms: prob += 5.0 
+        if D["name"] in top3_ms: prob -= 3.0
+        else: prob -= 5.0
+    elif D["name"] in top3_ms: prob += 5.0
 
     if V["name"] in top3_ritmo and V["name"] not in top3_ms:
-        if len(epfs) >= 2: prob += 5.0 
+        if len(epfs) >= 2: prob += 5.0
 
     # 7. Trap / Post Pick
-    if V["trap"] in ctx["post_pick"]: prob += 2.0
+    # fix: evita TypeError (V["trap"] é int, ctx["post_pick"] é str tipo "3-4-5")
+    pp = str(ctx.get("post_pick") or "")
+    if pp and str(V["trap"]) in pp: prob += 2.0
     if V["trap"] in [1,2,3] and D["trap"] in [4,5,6]: prob += 2.0
     if any(abs(V["trap"] - v) == 1 for v in ctx["vazias"]): prob += 1.5
     if any(abs(D["trap"] - v) == 1 for v in ctx["vazias"]): prob -= 1.5
@@ -503,30 +515,30 @@ def montar_avbs(rank, ctx):
     # Regra 2: Galgo precisa ter no mínimo 40% de confiança para participar do AVB
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 40.0]
     if len(elig) < 2: return []
-    
+
     s1 = []
     for i in range(len(elig)):
         for j in range(i+1, len(elig)):
             A, B = elig[i], elig[j]
             prob_A = calc_prob(A, B, rank, ctx)
-            
+
             if prob_A >= 50.0:
                 V, D, prob = A, B, prob_A
             else:
                 V, D, prob = B, A, 100.0 - prob_A
-                
+
             # Regra 1: Galgo com Alvo ou Bloqueado não pode ser Vencedor no AVB
             if V.get("bloqueado", False) or V.get("alvo", False):
                 continue
-                
+
             # Regra 3: O Vencedor tem que ter um Tempo Ajustado melhor (menor) que o Desafiante
             if V.get("tadj") is not None and D.get("tadj") is not None:
-                if V["tadj"] >= D["tadj"]: 
+                if V["tadj"] >= D["tadj"]:
                     continue
-                
+
             if prob >= 60.0:
                 s1.append((V, D, prob, True))
-                
+
     return sorted(s1, key=lambda x: -x[2])
 
 def get_rank_html(val, rank, max_rank):
@@ -547,6 +559,7 @@ def tbl(headers, rows):
 
 def nome_marcado(d):
     n = html.escape(d["name"])
+    if d.get("alerta_trial", False): n = "⚠️ " + n
     if d.get("bloqueado", False): n += " 🚫"
     if d.get("alvo", False): n = "🎯 " + n
     return n
@@ -571,13 +584,13 @@ def tabela_projecao(ds):
         if d.get("remarks_translated"):
             rem_txt = ", ".join(set(d["remarks_translated"]))
             fat += f"<br><small style='color:#aaa'>{rem_txt}</small>"
-            
+
         perfil_e = {"Limpo": "✅", "Irregular": "⚠️", "Trombador": "🔴"}[d["perfil"]]
         dias_txt = f"{d['dias']} ⚠️" if d['dias'] > 21 else str(d['dias'])
-        
+
         split_display = get_rank_html(d["split"], rk["split"][i], max_rk["split"])
         msplit_display = get_rank_html(d["msplit"], rk["msplit"][i], max_rk["msplit"]) if d.get("msplit") else (f"<span style='color:#ffa500'>Pos: {d.get('msplit_pos', 0):.1f}</span>" if d.get("msplit_pos") else "-")
-        
+
         rows.append([
             trap_label(d), nome_marcado(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}",
             f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", fat, f"{perfil_e} {d['perfil']}",
@@ -611,39 +624,39 @@ def tabela_avb(lista, titulo):
     rows = []
     for i, (V, D, prob, star) in enumerate(lista):
         if i > 0: rows.append(["<hr>"])
-        
+
         ov_v, ov_d = fmt_pair(V['overall'], D['overall'], False, 1)
         cat_v, cat_d = fmt_pair(V['cat'], D['cat'], False, 1)
         sp_v, sp_d = fmt_pair(V['split'], D['split'], True, 2)
         t_v, t_d = fmt_pair(V['time'], D['time'], True, 2)
-        
+
         if V.get("msplit") and D.get("msplit"):
             ms_v, ms_d = fmt_pair(V['msplit'], D['msplit'], True, 2)
         elif V.get("msplit_pos") and D.get("msplit_pos"):
             ms_v, ms_d = fmt_pair(V['msplit_pos'], D['msplit_pos'], True, 1)
         else:
             ms_v, ms_d = "-", "-"
-            
+
         mt_v, mt_d = fmt_pair(V['mtime'], D['mtime'], True, 2)
         ta_v, ta_d = fmt_pair(V['tadj'], D['tadj'], True, 2)
         r_v, r_d = fmt_pair(V['ritmo'], D['ritmo'], True, 2)
         rec_v, rec_d = fmt_pair(V['rec'], D['rec'], False, 1, True)
 
         prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#00ff00'>{prob:.1f}%</span></td>"
-        
+
         rows.append([
-            f"{'⭐ ' if star else ''}{trap_label(V)} - {html.escape(V['name'])}", 
+            f"{'⭐ ' if star else ''}{trap_label(V)} - {nome_marcado(V)}",
             ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]),
-            f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, r_v, rec_v, f"{V['conf']:.0f}%", 
+            f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, r_v, rec_v, f"{V['conf']:.0f}%",
             prob_cell
         ])
-        
+
         rows.append([
-            f"{trap_label(D)} - {html.escape(D['name'])}", 
+            f"{trap_label(D)} - {nome_marcado(D)}",
             ov_d, cat_d, D['perfil'], "-".join((r["grade"] or "?") for r in D["runs"]),
             f"{D['peso']:.1f}", f"{D['dias']}", sp_d, t_d, ms_d, mt_d, ta_d, r_d, rec_d, f"{D['conf']:.0f}%"
         ])
-        
+
     heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Ritmo", "Recup.", "Conf.", "Probabilidade"]
     st.markdown(tbl(heads, rows), unsafe_allow_html=True)
 
@@ -651,14 +664,14 @@ def gerar_observacoes(rank, avbs, ctx):
     if not rank: return
     st.markdown("---")
     st.markdown("#### 🏁 O Cenário da Corrida")
-    
+
     elegiveis = [d for d in rank if not d.get("bloqueado")]
     bloqueados = [d for d in rank if d.get("bloqueado")]
     alvos = [d for d in rank if d.get("alvo")]
-    
+
     top_ritmo = min([d for d in rank if d.get("ritmo") is not None], key=lambda x: x["ritmo"], default=None)
     top_split = min([d for d in rank if d.get("msplit") is not None], key=lambda x: x["msplit"], default=None) if any(d.get("msplit") for d in rank) else None
-    
+
     # 1. Favorito Claro / Melhor Elegível
     if elegiveis:
         fav = elegiveis[0]
@@ -671,7 +684,7 @@ def gerar_observacoes(rank, avbs, ctx):
             f_trap = TRAP_EMOJI.get(fav['trap'], str(fav['trap']))
             txt_rec = f" Ele tem recuperação excelente ({fav['rec']:+.1f}%)." if fav['rec'] > 10 else ""
             st.markdown(f"- **🏆 Favorito Claro:** O **{f_trap}** domina o Overall ({fav['overall']:.1f}).{txt_rec}")
-            
+
     # 2. O "Falso Favorito" Bloqueado
     if bloqueados:
         b = bloqueados[0]
@@ -700,11 +713,11 @@ def gerar_observacoes(rank, avbs, ctx):
         s_trap = TRAP_EMOJI.get(top_split['trap'], str(top_split['trap']))
         r_trap = TRAP_EMOJI.get(top_ritmo['trap'], str(top_ritmo['trap']))
         st.markdown(f"- **💡 Análise de Pace:** O **{s_trap}** tem a melhor largada (Split), mas o **{r_trap}** tem o melhor ritmo final.")
-        
+
         # Alerta de Zebra
         if top_split["pos"] > 3:
             st.markdown(f"- **🦓 Alerta de Zebra:** O **{s_trap}** (Posição {top_split['pos']}) tem o melhor Early Pace da corrida. Se ele não for atrapalhado, pode ditar o ritmo e surpreender os favoritos.")
-            
+
     elif not top_split and top_ritmo:
         top_split_pos = min([d for d in rank if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"], default=None)
         if top_split_pos and top_ritmo["trap"] != top_split_pos["trap"]:
