@@ -118,7 +118,7 @@ dib.trap_label = lambda d: badge(d["trap"])
 def botao_copiar(texto):
     """Cria um botão HTML nativo que copia o texto usando JavaScript."""
     texto_js = json.dumps(texto)
-    
+
     html = f"""
     <html>
     <head>
@@ -473,6 +473,32 @@ BAR_STYLE = {
 }
 
 
+def greyhound_svg(cor="#fff", sombra=True):
+    """Greyhound correndo (galope estendido), olhando para a direita."""
+    sh = "filter:drop-shadow(0 0 1px rgba(0,0,0,.9));" if sombra else ""
+    return (
+        f"<svg viewBox='0 4 76 30' width='38' height='15' xmlns='http://www.w3.org/2000/svg' "
+        f"style='display:block;{sh}'>"
+        f"<g fill='{cor}' stroke='{cor}' stroke-linecap='round' stroke-linejoin='round'>"
+        # tronco arqueado
+        "<path stroke-width='1' d='M18 19 C22 12 34 11 46 14 C50 15.5 52 17 52 19 "
+        "C48 22 36 23 28 22 C23 22 19 21 18 19 Z'/>"
+        # pescoço e cabeça (focinho fino)
+        "<path stroke-width='1' d='M46 14 L58 9 L70 12.5 L71 14 L60 15.5 L52 19 Z'/>"
+        # orelha
+        "<path stroke-width='1' d='M57 9.5 L55 6 L60 8.5 Z'/>"
+        # patas dianteiras estendidas
+        "<path fill='none' stroke-width='2.2' d='M48 19 L58 24 L66 23'/>"
+        "<path fill='none' stroke-width='2.2' d='M46 20 L54 27 L61 28'/>"
+        # patas traseiras estendidas
+        "<path fill='none' stroke-width='2.2' d='M22 19 L12 25 L5 24'/>"
+        "<path fill='none' stroke-width='2.2' d='M25 21 L17 29 L10 30'/>"
+        # rabo
+        "<path fill='none' stroke-width='1.6' d='M18 18 C12 15 8 12 3 12'/>"
+        "</g></svg>"
+    )
+
+
 def grafico_predictor(ds):
     """Uma barra por galgo (na ordem das traps). Tamanho = Overall / maior Overall; o maior Overall enche a barra."""
     com = [d for d in ds if not d.get("nd") and d.get("overall") is not None]
@@ -484,15 +510,15 @@ def grafico_predictor(ds):
         t = d["trap"]
         estilo, icone = BAR_STYLE.get(t, ("background:#888;", "invert"))
         if d.get("nd") or d.get("overall") is None:
-            fill, tip = "", "sem dados"
+            fill = ""
         else:
-            w = 100.0 if mx <= 0 else max(4.0, min(100.0, d["overall"] / mx * 100.0))
+            w = 100.0 if mx <= 0 else max(8.0, min(100.0, d["overall"] / mx * 100.0))
             tip = f"{d['name']} · Overall {d['overall']:.1f}"
-            filtro = "brightness(0)" if icone == "dark" else "brightness(0) invert(1)"
+            cao = greyhound_svg("#111", sombra=False) if icone == "dark" else greyhound_svg("#fff", True)
             fill = (f"<div title=\"{tip}\" style='position:relative;width:{w:.1f}%;height:100%;"
                     f"border-radius:14px;{estilo}'>"
-                    f"<span style='position:absolute;right:6px;top:50%;transform:translateY(-50%);"
-                    f"font-size:15px;line-height:1;filter:{filtro};'>🐕</span></div>")
+                    f"<span style='position:absolute;right:5px;top:50%;transform:translateY(-50%);"
+                    f"line-height:0;'>{cao}</span></div>")
         linhas.append(f"<div style='display:flex;align-items:center;gap:8px;margin:7px 0'>{badge(t)}"
                       f"<div style='flex:1;height:24px;background:#0a2a52;border-radius:14px;overflow:hidden'>"
                       f"{fill}</div></div>")
@@ -544,20 +570,20 @@ def gerar_texto_analise(c, p):
     txt = []
     txt.append(titulo_corrida(c, p).replace("### ", ""))
     txt.append("")
-    
+
     txt.append("**Planilha de Projeção**")
     txt.append("| Trp | Galgo | Overall | Cat | Fatores | Perfil | Grades | Peso | Dias | Split | Time | Méd. Split | Méd. Time | Time Ajust. | Ritmo | Recup. Média | Conf. |")
     txt.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
-    
+
     for d in p["ds"]:
         if d["nd"]:
             txt.append(f"| {d['trap']} | {d['name']} | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |")
             continue
-        
+
         nome = f"{d['name']} {'🚫' if d.get('bloqueado') else ''} {'🎯' if d.get('alvo') else ''}".strip()
         fat = "<br>".join(f"{k} ({v:+.1f})" for k, v in d["fatores"]) or "-"
         grades = "-".join((r["grade"] or "?") for r in d["runs"])
-        
+
         f_split = f"{d['split']:.2f}" if d.get("split") else "-"
         f_time = f"{d['time']:.2f}" if d.get("time") else "-"
         f_msplit = f"{d['msplit']:.2f}" if d.get("msplit") else (f"Pos:{d['msplit_pos']:.1f}" if d.get("msplit_pos") else "-")
@@ -566,15 +592,15 @@ def gerar_texto_analise(c, p):
         f_ritmo = f"{d['ritmo']:.2f}" if d.get("ritmo") else "-"
         f_rec = f"{d['rec']:+.2f}%" if d.get("rec") is not None else "-"
         f_peso = f"{d['peso']:.1f}" if d.get("peso") else "-"
-        
+
         txt.append(f"| {d['trap']} | {nome} | {d['overall']:.1f} | {d['cat']:.1f} | {fat} | {d['perfil']} | {grades} | {f_peso} | {d['dias']} | {f_split} | {f_time} | {f_msplit} | {f_mtime} | {f_tadj} | {f_ritmo} | {f_rec} | {d['conf']:.0f}% |")
-    
+
     txt.append("")
-    
+
     classif = " > ".join(f"{d['pos']}º [T{d['trap']}]" for d in p["rank"])
     txt.append(f"**Classificação:** {classif}")
     txt.append("")
-    
+
     txt.append("**AVBs Principais (≥ 60%)**")
     if not p["s1"]:
         txt.append("Nenhum confronto atingiu 60%.")
@@ -583,11 +609,11 @@ def gerar_texto_analise(c, p):
         txt.append("|---|---|---|")
         for (V, D, prob, star) in p["s1"]:
             txt.append(f"| {V['trap']} - {V['name']} | {D['trap']} - {D['name']} | {prob:.1f}% |")
-    
+
     txt.append("")
-    
+
     txt.append("**🏁 O Cenário da Corrida:**")
-    
+
     elegiveis = [d for d in p["rank"] if not d.get("bloqueado")]
     bloqueados = [d for d in p["rank"] if d.get("bloqueado")]
     alvos = [d for d in p["rank"] if d.get("alvo")]
@@ -670,12 +696,12 @@ def analisar(c, classe_in, dist_in, pp_in):
     dib.tabela_avb(p["s1"], "1ª Planilha — AVB Principal (Prob ≥ 60%)")
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
-        
+
     # BOTÃO DE EXPORTAR COM CÓPIA AUTOMÁTICA
     st.markdown("---")
     with st.expander("📋 Exportar Análise (Copiar e Colar para o Chat)"):
         texto_gerado = gerar_texto_analise(c, p)
-        botao_copiar(texto_gerado) # Chama o botão JS
+        botao_copiar(texto_gerado)  # Chama o botão JS
         st.text_area("Se o botão acima não funcionar, copie o texto aqui:", texto_gerado, height=200)
 
 
