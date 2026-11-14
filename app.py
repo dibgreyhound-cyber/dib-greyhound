@@ -479,6 +479,10 @@ def grafico_predictor(ds):
     if not com:
         return ""
     mx = max(d["overall"] for d in com)
+    
+    # SVG do galgo correndo (silhueta idêntica ao Racing Post)
+    svg_galgo = """<svg viewBox="0 0 640 512" width="22" height="22" style="position:absolute; right: -11px; top: 50%; transform: translateY(-50%);"><path d="M544 160c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zm-96 0c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zM160 448c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zm288 0c-17.7 0-32-14.3-32-32s14.3-32 32-32 32 14.3 32 32-14.3 32-32 32zM320 160c-35.3 0-64-28.7-64-64s28.7-64 64-64 64 28.7 64 64-28.7 64-64 64zm-64 64v128c0 17.7 14.3 32 32 32h64c17.7 0 32-14.3 32-32V224h-128zm256 0v128c0 17.7 14.3 32 32 32h32c17.7 0 32-14.3 32-32V224h-96zM96 224c-17.7 0-32 14.3-32 32v128c0 17.7 14.3 32 32 32h32c17.7 0 32-14.3 32-32V224H96z"/></svg>"""
+
     linhas = []
     for d in sorted(ds, key=lambda x: x["trap"]):
         t = d["trap"]
@@ -488,11 +492,14 @@ def grafico_predictor(ds):
         else:
             w = 100.0 if mx <= 0 else max(4.0, min(100.0, d["overall"] / mx * 100.0))
             tip = f"{d['name']} · Overall {d['overall']:.1f}"
-            filtro = "brightness(0)" if icone == "dark" else "brightness(0) invert(1)"
+            
+            # Define a cor do galgo: preto para traps claras (3, 6), branco para escuras (1, 2, 4, 5)
+            svg_fill = "#000000" if icone == "dark" else "#ffffff"
+            svg_atual = svg_galgo.replace("<path", f"<path fill='{svg_fill}'")
+            
             fill = (f"<div title=\"{tip}\" style='position:relative;width:{w:.1f}%;height:100%;"
                     f"border-radius:14px;{estilo}'>"
-                    f"<span style='position:absolute;right:6px;top:50%;transform:translateY(-50%);"
-                    f"font-size:15px;line-height:1;filter:{filtro};'>🐕</span></div>")
+                    f"{svg_atual}</div>")
         linhas.append(f"<div style='display:flex;align-items:center;gap:8px;margin:7px 0'>{badge(t)}"
                       f"<div style='flex:1;height:24px;background:#0a2a52;border-radius:14px;overflow:hidden'>"
                       f"{fill}</div></div>")
