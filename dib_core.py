@@ -31,14 +31,14 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 4.4 - Calibrado após Ciclo 1)
+# CONFIGURAÇÃO GLOBAL (DIB 4.5 - Calibrado para o Ciclo 3)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
     "TRAP_VAZIA": 5.0, 
-    "TRAFEGO_SEVERO": -8.0, # Ajuste 1: Reduzido de -15 para -8
+    "TRAFEGO_SEVERO": -8.0,
     "CONF_MIN_VENCEDOR": 40.0,
 
     "VEL_PTS": {"tadj": 100, "mtime": 80, "msplit": 80, "ritmo": 60},
@@ -423,7 +423,7 @@ def finalizar(ds, ctx):
         if d["saw_cnt"] > 0:
             f.append(("Largada Lenta", d["saw_cnt"] * -4.0)) 
         if d["fbt_cnt"] > 0:
-            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -4.0)) 
+            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -2.0)) # Ajuste 1: reduzido de -4.0 para -2.0
         if any(abs(d["trap"] - v) == 1 for v in vac):
             f.append(("Trap Vazia", CFG["TRAP_VAZIA"]))
         if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
@@ -465,7 +465,7 @@ def calc_prob(V, D, rank, ctx):
 
     if V.get("rec") is not None and D.get("rec") is not None:
         diff_rec = V["rec"] - D["rec"]
-        pts_rec = (diff_rec * 0.2)
+        pts_rec = (diff_rec * 0.1) # Ajuste 3: reduzido de 0.2 para 0.1
         pts_rec = max(-10.0, min(10.0, pts_rec))
         prob += pts_rec
 
