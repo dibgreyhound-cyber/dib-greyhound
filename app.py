@@ -138,7 +138,7 @@ def botao_copiar(texto):
     .copy-btn:active {{ background-color: #cc0000; }}
     </style>
     </head>
-    <body style="background-color: transparent; margin: 0; padding: 0;">
+    <body>
     <button class="copy-btn" id="copyBtn">📋 Copiar Análise para o Chat</button>
     <script>
     const textToCopy = {texto_js};
@@ -469,7 +469,7 @@ BAR_STYLE = {
     3: ("background:#eeeeee;", "dark"),
     4: ("background:#151515;", "invert"),
     5: ("background:#f26b21;", "invert"),
-    6: ("background:repeating-linear-gradient(180deg,#111 0 4px,#fff 4px 8px);", "invert"),
+    6: ("background:repeating-linear-gradient(180deg,#111 0 3px,#fff 3px 6px);", "invert"),
 }
 
 
@@ -477,70 +477,30 @@ def grafico_predictor(ds):
     """Uma barra por galgo (na ordem das traps). Tamanho = Overall / maior Overall; o maior Overall enche a barra."""
     com = [d for d in ds if not d.get("nd") and d.get("overall") is not None]
     if not com:
-        return
-    
+        return ""
     mx = max(d["overall"] for d in com)
-
-    def get_dog_svg(trap):
-        # Um desenho personalizado de um galgo super esguio correndo (silhueta real)
-        dog_shape = "M 185 85 C 180 75, 170 65, 160 65 C 150 60, 140 65, 130 75 C 110 70, 80 70, 50 80 C 40 75, 30 65, 15 60 C 10 60, 5 65, 10 70 C 20 80, 30 85, 40 90 C 30 110, 20 130, 15 150 C 15 155, 25 155, 30 150 C 40 135, 50 120, 60 110 C 80 110, 100 110, 120 115 C 120 130, 125 145, 130 160 C 135 165, 145 160, 145 150 C 140 135, 135 120, 140 110 C 155 105, 165 95, 180 90 C 185 90, 190 88, 185 85 Z"
-        # O "saddle" (colete) desenhado perfeitamente nas costas do galgo
-        saddle_shape = "M 65 78 C 80 73, 95 73, 105 78 L 105 95 C 95 100, 80 100, 65 95 Z"
-
-        if trap == 1: saddle, stroke = "#d62828", "none"
-        elif trap == 2: saddle, stroke = "#1d4ed8", "none"
-        elif trap == 3: saddle, stroke = "#eeeeee", "none"
-        elif trap == 4: saddle, stroke = "#151515", "#fff" # Borda branca para o trap 4 não sumir no cão preto
-        elif trap == 5: saddle, stroke = "#f97316", "none"
-        elif trap == 6: saddle, stroke = f"url(#stripes-{trap})", "none"
-        else: saddle, stroke = "#888888", "none"
-
-        padrao_6 = f"""
-        <pattern id="stripes-{trap}" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <rect width="10" height="10" fill="#fff"/>
-            <rect width="5" height="10" fill="#111"/>
-        </pattern>
-        """
-
-        return f"""
-        <svg viewBox="0 0 200 200" width="44" height="38" style="position:absolute; right: -22px; top: 50%; transform: translateY(-50%) scaleX(-1); z-index: 10;">
-            <defs>{padrao_6 if trap == 6 else ''}</defs>
-            <!-- Silhueta do Galgo -->
-            <path d="{dog_shape}" fill="#222" />
-            <!-- Colete (Saddle) -->
-            <path d="{saddle_shape}" fill="{saddle}" stroke="{stroke}" stroke-width="2" />
-        </svg>
-        """
-
     linhas = []
     for d in sorted(ds, key=lambda x: x["trap"]):
         t = d["trap"]
-        estilo, _ = BAR_STYLE.get(t, ("background:#888;", "invert"))
-        
+        estilo, icone = BAR_STYLE.get(t, ("background:#888;", "invert"))
         if d.get("nd") or d.get("overall") is None:
-            fill_html = ""
-            tip = "sem dados"
+            fill, tip = "", "sem dados"
         else:
             w = 100.0 if mx <= 0 else max(4.0, min(100.0, d["overall"] / mx * 100.0))
             tip = f"{d['name']} · Overall {d['overall']:.1f}"
-            svg_atual = get_dog_svg(t)
-            
-            fill_html = (f"<div title=\"{tip}\" style='position:absolute; left:0; width:{w:.1f}%; height:100%; "
-                         f"border-radius:12px; {estilo}'>"
-                         f"{svg_atual}</div>")
-            
-        linhas.append(f"<div style='display:flex;align-items:center;gap:10px;margin:10px 0'>{badge(t)}"
-                      f"<div style='flex:1;height:26px;background:#0a2a52;border-radius:13px;position:relative;margin-right:22px;'>"
-                      f"{fill_html}</div></div>")
-                      
-    html = ("<html><head><style>body { background-color: transparent; margin: 0; padding: 0; font-family: sans-serif; overflow: hidden; }</style></head><body>"
-            "<div style='background:#1e3a5f;border-radius:16px;padding:20px 16px 12px;max-width:640px;margin:8px 0;"
-            "position:relative; box-shadow: 0 4px 10px rgba(0,0,0,0.3)'>"
+            filtro = "brightness(0)" if icone == "dark" else "brightness(0) invert(1)"
+            fill = (f"<div title=\"{tip}\" style='position:relative;width:{w:.1f}%;height:100%;"
+                    f"border-radius:14px;{estilo}'>"
+                    f"<span style='position:absolute;right:6px;top:50%;transform:translateY(-50%);"
+                    f"font-size:15px;line-height:1;filter:{filtro};'>🐕</span></div>")
+        linhas.append(f"<div style='display:flex;align-items:center;gap:8px;margin:7px 0'>{badge(t)}"
+                      f"<div style='flex:1;height:24px;background:#0a2a52;border-radius:14px;overflow:hidden'>"
+                      f"{fill}</div></div>")
+    return ("<div style='background:#143f6f;border-radius:16px;padding:16px 12px 8px;max-width:640px;margin:8px 0;"
+            "position:relative'>"
             "<div style='position:absolute;top:-1px;left:10px;background:#d32f2f;color:#fff;font-weight:700;"
-            "font-size:13px;padding:3px 14px;border-radius:0 0 12px 12px;z-index:20'>Predictor</div>"
-            "<div style='height:10px'></div>" + "".join(linhas) + "</div></body></html>")
-            
-    components.html(html, height=320)
+            "font-size:13px;padding:3px 14px;border-radius:0 0 12px 12px'>Predictor</div>"
+            "<div style='height:10px'></div>" + "".join(linhas) + "</div>")
 
 
 # ---------------------------------------------------------------- analise
@@ -661,6 +621,7 @@ def gerar_texto_analise(c, p):
         nomes_alvo = ", ".join([d['name'] for d in alvos])
         txt.append(f"- 🎯 Alvo(s): {nomes_alvo} (fora do Top 3 largada e recuperação ≤ 0%).")
 
+    # DIB 3.5: Alerta de pista irlandesa e Alerta de Zebra
     all_splits = [d["msplit"] for d in p["rank"] if d.get("msplit") is not None]
     is_irish_metric = all(s < 2.0 for s in all_splits) if all_splits else False
 
@@ -704,19 +665,17 @@ def analisar(c, classe_in, dist_in, pp_in):
     st.markdown(titulo_corrida(c, p))
     st.markdown("#### Planilha de Projeção")
     st.markdown(dib.tabela_projecao(p["ds"]), unsafe_allow_html=True)
-    
-    # Chamando o gráfico corrigido
-    grafico_predictor(p["ds"])
-    
+    st.markdown(grafico_predictor(p["ds"]), unsafe_allow_html=True)
     st.markdown(titulo_corrida(c, p))
     dib.tabela_avb(p["s1"], "1ª Planilha — AVB Principal (Prob ≥ 60%)")
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
         
+    # BOTÃO DE EXPORTAR COM CÓPIA AUTOMÁTICA
     st.markdown("---")
     with st.expander("📋 Exportar Análise (Copiar e Colar para o Chat)"):
         texto_gerado = gerar_texto_analise(c, p)
-        botao_copiar(texto_gerado)
+        botao_copiar(texto_gerado) # Chama o botão JS
         st.text_area("Se o botão acima não funcionar, copie o texto aqui:", texto_gerado, height=200)
 
 
