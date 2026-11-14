@@ -478,13 +478,13 @@ def greyhound_svg(trap):
     Branca; preta na barra 3 (fundo claro); com contorno escuro na barra 6 (listrada)."""
     cor = "#111" if trap == 3 else "#fff"
     if trap == 6:
-        sh = "filter:drop-shadow(0 0 .8px #000) drop-shadow(0 0 .8px #000) drop-shadow(0 0 .8px #000);"
+        sh = "filter:drop-shadow(0 0 .6px #000) drop-shadow(0 0 .6px #000) drop-shadow(0 0 .6px #000);"
     elif trap == 3:
         sh = ""
     else:
         sh = "filter:drop-shadow(0 0 .7px rgba(0,0,0,.8));"
     return (
-        f"<svg viewBox='0 0 104 42' width='72' height='29' xmlns='http://www.w3.org/2000/svg' "
+        f"<svg viewBox='0 0 104 42' width='42' height='17' xmlns='http://www.w3.org/2000/svg' "
         f"style='display:block;{sh}'>"
         f"<g fill='{cor}' stroke='{cor}' stroke-linecap='round' stroke-linejoin='round'>"
         # tronco, pescoço fino e cabeça comprida
@@ -526,14 +526,14 @@ def grafico_predictor(ds):
         if d.get("nd") or d.get("overall") is None:
             fill = ""
         else:
-            w = 100.0 if mx <= 0 else max(28.0, min(100.0, d["overall"] / mx * 100.0))
+            w = 100.0 if mx <= 0 else max(15.0, min(100.0, d["overall"] / mx * 100.0))
             tip = f"{d['name']} · Overall {d['overall']:.1f}"
             fill = (f"<div title=\"{tip}\" style='position:relative;width:{w:.1f}%;height:100%;"
-                    f"border-radius:16px;{estilo}'>"
+                    f"border-radius:14px;{estilo}'>"
                     f"<span style='position:absolute;right:5px;top:50%;transform:translateY(-50%);"
                     f"line-height:0;'>{greyhound_svg(t)}</span></div>")
         linhas.append(f"<div style='display:flex;align-items:center;gap:8px;margin:7px 0'>{badge(t)}"
-                      f"<div style='flex:1;height:32px;background:#0a2a52;border-radius:16px;overflow:hidden'>"
+                      f"<div style='flex:1;height:24px;background:#0a2a52;border-radius:14px;overflow:hidden'>"
                       f"{fill}</div></div>")
     return ("<div style='background:#143f6f;border-radius:16px;padding:16px 12px 8px;max-width:640px;margin:8px 0;"
             "position:relative'>"
