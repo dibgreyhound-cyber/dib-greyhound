@@ -106,7 +106,6 @@ def grade_num(g):
     return int(m.group(2)) if m else None
 
 def is_trial_grade(g):
-    """Retorna True para grades de trial: 'T', 'T1', 'T2', ..."""
     return bool(re.match(r"^T\d*$", str(g or "").strip().upper()))
 
 def parse_date(s):
@@ -129,7 +128,6 @@ def count_traf(rem):
 def traffic_penalty(rem, peso=31.0):
     s = str(rem or "").lower()
     base_pen = 0.0
-    # Bug Fix: Prioriza Baulk
     if "baulk" in s:
         base_pen = CFG["TRAFFIC_ADJ"]["baulk"]
     elif any(k in s for k in ("crd", "bmp", "fcd")):
@@ -149,7 +147,6 @@ def not_free(rem):
 def first_bend_traffic(rem):
     s = str(rem or "").lower()
     if "baulk" in s: return True
-    # Bug Fix: Regex para pegar "crd 1", "crd-1", "crd1"
     return bool(re.search(rf"{RE_TRAF.pattern}\s*[,/\-]?\s*1\b", s))
 
 HINTS = {
@@ -302,12 +299,13 @@ def extrair_dados_racingpost(url):
         return None, None, None
 
 def oficial(r, ctx):
-    has_valid_grade = (
-        grade_num(r["grade"]) is not None
-        or is_trial_grade(r["grade"])
-    )
-    return (has_valid_grade
-            and r["dist"] is not None
+    g = str(r["grade"] or "").strip().upper()
+    # Exclui HP (Handicap - largada desalinhada) e corridas sem classe
+    if not g or g.startswith("HP"):
+        return False
+        
+    # Exige mesma distância (com margem de 1m) e tempo válido
+    return (r["dist"] is not None
             and abs(r["dist"] - ctx["dist"]) < 1
             and r["caltm"] is not None and r["caltm"] > 0)
 
@@ -423,9 +421,9 @@ def finalizar(ds, ctx):
         if d["early_cnt"] > 0 and d["perfil"] == "Limpo":
             f.append(("Ritmo Acelerado", d["early_cnt"] * 5.0))
         if d["saw_cnt"] > 0:
-            f.append(("Largada Lenta", d["saw_cnt"] * -4.0)) # Ajuste 1: reduzido de -8 para -4
+            f.append(("Largada Lenta", d["saw_cnt"] * -4.0)) 
         if d["fbt_cnt"] > 0:
-            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -4.0)) # Ajuste 1: reduzido de -8 para -4
+            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -4.0)) 
         if any(abs(d["trap"] - v) == 1 for v in vac):
             f.append(("Trap Vazia", CFG["TRAP_VAZIA"]))
         if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
@@ -439,7 +437,6 @@ def finalizar(ds, ctx):
         d["pos"] = i
         d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"]
         
-        # Ajuste 2: Regra do Alvo mais flexível
         top2_safe = (i <= 2) and (d.get("rec", -100) > -10.0)
         d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d["rec"] <= 0) and not top2_safe
         
@@ -521,7 +518,6 @@ def montar_avbs(rank, ctx):
             if V.get("bloqueado", False) or V.get("alvo", False):
                 continue
 
-            # Ajuste 4: Regra 3 com Exceção de Tolerância
             if V.get("tadj") is not None and D.get("tadj") is not None:
                 if V["tadj"] >= D["tadj"]:
                     if prob >= 68.0 and (V["tadj"] - D["tadj"]) <= 0.15:
