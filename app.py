@@ -469,32 +469,40 @@ BAR_STYLE = {
     3: ("background:#eeeeee;", "dark"),
     4: ("background:#151515;", "invert"),
     5: ("background:#f26b21;", "invert"),
-    6: ("background:repeating-linear-gradient(180deg,#111 0 3px,#fff 3px 6px);", "invert"),
+    6: ("background:repeating-linear-gradient(180deg,#111 0 3px,#fff 3px 6px);", "stripe"),
 }
 
 
 def greyhound_svg(cor="#fff", sombra=True):
-    """Greyhound correndo (galope estendido), olhando para a direita."""
-    sh = "filter:drop-shadow(0 0 1px rgba(0,0,0,.9));" if sombra else ""
+    """Greyhound em galope estendido (de lado, olhando para a direita), silhueta esguia."""
+    if sombra == "forte":   # para a barra listrada (Trap 6): contorno escuro para destacar o cão
+        sh = "filter:drop-shadow(0 0 1px #000) drop-shadow(0 0 1px #000) drop-shadow(0 0 1px #000);"
+    else:
+        sh = "filter:drop-shadow(0 0 1px rgba(0,0,0,.85));" if sombra else ""
     return (
-        f"<svg viewBox='0 4 76 30' width='38' height='15' xmlns='http://www.w3.org/2000/svg' "
+        f"<svg viewBox='0 0 104 42' width='50' height='20' xmlns='http://www.w3.org/2000/svg' "
         f"style='display:block;{sh}'>"
         f"<g fill='{cor}' stroke='{cor}' stroke-linecap='round' stroke-linejoin='round'>"
-        # tronco arqueado
-        "<path stroke-width='1' d='M18 19 C22 12 34 11 46 14 C50 15.5 52 17 52 19 "
-        "C48 22 36 23 28 22 C23 22 19 21 18 19 Z'/>"
-        # pescoço e cabeça (focinho fino)
-        "<path stroke-width='1' d='M46 14 L58 9 L70 12.5 L71 14 L60 15.5 L52 19 Z'/>"
+        # corpo, pescoço longo e cabeça fina
+        "<path stroke-width='0.4' d='M22 12 C28 8.4 38 8.6 46 8.8 C54 9 60 4.6 68 3.2 C74 2.2 79 3 83 4.4 "
+        "C86 5 88 5.6 90 7 L99 13.2 C100.4 14.2 100 15.4 98.6 15.6 L92 16.6 C90 17 88.5 16.4 87 16.2 "
+        "C83 18 80 21.5 75 22.2 C70 23 65 21 60 19.2 C54 17.6 48 16.6 42 16.2 C35 16 28 16.6 24 15 Z'/>"
         # orelha
-        "<path stroke-width='1' d='M57 9.5 L55 6 L60 8.5 Z'/>"
-        # patas dianteiras estendidas
-        "<path fill='none' stroke-width='2.2' d='M48 19 L58 24 L66 23'/>"
-        "<path fill='none' stroke-width='2.2' d='M46 20 L54 27 L61 28'/>"
-        # patas traseiras estendidas
-        "<path fill='none' stroke-width='2.2' d='M22 19 L12 25 L5 24'/>"
-        "<path fill='none' stroke-width='2.2' d='M25 21 L17 29 L10 30'/>"
+        "<path stroke-width='0.3' d='M86.5 5 L82.4 4.4 L85.8 8.2 Z'/>"
+        # patas dianteiras (uma esticada, outra apoiando)
+        "<path fill='none' stroke-width='2.8' d='M74 19.5 L84 22.6'/>"
+        "<path fill='none' stroke-width='1.8' d='M84 22.6 L95.5 24.4'/>"
+        "<path fill='none' stroke-width='2.6' d='M73 20.5 L77 27'/>"
+        "<path fill='none' stroke-width='1.7' d='M77 27 L75.5 33'/>"
+        # patas traseiras encolhidas
+        "<path fill='none' stroke-width='5' d='M27 12.5 L18.5 19'/>"
+        "<path fill='none' stroke-width='2.4' d='M18.5 19 L11 24'/>"
+        "<path fill='none' stroke-width='1.7' d='M11 24 L4.5 26'/>"
+        "<path fill='none' stroke-width='3.6' d='M28 14.5 L22.5 23'/>"
+        "<path fill='none' stroke-width='2.2' d='M22.5 23 L15.5 31'/>"
+        "<path fill='none' stroke-width='1.7' d='M15.5 31 L8 33.4'/>"
         # rabo
-        "<path fill='none' stroke-width='1.6' d='M18 18 C12 15 8 12 3 12'/>"
+        "<path fill='none' stroke-width='1.3' d='M22 12 C16 10 11 11 6 15.5'/>"
         "</g></svg>"
     )
 
@@ -512,9 +520,14 @@ def grafico_predictor(ds):
         if d.get("nd") or d.get("overall") is None:
             fill = ""
         else:
-            w = 100.0 if mx <= 0 else max(8.0, min(100.0, d["overall"] / mx * 100.0))
+            w = 100.0 if mx <= 0 else max(20.0, min(100.0, d["overall"] / mx * 100.0))
             tip = f"{d['name']} · Overall {d['overall']:.1f}"
-            cao = greyhound_svg("#111", sombra=False) if icone == "dark" else greyhound_svg("#fff", True)
+            if icone == "dark":
+                cao = greyhound_svg("#111", sombra=False)
+            elif icone == "stripe":
+                cao = greyhound_svg("#fff", "forte")
+            else:
+                cao = greyhound_svg("#fff", True)
             fill = (f"<div title=\"{tip}\" style='position:relative;width:{w:.1f}%;height:100%;"
                     f"border-radius:14px;{estilo}'>"
                     f"<span style='position:absolute;right:5px;top:50%;transform:translateY(-50%);"
