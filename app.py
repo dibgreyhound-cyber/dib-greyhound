@@ -883,75 +883,6 @@ def cabecalho_corrida(c, p):
             "</div>")
 
 
-# ---------------------------------------------------------------- colunas travadas ao rolar para o lado
-_JS_TRAVAR = """<script>
-(function () {
-  var win, doc;
-  try { win = window.parent; doc = win.document; } catch (e) { return; }
-  function fundo(el) {
-    var e = el;
-    while (e && e !== doc.documentElement) {
-      var b = win.getComputedStyle(e).backgroundColor;
-      if (b && b !== 'transparent' && !/rgba\\(\\s*0,\\s*0,\\s*0,\\s*0\\s*\\)/.test(b)) return b;
-      e = e.parentElement;
-    }
-    var app = doc.querySelector('.stApp') || doc.body;
-    return win.getComputedStyle(app).backgroundColor || '#fff';
-  }
-  function travar(tabela, n) {
-    var linhas = tabela.querySelectorAll('tr');
-    if (!linhas.length) return false;
-    var cab = linhas[0].children, lefts = [], i;
-    if (!cab[0] || cab[0].getBoundingClientRect().width === 0) return false;   // tabela escondida
-    for (i = 0; i < n; i++) {
-      if (!cab[i]) return false;
-      lefts.push(i === 0 ? 0 : Math.floor(cab[i].offsetLeft) - 1);
-    }
-    Array.prototype.forEach.call(linhas, function (tr) {
-      var c0 = tr.children[0];
-      if (!c0 || (c0.colSpan && c0.colSpan > 1)) return;
-      for (var j = 0; j < n && j < tr.children.length; j++) {
-        var c = tr.children[j];
-        c.style.position = 'sticky';
-        c.style.left = lefts[j] + 'px';
-        c.style.zIndex = (c.tagName === 'TH') ? '3' : '2';
-        c.style.background = fundo(c);
-        var sombra = 'inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45)';
-        if (j === n - 1) sombra += ', 3px 0 4px -2px rgba(0,0,0,.35)';
-        c.style.boxShadow = sombra;
-      }
-    });
-    return true;
-  }
-  function aplicar() {
-    Array.prototype.forEach.call(doc.querySelectorAll('table'), function (t) {
-      if (t.getAttribute('data-dibfix') === '1') return;
-      var tr0 = t.querySelector('tr');
-      if (!tr0) return;
-      var cab = Array.prototype.map.call(tr0.children, function (c) {
-        return (c.innerText || '').trim().toLowerCase();
-      });
-      var n = 0;
-      if (cab[0] === 'trap' && cab[1] === 'galgo') n = 2;      // Planilha de Projecao
-      else if (cab[0] === 'avb') n = 1;                         // Planilha de AVB
-      if (n && travar(t, n)) t.setAttribute('data-dibfix', '1');
-    });
-  }
-  [0, 250, 700, 1500, 3000].forEach(function (ms) { setTimeout(aplicar, ms); });
-  try {
-    var obs = new win.MutationObserver(function () { aplicar(); });
-    obs.observe(doc.body, {childList: true, subtree: true});
-    setTimeout(function () { obs.disconnect(); }, 20000);
-  } catch (e) {}
-})();
-</script>"""
-
-
-def fixar_colunas():
-    """Trava (sticky) Trap+Galgo na Planilha de Projeção e AvB na Planilha de AVB ao rolar para o lado."""
-    components.html(_JS_TRAVAR + f"<!-- {time.time()} -->", height=0)
-
-
 def analisar(c, classe_in, dist_in, pp_in):
     p = preparar(c["id"], c["data"], c, classe_in, dist_in, pp_in)
     if not p:
@@ -984,7 +915,6 @@ def analisar(c, classe_in, dist_in, pp_in):
         texto_gerado = gerar_texto_analise(c, p)
         botao_copiar(texto_gerado)  # Chama o botão JS
         st.text_area("Se o botão acima não funcionar, copie o texto aqui:", texto_gerado, height=200)
-    fixar_colunas()
 
 
 # ---------------------------------------------------------------- aba Form
