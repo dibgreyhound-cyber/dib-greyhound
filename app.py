@@ -138,7 +138,7 @@ def botao_copiar(texto):
     .copy-btn:active {{ background-color: #cc0000; }}
     </style>
     </head>
-    <body>
+    <body style="background-color: transparent; margin: 0; padding: 0;">
     <button class="copy-btn" id="copyBtn">📋 Copiar Análise para o Chat</button>
     <script>
     const textToCopy = {texto_js};
@@ -477,23 +477,21 @@ def grafico_predictor(ds):
     """Uma barra por galgo (na ordem das traps). Tamanho = Overall / maior Overall; o maior Overall enche a barra."""
     com = [d for d in ds if not d.get("nd") and d.get("overall") is not None]
     if not com:
-        return ""
+        return
+    
     mx = max(d["overall"] for d in com)
 
     def get_dog_svg(trap):
-        # Path do cachorro (FontAwesome Dog) - Desenhado correndo para a direita
         dog_path = "M309.6 158.5L332.7 19.8C334.6 8.4 344.5 0 356.1 0c7.5 0 14.5 3.5 19 9.5L392 32h52.1c12.7 0 24.9 5.1 33.9 14.1L496 64h56c13.3 0 24 10.7 24 24v24c0 44.2-35.8 80-80 80H464 448 426.7l-5.1 30.5-112-64zM416 256.1L416 480c0 17.7-14.3 32-32 32H352c-17.7 0-32-14.3-32-32V384H256v96c0 17.7-14.3 32-32 32H192c-17.7 0-32-14.3-32-32V256.1L69.7 284.1c-8.2 2.1-16.5-2.8-18.6-11L47.4 262.4c-2.1-8.2 2.8-16.5 11-18.6l126.7-32.8c8.2-2.1 16.5 2.8 18.6 11l3.7 10.7 80.3-20.8v-6.4c0-17.7 14.3-32 32-32h11.2c17 0 33.1 4.5 47.4 12.9L416 256.1z"
 
-        # Definição das cores da jaqueta de acordo com a trap
         if trap == 1: saddle, stroke = "#c62828", "#000"
         elif trap == 2: saddle, stroke = "#1d4ed8", "#000"
         elif trap == 3: saddle, stroke = "#eeeeee", "#000"
-        elif trap == 4: saddle, stroke = "#151515", "#fff" # Borda branca para destacar do corpo preto
+        elif trap == 4: saddle, stroke = "#151515", "#fff"
         elif trap == 5: saddle, stroke = "#f26b21", "#000"
         elif trap == 6: saddle, stroke = f"url(#stripes-{trap})", "#000"
         else: saddle, stroke = "#888888", "#000"
 
-        # Padrão listrado para a Trap 6 (id único por trap para evitar conflito)
         padrao_6 = f"""
         <pattern id="stripes-{trap}" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
             <rect width="10" height="10" fill="#fff"/>
@@ -501,7 +499,6 @@ def grafico_predictor(ds):
         </pattern>
         """
 
-        # O clip-path recorta o retângulo colorido no exato formato do corpo do cachorro
         return f"""
         <svg viewBox="0 0 576 512" width="34" height="34" style="position:absolute; right: -17px; top: 50%; transform: translateY(-50%) scaleX(-1); filter: drop-shadow(0px 0px 2px rgba(0,0,0,0.8)); z-index: 10;">
             <defs>
@@ -510,9 +507,7 @@ def grafico_predictor(ds):
                 </clipPath>
                 {padrao_6 if trap == 6 else ''}
             </defs>
-            <!-- Corpo do Cachorro -->
             <path d="{dog_path}" fill="#111" stroke="#fff" stroke-width="12"/>
-            <!-- Jaqueta Colorida -->
             <g clip-path="url(#dog-clip-{trap})">
                 <rect x="150" y="120" width="220" height="150" fill="{saddle}" stroke="{stroke}" stroke-width="4"/>
             </g>
@@ -532,21 +527,23 @@ def grafico_predictor(ds):
             tip = f"{d['name']} · Overall {d['overall']:.1f}"
             svg_atual = get_dog_svg(t)
             
-            # position:absolute; left:0 faz a barra crescer da esquerda para a direita
             fill_html = (f"<div title=\"{tip}\" style='position:absolute; left:0; width:{w:.1f}%; height:100%; "
                          f"border-radius:12px; {estilo}'>"
                          f"{svg_atual}</div>")
             
-        # margin-right:18px garante que o cachorro não seja cortado no final do painel
         linhas.append(f"<div style='display:flex;align-items:center;gap:8px;margin:8px 0'>{badge(t)}"
                       f"<div style='flex:1;height:24px;background:#0a2a52;border-radius:12px;position:relative;margin-right:18px;'>"
                       f"{fill_html}</div></div>")
                       
-    return ("<div style='background:#1e3a5f;border-radius:16px;padding:16px 12px 8px;max-width:640px;margin:8px 0;"
+    html = ("<html><head><style>body { background-color: transparent; margin: 0; padding: 0; font-family: sans-serif; }</style></head><body>"
+            "<div style='background:#1e3a5f;border-radius:16px;padding:16px 12px 8px;max-width:640px;margin:8px 0;"
             "position:relative; box-shadow: 0 4px 10px rgba(0,0,0,0.3)'>"
             "<div style='position:absolute;top:-1px;left:10px;background:#d32f2f;color:#fff;font-weight:700;"
             "font-size:13px;padding:3px 14px;border-radius:0 0 12px 12px;z-index:20'>Predictor</div>"
-            "<div style='height:10px'></div>" + "".join(linhas) + "</div>")
+            "<div style='height:10px'></div>" + "".join(linhas) + "</div></body></html>")
+            
+    # Renderiza o HTML em um iframe isolado para não ser corrompido pelo markdown
+    components.html(html, height=280)
 
 
 # ---------------------------------------------------------------- analise
@@ -711,17 +708,19 @@ def analisar(c, classe_in, dist_in, pp_in):
     st.markdown(titulo_corrida(c, p))
     st.markdown("#### Planilha de Projeção")
     st.markdown(dib.tabela_projecao(p["ds"]), unsafe_allow_html=True)
-    st.markdown(grafico_predictor(p["ds"]), unsafe_allow_html=True)
+    
+    # CHAMADA ALTERADA AQUI: Não usa mais st.markdown
+    grafico_predictor(p["ds"])
+    
     st.markdown(titulo_corrida(c, p))
     dib.tabela_avb(p["s1"], "1ª Planilha — AVB Principal (Prob ≥ 60%)")
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
         
-    # BOTÃO DE EXPORTAR COM CÓPIA AUTOMÁTICA
     st.markdown("---")
     with st.expander("📋 Exportar Análise (Copiar e Colar para o Chat)"):
         texto_gerado = gerar_texto_analise(c, p)
-        botao_copiar(texto_gerado) # Chama o botão JS
+        botao_copiar(texto_gerado)
         st.text_area("Se o botão acima não funcionar, copie o texto aqui:", texto_gerado, height=200)
 
 
