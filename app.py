@@ -661,7 +661,8 @@ def buscar_post_pick(race_id, data_str):
     """Tenta varias respostas do site ate achar o Post Pick. Devolve ('1-2-5', diagnostico)."""
     diag = []
     urls = [f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks={b}"
-            for b in ("card", "header%2Ccard", "header", "card%2Ctips", "tips", "form")]
+            for b in ("card", "header%2Ccard", "card-header", "card-title",
+                      "card-pager%2Ccard-header%2Ccard-tabs%2Ccard-title%2Ccard", "form")]
     urls.append(f"{BASE}/meeting/blocks.sd?r_date={data_str}&blocks=header%2Clist")
     urls.append(f"{BASE}/meeting/blocks.sd?r_date={data_str}&blocks=list")
     for u in urls:
@@ -851,18 +852,49 @@ def gerar_texto_analise(c, p):
     return "\n".join(txt)
 
 
+def badge_g(t):
+    """Número da trap em tamanho maior (cabeçalho da corrida)."""
+    return (badge(t).replace("min-width:24px;height:24px;line-height:24px", "min-width:30px;height:30px;line-height:30px")
+            .replace("font-size:14px", "font-size:17px"))
+
+
+def cabecalho_corrida(c, p):
+    """Cabeçalho: pista/hora, chips (Race, classe, distância), Classificação geral e Post Pick do site."""
+    borda = "border:1px solid rgba(128,128,128,.35);"
+    titulo = ""
+    if c.get("hora"):
+        titulo = (f"<div style='font-size:1.7rem;font-weight:700;line-height:1.25;margin:4px 0 12px'>"
+                  f"{c['pista']} {c['hora']} (BR {hora_br(c['hora'])})</div>")
+    num = str(c.get("num") or "").strip()
+    chips = [f"Race {num}" if num else "", p["classe"], f"{int(p['dist'])}m"]
+    chips_html = "".join(
+        f"<span style='display:inline-block;{borda}background:rgba(128,128,128,.12);border-radius:999px;"
+        f"padding:5px 14px;margin:0 8px 8px 0;font-size:1rem'>{x}</span>" for x in chips if x)
+    sep = "<span style='opacity:.6'>–</span>"
+    ordem = sep.join(badge_g(d["trap"]) for d in p["rank"])
+    pp_nums = re.findall(r"[1-6]", p["pp"] or "")
+    pp_html = ("<span style='opacity:.6'>-</span>" if not pp_nums
+               else "<span style='opacity:.6;margin:0 3px'>-</span>".join(badge_g(n) for n in pp_nums))
+    return (titulo + f"<div>{chips_html}</div>"
+            "<div style='font-size:1.3rem;font-weight:700;margin:10px 0 8px'>Classificação geral</div>"
+            f"<div style='{borda}background:rgba(128,128,128,.08);border-radius:10px;padding:12px 14px'>"
+            f"<div style='display:flex;flex-wrap:wrap;align-items:center;gap:8px'>{ordem}</div>"
+            f"<div style='margin:10px 0 0 10px;font-size:1rem'><span style='opacity:.8'>Post Pick do site:</span> {pp_html}</div>"
+            "</div>")
+
+
 def analisar(c, classe_in, dist_in, pp_in):
     p = preparar(c["id"], c["data"], c, classe_in, dist_in, pp_in)
     if not p:
         return
-    st.markdown(titulo_corrida(c, p))
+    st.markdown(cabecalho_corrida(c, p), unsafe_allow_html=True)
     st.markdown("#### Planilha de Projeção")
     st.markdown(dib.tabela_projecao(p["ds"]), unsafe_allow_html=True)
     st.markdown(grafico_predictor(p["ds"]), unsafe_allow_html=True)
     st.markdown(titulo_corrida(c, p))
     if not p["pp"]:
         st.caption("Post Pick não encontrado automaticamente. Você pode digitar em ⚙️ Ajustes (ex: 1-2-5).")
-        with st.expander("🔎 Diagnóstico do Post Pick (copie e cole no chat)"):
+        with st.expander("🔎 Diagnóstico do Post Pick (copie e cole no chat)", expanded=True):
             diag = buscar_post_pick(c["id"], c["data"])[1]
             linhas = [f"corrida {c['id']} {c['data']}"]
             for d_ in diag:
