@@ -35,7 +35,7 @@ DICIONARIO_REMARKS = {
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
-    "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
+    "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10}, # Mantido para compatibilidade
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
     "TRAP_VAZIA": 5.0, 
     "TRAFEGO_SEVERO": -8.0,
@@ -125,21 +125,27 @@ def parts_of(rem):
 def count_traf(rem):
     return sum(1 for p in parts_of(rem) if RE_TRAF.search(p))
 
+# =====================================================================
+# TADJ CIRÚRGICO (NOVA FUNÇÃO)
+# =====================================================================
 def traffic_penalty(rem, peso=31.0):
     s = str(rem or "").lower()
-    base_pen = 0.0
-    if "baulk" in s:
-        base_pen = CFG["TRAFFIC_ADJ"]["baulk"]
-    elif any(k in s for k in ("crd", "bmp", "fcd")):
-        base_pen = max(CFG["TRAFFIC_ADJ"][k] for k in ("crd", "bmp", "fcd") if k in s)
-    else:
-        base_pen = 0.0
-
-    if base_pen == 0: return 0.0
+    pen = 0.0
+    
+    graves = sum(s.count(k) for k in ("baulk", "fell", "ko", "msdbrk"))
+    if graves > 0: pen += graves * 0.30
+    
+    moderados = sum(s.count(k) for k in ("bmp", "crd", "fcd", "crmp"))
+    if moderados > 0: pen += moderados * 0.15
+    
+    pen = min(pen, 0.50)
+    if pen == 0: return 0.0
+    
     if peso > 30.0: fator = 0.8
     elif peso < 28.0: fator = 1.2
     else: fator = 1.0
-    return base_pen * fator
+    
+    return pen * fator
 
 def not_free(rem):
     return bool(RE_NOFREE.search(str(rem or "").lower()))
@@ -359,8 +365,9 @@ def analisar_galgo(dog, ctx):
     else:
         d["ritmo"] = d["mtime"]
 
+    # CÁLCULO DO TADJ CORRIGIDO (Sem bug de distância)
     peso_atual = d["peso"] or 31.0
-    adj_times = [r["caltm"] - (traffic_penalty(r["remarks"], peso_atual) + ((r["dist"] - 300) / 1000.0 if traffic_penalty(r["remarks"], peso_atual) > 0 else 0.0)) for r in R]
+    adj_times = [r["caltm"] - traffic_penalty(r["remarks"], peso_atual) for r in R]
     d["tadj"] = float(np.mean(adj_times)) if adj_times else None
 
     cal = [r["caltm"] for r in R]
@@ -423,7 +430,7 @@ def finalizar(ds, ctx):
         if d["saw_cnt"] > 0:
             f.append(("Largada Lenta", d["saw_cnt"] * -4.0)) 
         if d["fbt_cnt"] > 0:
-            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -2.0)) # Ajuste 1: reduzido de -4.0 para -2.0
+            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -2.0))
         if any(abs(d["trap"] - v) == 1 for v in vac):
             f.append(("Trap Vazia", CFG["TRAP_VAZIA"]))
         if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
@@ -443,62 +450,64 @@ def finalizar(ds, ctx):
         d["elegivel"] = not d["bloqueado"]
     return ok, top3_ms
 
+# =====================================================================
+# MATEMÁTICA LOGÍSTICA (SUBSTITUI O CÁLCULO LINEAR)
+# =====================================================================
 def calc_prob(V, D, rank, ctx):
-    prob = 50.0
     if V.get("tadj") is None or D.get("tadj") is None: return 50.0
 
-    diff_tadj = D["tadj"] - V["tadj"]
-    pts_vel = (diff_tadj / 0.10) * 5.0
-    pts_vel = max(-25.0, min(25.0, pts_vel))
-    prob += pts_vel
+    score_v = 0.0
+    score_d = 0.0
 
+    # Tempo Ajustado (Tadj) - O fator mais importante (Multiplicador alto)
+    score_v += (30.0 - V["tadj"]) * 25.0
+    score_d += (30.0 - D["tadj"]) * 25.0
+
+    # Split (Largada) - Peso médio
     if V.get("msplit") and D.get("msplit"):
-        diff_split = D["msplit"] - V["msplit"]
-        pts_split = (diff_split / 0.05) * 4.0
-        pts_split = max(-20.0, min(20.0, pts_split))
-        prob += pts_split
-    elif V.get("msplit_pos") and D.get("msplit_pos"):
-        diff_pos = D["msplit_pos"] - V["msplit_pos"]
-        pts_split = diff_pos * 5.0
-        pts_split = max(-20.0, min(20.0, pts_split))
-        prob += pts_split
+        score_v += (6.0 - V["msplit"]) * 15.0
+        score_d += (6.0 - D["msplit"]) * 15.0
 
+    # Recuperação - Ajuste 3: peso menor
     if V.get("rec") is not None and D.get("rec") is not None:
-        diff_rec = V["rec"] - D["rec"]
-        pts_rec = (diff_rec * 0.1) # Ajuste 3: reduzido de 0.2 para 0.1
-        pts_rec = max(-10.0, min(10.0, pts_rec))
-        prob += pts_rec
+        score_v += V["rec"] * 0.1
+        score_d += D["rec"] * 0.1
 
-    val_perfil = {"Limpo": 0, "Irregular": 1, "Trombador": 2}
-    diff_perfil = val_perfil.get(D["perfil"], 1) - val_perfil.get(V["perfil"], 1)
-    prob += (diff_perfil * 2.5)
+    # Perfil (Limpo +1, Irregular 0, Trombador -1)
+    val_perfil = {"Limpo": 1.0, "Irregular": 0.0, "Trombador": -1.0}
+    score_v += val_perfil.get(V["perfil"], 0.0)
+    score_d += val_perfil.get(D["perfil"], 0.0)
 
+    # Peso (Física)
     peso_v = V.get("peso") or 31.0
     peso_d = D.get("peso") or 31.0
-    diff_peso = peso_v - peso_d
-    pts_peso = diff_peso * 1.5
-    pts_peso = max(-5.0, min(5.0, pts_peso))
-    prob += pts_peso
+    score_v += peso_v * 0.1
+    score_d += peso_d * 0.1
 
-    top3_ms = ctx.get("top3_ms", set())
-    top3_ritmo = ctx.get("top3_ritmo", set())
-    epfs = [d for d in rank if d["name"] in top3_ms]
-
-    if V["name"] in top3_ms:
-        if D["name"] in top3_ms: prob -= 3.0 
-        else: prob -= 5.0 
-    elif D["name"] in top3_ms: prob += 5.0 
-
-    if V["name"] in top3_ritmo and V["name"] not in top3_ms:
-        if len(epfs) >= 2: prob += 5.0 
-
+    # Trap / Post Pick
     pp = str(ctx.get("post_pick") or "")
-    if pp and str(V["trap"]) in pp: prob += 2.0
-    if V["trap"] in [1,2,3] and D["trap"] in [4,5,6]: prob += 2.0
-    if any(abs(V["trap"] - v) == 1 for v in ctx["vazias"]): prob += 1.5
-    if any(abs(D["trap"] - v) == 1 for v in ctx["vazias"]): prob -= 1.5
+    if pp and str(V["trap"]) in pp: score_v += 0.5
+    if pp and str(D["trap"]) in pp: score_d += 0.5
+    if V["trap"] in [1,2,3] and D["trap"] in [4,5,6]: score_v += 0.5
+    if V["trap"] in [4,5,6] and D["trap"] in [1,2,3]: score_d += 0.5
 
-    return max(25.0, min(75.0, prob))
+    # Top 3 Pace
+    if V["name"] in ctx.get("top3_ms", set()): score_v += 0.5
+    if D["name"] in ctx.get("top3_ms", set()): score_d += 0.5
+    if V["name"] in ctx.get("top3_ritmo", set()): score_v += 0.5
+    if D["name"] in ctx.get("top3_ritmo", set()): score_d += 0.5
+
+    # Diferencial de Força
+    diff = score_v - score_d
+
+    # Função Logística (Sigmoide)
+    try:
+        prob = 100.0 / (1.0 + math.exp(-0.15 * diff))
+    except OverflowError:
+        prob = 100.0 if diff > 0 else 0.0
+
+    # Retorna entre 10% e 90%
+    return max(10.0, min(90.0, prob))
 
 def montar_avbs(rank, ctx):
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 40.0]
