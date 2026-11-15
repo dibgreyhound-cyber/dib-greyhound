@@ -31,11 +31,11 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 4.5 - Calibrado para o Ciclo 3)
+# CONFIGURAÇÃO GLOBAL (DIB 5.0 - Calibrado para o Ciclo 3)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
-    "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10}, # Mantido para compatibilidade
+    "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
     "TRAP_VAZIA": 5.0, 
     "TRAFEGO_SEVERO": -8.0,
@@ -126,7 +126,7 @@ def count_traf(rem):
     return sum(1 for p in parts_of(rem) if RE_TRAF.search(p))
 
 # =====================================================================
-# TADJ CIRÚRGICO (NOVA FUNÇÃO)
+# TADJ CIRÚRGICO
 # =====================================================================
 def traffic_penalty(rem, peso=31.0):
     s = str(rem or "").lower()
@@ -306,11 +306,9 @@ def extrair_dados_racingpost(url):
 
 def oficial(r, ctx):
     g = str(r["grade"] or "").strip().upper()
-    # Exclui HP (Handicap - largada desalinhada) e corridas sem classe
     if not g or g.startswith("HP"):
         return False
         
-    # Exige mesma distância (com margem de 1m) e tempo válido
     return (r["dist"] is not None
             and abs(r["dist"] - ctx["dist"]) < 1
             and r["caltm"] is not None and r["caltm"] > 0)
@@ -365,7 +363,7 @@ def analisar_galgo(dog, ctx):
     else:
         d["ritmo"] = d["mtime"]
 
-    # CÁLCULO DO TADJ CORRIGIDO (Sem bug de distância)
+    # CÁLCULO DO TADJ (Cirúrgico)
     peso_atual = d["peso"] or 31.0
     adj_times = [r["caltm"] - traffic_penalty(r["remarks"], peso_atual) for r in R]
     d["tadj"] = float(np.mean(adj_times)) if adj_times else None
@@ -451,7 +449,7 @@ def finalizar(ds, ctx):
     return ok, top3_ms
 
 # =====================================================================
-# MATEMÁTICA LOGÍSTICA (SUBSTITUI O CÁLCULO LINEAR)
+# MATEMÁTICA LOGÍSTICA (SIGMOIDE)
 # =====================================================================
 def calc_prob(V, D, rank, ctx):
     if V.get("tadj") is None or D.get("tadj") is None: return 50.0
@@ -459,54 +457,44 @@ def calc_prob(V, D, rank, ctx):
     score_v = 0.0
     score_d = 0.0
 
-    # Tempo Ajustado (Tadj) - O fator mais importante (Multiplicador alto)
     score_v += (30.0 - V["tadj"]) * 25.0
     score_d += (30.0 - D["tadj"]) * 25.0
 
-    # Split (Largada) - Peso médio
     if V.get("msplit") and D.get("msplit"):
         score_v += (6.0 - V["msplit"]) * 15.0
         score_d += (6.0 - D["msplit"]) * 15.0
 
-    # Recuperação - Ajuste 3: peso menor
     if V.get("rec") is not None and D.get("rec") is not None:
         score_v += V["rec"] * 0.1
         score_d += D["rec"] * 0.1
 
-    # Perfil (Limpo +1, Irregular 0, Trombador -1)
     val_perfil = {"Limpo": 1.0, "Irregular": 0.0, "Trombador": -1.0}
     score_v += val_perfil.get(V["perfil"], 0.0)
     score_d += val_perfil.get(D["perfil"], 0.0)
 
-    # Peso (Física)
     peso_v = V.get("peso") or 31.0
     peso_d = D.get("peso") or 31.0
     score_v += peso_v * 0.1
     score_d += peso_d * 0.1
 
-    # Trap / Post Pick
     pp = str(ctx.get("post_pick") or "")
     if pp and str(V["trap"]) in pp: score_v += 0.5
     if pp and str(D["trap"]) in pp: score_d += 0.5
     if V["trap"] in [1,2,3] and D["trap"] in [4,5,6]: score_v += 0.5
     if V["trap"] in [4,5,6] and D["trap"] in [1,2,3]: score_d += 0.5
 
-    # Top 3 Pace
     if V["name"] in ctx.get("top3_ms", set()): score_v += 0.5
     if D["name"] in ctx.get("top3_ms", set()): score_d += 0.5
     if V["name"] in ctx.get("top3_ritmo", set()): score_v += 0.5
     if D["name"] in ctx.get("top3_ritmo", set()): score_d += 0.5
 
-    # Diferencial de Força
     diff = score_v - score_d
 
-    # Função Logística (Sigmoide)
     try:
         prob = 100.0 / (1.0 + math.exp(-0.15 * diff))
     except OverflowError:
         prob = 100.0 if diff > 0 else 0.0
 
-    # Retorna entre 10% e 90%
     return max(10.0, min(90.0, prob))
 
 def montar_avbs(rank, ctx):
@@ -658,76 +646,67 @@ def tabela_avb(lista, titulo):
     heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Ritmo", "Recup.", "Conf.", "Probabilidade"]
     st.markdown(tbl(heads, rows), unsafe_allow_html=True)
 
+# =====================================================================
+# LEITURA TÁTICA (CENÁRIO DA CORRIDA)
+# =====================================================================
 def gerar_observacoes(rank, avbs, ctx):
     if not rank: return
     st.markdown("---")
-    st.markdown("#### 🏁 O Cenário da Corrida")
+    st.markdown("#### 🏁 Leitura Tática da Corrida")
 
     elegiveis = [d for d in rank if not d.get("bloqueado")]
     bloqueados = [d for d in rank if d.get("bloqueado")]
     alvos = [d for d in rank if d.get("alvo")]
 
-    top_ritmo = min([d for d in rank if d.get("ritmo") is not None], key=lambda x: x["ritmo"], default=None)
-    top_split = min([d for d in rank if d.get("msplit") is not None], key=lambda x: x["msplit"], default=None) if any(d.get("msplit") for d in rank) else None
+    if not elegiveis: 
+        st.warning("Todos os cães estão bloqueados ou sem dados suficientes para esta corrida.")
+        return
 
-    if elegiveis:
-        fav = elegiveis[0]
-        bloc_acima = [d for d in bloqueados if d["pos"] < fav["pos"]]
-        if bloc_acima:
-            b_trap = TRAP_EMOJI.get(bloc_acima[0]['trap'], str(bloc_acima[0]['trap']))
-            f_trap = TRAP_EMOJI.get(fav['trap'], str(fav['trap']))
-            st.markdown(f"- **🏆 Melhor Elegível:** O favorito absoluto ({b_trap}) está bloqueado 🚫. O cão mais seguro para vitória é o **{f_trap}** (Posição {fav['pos']} | Recup: {fav['rec']:+.1f}%).")
-        else:
-            f_trap = TRAP_EMOJI.get(fav['trap'], str(fav['trap']))
-            txt_rec = f" Ele tem recuperação excelente ({fav['rec']:+.1f}%)." if fav['rec'] > 10 else ""
-            st.markdown(f"- **🏆 Favorito Claro:** O **{f_trap}** domina o Overall ({fav['overall']:.1f}).{txt_rec}")
+    fav = elegiveis[0]
+    insights = []
 
-    if bloqueados:
-        b = bloqueados[0]
-        b_trap = TRAP_EMOJI.get(b['trap'], str(b['trap']))
-        avb_info = ""
-        if elegiveis:
-            for V, D, prob, star in avbs:
-                if (V["trap"] == elegiveis[0]["trap"] and D["trap"] == b["trap"]) or (D["trap"] == elegiveis[0]["trap"] and V["trap"] == b["trap"]):
-                    avb_info = f" O AVB entre eles é apertado ({prob:.1f}%)."
-                    break
-        st.markdown(f"- **🚫 Falso Favorito Bloqueado:** O **{b_trap}** tem Overall alto ({b['overall']:.1f}), mas foi pego pela Trava (Conf. {b['conf']:.0f}%).{avb_info}")
+    # 1. O Favorito é Seguro ou uma Armadilha?
+    if fav["perfil"] == "Trombador":
+        insights.append(f"**⚠️ Favorito de Risco:** O **{TRAP_EMOJI.get(fav['trap'])} {fav['name']}** domina o Overall ({fav['overall']:.1f}), mas é um **Trombador**. Na trap {fav['trap']}, há um alto risco de ele se perder na 1ª curva e derrubar a odd baixa.")
+    elif fav["perfil"] == "Limpo" and fav["rec"] > 10:
+        insights.append(f"**🏆 Favorito Sólido:** O **{TRAP_EMOJI.get(fav['trap'])} {fav['name']}** ({fav['overall']:.1f}) é Limpo e tem recuperação excelente ({fav['rec']:+.1f}%). É o cão mais seguro da prova para vitória ou pódio.")
 
-    if alvos:
-        nomes_alvo = ", ".join([TRAP_EMOJI.get(d['trap'], str(d['trap'])) for d in alvos])
-        st.markdown(f"- **🎯 Alvo(s):** O(s) cão(es) **{nomes_alvo}** foram marcados como alvo (fora do Top 3 largada e recuperação ≤ 0%). Vulneráveis no bolo.")
+    # 2. A Zebra do Sistema (Top Tadj fora do Top 3)
+    tadj_rank = sorted([d for d in elegiveis if d.get("tadj")], key=lambda x: x["tadj"])
+    if len(tadj_rank) >= 3:
+        top3_tadj_names = {d["name"] for d in tadj_rank[:3]}
+        zebras = [d for d in elegiveis if d["pos"] >= 4 and d["name"] in top3_tadj_names]
+        if zebras:
+            z = zebras[0]
+            insights.append(f"**🦓 Zebra de Valor:** O **{TRAP_EMOJI.get(z['trap'])} {z['name']}** está em {z['pos']}º no Overall, mas tem o **{z['tadj']:.2f}** de Tadj (Top 3 da corrida). Se a odd dele estiver alta, é uma aposta de valor real.")
 
-    all_splits = [d["msplit"] for d in rank if d.get("msplit") is not None]
-    is_irish_metric = all(s < 2.0 for s in all_splits) if all_splits else False
-
-    if top_split and top_split["msplit"] < 5.0 and not is_irish_metric:
-        s_trap = TRAP_EMOJI.get(top_split['trap'], str(top_split['trap']))
-        st.markdown(f"- **⚠️ Alerta de Dados:** O **{s_trap}** aparece com Split muito rápido ({top_split['msplit']:.2f}). Pode ser erro de digitação da base, mas ele foi considerado o 'Melhor Pace'.")
-    elif top_ritmo and top_split and top_ritmo["trap"] != top_split["trap"]:
-        s_trap = TRAP_EMOJI.get(top_split['trap'], str(top_split['trap']))
-        r_trap = TRAP_EMOJI.get(top_ritmo['trap'], str(top_ritmo['trap']))
-        st.markdown(f"- **💡 Análise de Pace:** O **{s_trap}** tem a melhor largada (Split), mas o **{r_trap}** tem o melhor ritmo final.")
-
-        if top_split["pos"] > 3:
-            st.markdown(f"- **🦓 Alerta de Zebra:** O **{s_trap}** (Posição {top_split['pos']}) tem o melhor Early Pace da corrida. Se ele não for atrapalhado, pode ditar o ritmo e surpreender os favoritos.")
-
-    elif not top_split and top_ritmo:
-        top_split_pos = min([d for d in rank if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"], default=None)
-        if top_split_pos and top_ritmo["trap"] != top_split_pos["trap"]:
-             s_trap = TRAP_EMOJI.get(top_split_pos['trap'], str(top_split_pos['trap']))
-             r_trap = TRAP_EMOJI.get(top_ritmo['trap'], str(top_ritmo['trap']))
-             st.markdown(f"- **💡 Análise de Pace:** O **{s_trap}** assume a liderança na 1ª curva, mas o **{r_trap}** tem o melhor ritmo de prova final.")
-
-    pior_rec = min([d for d in rank if d.get("rec") is not None], key=lambda x: x["rec"], default=None)
-    if pior_rec and pior_rec["rec"] < -10.0:
-        rec_trap = TRAP_EMOJI.get(pior_rec['trap'], str(pior_rec['trap']))
-        st.markdown(f"- **⚠️ Alerta de Tráfego:** O **{rec_trap}** tem uma recuperação média ruim ({pior_rec['rec']:+.1f}%). Pode perder posições na reta.")
-
-    dropping_class = [d for d in rank if d.get("cat_mod", 0) > 0]
-    if dropping_class:
-        nomes = ", ".join([TRAP_EMOJI.get(d['trap'], str(d['trap'])) for d in dropping_class])
-        st.markdown(f"- **📉 Queda de Classe:** O(s) cão(es) {nomes} desceu(ram) de categoria e corre(m) contra rivais mais fracos hoje.")
-
+    # 3. Conflito de Pace (Trombada na Curva)
     top3_ms = ctx.get("top3_ms", set())
     if len(top3_ms) >= 3:
-        st.markdown("- **Atenção (Conflito de Pace):** Múltiplos cães com largada rápida (Top 3 Split). Risco de trombada na 1ª curva.")
+        t3m = [d for d in rank if d["name"] in top3_ms]
+        traps_ms = [d["trap"] for d in t3m]
+        if all(t in [1,2,3] for t in traps_ms):
+            insights.append(f"**💥 Alerta de Trombada:** Os 3 melhores splits estão nas traps internas ({', '.join(map(str, traps_ms))}). A briga pelo trilho na 1ª curva será intensa. Isso pode abrir a pista para quem vem de fora (T5 ou T6).")
+        else:
+            insights.append(f"**🏎️ Quebra de Ritmo:** Temos {len(top3_ms)} cães com largada forte (Top 3 Split). Se eles brigarem pela ponta, quem tiver o melhor ritmo final (reta) vai passar por cima no final.")
+
+    # 4. Geometria da Pista (Traps Vazias)
+    vazias = ctx.get("vazias", [])
+    if 6 in vazias:
+        c5 = next((d for d in rank if d['trap'] == 5), None)
+        if c5:
+            insights.append(f"**🛣️ Pista Livre (Trap 6 Vazia):** O **{TRAP_EMOJI.get(5)} {c5['name']}** tem o corredor de fora totalmente livre. Se ele for um cão que corre largo (Wide), isso é uma vantagem geométrica enorme.")
+    elif 1 in vazias:
+        c2 = next((d for d in rank if d['trap'] == 2), None)
+        if c2:
+            insights.append(f"**🛣️ Pista Livre (Trap 1 Vazia):** O **{TRAP_EMOJI.get(2)} {c2['name']}** herda a linha do trilho (Rail) sem trânsito por dentro. Cães que gostam de correr por dentro são muito favorecidos aqui.")
+
+    # 5. O Falso Favorito Bloqueado (Dados Insuficientes)
+    if bloqueados:
+        b = bloqueados[0]
+        if b["overall"] > fav["overall"]:
+            insights.append(f"**🚫 Falso Favorito Bloqueado:** O **{TRAP_EMOJI.get(b['trap'])} {b['name']}** tem o maior Overall bruto da pista ({b['overall']:.1f}), mas está bloqueado (Conf. {b['conf']:.0f}%). O histórico dele na distância exata é curto ou ruim demais. Não caia na armadilha.")
+
+    # Renderiza no máximo os 4 insights mais importantes (evita poluição visual)
+    for ins in insights[:4]:
+        st.markdown(f"- {ins}")
