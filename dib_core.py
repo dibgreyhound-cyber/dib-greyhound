@@ -126,7 +126,7 @@ def count_traf(rem):
     return sum(1 for p in parts_of(rem) if RE_TRAF.search(p))
 
 # =====================================================================
-# TADJ CIRÚRGICO
+# TADJ CIRÚRGICO (PENALIDADES ACUMULATIVAS E PESO)
 # =====================================================================
 def traffic_penalty(rem, peso=31.0):
     s = str(rem or "").lower()
@@ -363,7 +363,6 @@ def analisar_galgo(dog, ctx):
     else:
         d["ritmo"] = d["mtime"]
 
-    # CÁLCULO DO TADJ (Cirúrgico)
     peso_atual = d["peso"] or 31.0
     adj_times = [r["caltm"] - traffic_penalty(r["remarks"], peso_atual) for r in R]
     d["tadj"] = float(np.mean(adj_times)) if adj_times else None
@@ -647,7 +646,7 @@ def tabela_avb(lista, titulo):
     st.markdown(tbl(heads, rows), unsafe_allow_html=True)
 
 # =====================================================================
-# LEITURA TÁTICA (CENÁRIO DA CORRIDA)
+# LEITURA TÁTICA (CENÁRIO DA CORRIDA DINÂMICO)
 # =====================================================================
 def gerar_observacoes(rank, avbs, ctx):
     if not rank: return
@@ -656,7 +655,6 @@ def gerar_observacoes(rank, avbs, ctx):
 
     elegiveis = [d for d in rank if not d.get("bloqueado")]
     bloqueados = [d for d in rank if d.get("bloqueado")]
-    alvos = [d for d in rank if d.get("alvo")]
 
     if not elegiveis: 
         st.warning("Todos os cães estão bloqueados ou sem dados suficientes para esta corrida.")
@@ -665,48 +663,50 @@ def gerar_observacoes(rank, avbs, ctx):
     fav = elegiveis[0]
     insights = []
 
-    # 1. O Favorito é Seguro ou uma Armadilha?
-    if fav["perfil"] == "Trombador":
-        insights.append(f"**⚠️ Favorito de Risco:** O **{TRAP_EMOJI.get(fav['trap'])} {fav['name']}** domina o Overall ({fav['overall']:.1f}), mas é um **Trombador**. Na trap {fav['trap']}, há um alto risco de ele se perder na 1ª curva e derrubar a odd baixa.")
-    elif fav["perfil"] == "Limpo" and fav["rec"] > 10:
-        insights.append(f"**🏆 Favorito Sólido:** O **{TRAP_EMOJI.get(fav['trap'])} {fav['name']}** ({fav['overall']:.1f}) é Limpo e tem recuperação excelente ({fav['rec']:+.1f}%). É o cão mais seguro da prova para vitória ou pódio.")
+    # 1. Efeito Dominó na Trap (Risco do Favorito)
+    if fav["perfil"] == "Trombador" or fav["fbt_cnt"] > 0:
+        c_fora = next((d for d in elegiveis if d["trap"] >= 4 and d["pos"] > 2), None)
+        if c_fora:
+            insights.append(f"**💥 Efeito Dominó na Trap:** O favorito {TRAP_EMOJI.get(fav['trap'])} {fav['name']} é um Trombador na trap interna. Se ele travar na 1ª curva, ele leva os cães do meio junto. Isso abre espaço para o {TRAP_EMOJI.get(c_fora['trap'])} {c_fora['name']}.")
+        else:
+            insights.append(f"**⚠️ Favorito de Risco:** O {TRAP_EMOJI.get(fav['trap'])} {fav['name']} domina o Overall, mas tem histórico de tráfego. Se ele se envolver em confusão, pode perder a prova.")
 
-    # 2. A Zebra do Sistema (Top Tadj fora do Top 3)
+    # 2. Zebra de Valor
     tadj_rank = sorted([d for d in elegiveis if d.get("tadj")], key=lambda x: x["tadj"])
     if len(tadj_rank) >= 3:
         top3_tadj_names = {d["name"] for d in tadj_rank[:3]}
-        zebras = [d for d in elegiveis if d["pos"] >= 4 and d["name"] in top3_tadj_names]
+        zebras = [d for d in elegiveis if d["pos"] >= 3 and d["name"] in top3_tadj_names and d["name"] != fav["name"]]
         if zebras:
             z = zebras[0]
-            insights.append(f"**🦓 Zebra de Valor:** O **{TRAP_EMOJI.get(z['trap'])} {z['name']}** está em {z['pos']}º no Overall, mas tem o **{z['tadj']:.2f}** de Tadj (Top 3 da corrida). Se a odd dele estiver alta, é uma aposta de valor real.")
+            insights.append(f"**🦓 Zebra de Valor:** O {TRAP_EMOJI.get(z['trap'])} {z['name']} está em {z['pos']}º no Overall, mas tem o **{z['tadj']:.2f}** de Tadj (top 3 da corrida). O mercado pode não ter visto isso.")
 
-    # 3. Conflito de Pace (Trombada na Curva)
-    top3_ms = ctx.get("top3_ms", set())
-    if len(top3_ms) >= 3:
-        t3m = [d for d in rank if d["name"] in top3_ms]
-        traps_ms = [d["trap"] for d in t3m]
-        if all(t in [1,2,3] for t in traps_ms):
-            insights.append(f"**💥 Alerta de Trombada:** Os 3 melhores splits estão nas traps internas ({', '.join(map(str, traps_ms))}). A briga pelo trilho na 1ª curva será intensa. Isso pode abrir a pista para quem vem de fora (T5 ou T6).")
-        else:
-            insights.append(f"**🏎️ Quebra de Ritmo:** Temos {len(top3_ms)} cães com largada forte (Top 3 Split). Se eles brigarem pela ponta, quem tiver o melhor ritmo final (reta) vai passar por cima no final.")
-
-    # 4. Geometria da Pista (Traps Vazias)
+    # 3. Pista Livre (Trap Vazia)
     vazias = ctx.get("vazias", [])
-    if 6 in vazias:
-        c5 = next((d for d in rank if d['trap'] == 5), None)
-        if c5:
-            insights.append(f"**🛣️ Pista Livre (Trap 6 Vazia):** O **{TRAP_EMOJI.get(5)} {c5['name']}** tem o corredor de fora totalmente livre. Se ele for um cão que corre largo (Wide), isso é uma vantagem geométrica enorme.")
-    elif 1 in vazias:
-        c2 = next((d for d in rank if d['trap'] == 2), None)
-        if c2:
-            insights.append(f"**🛣️ Pista Livre (Trap 1 Vazia):** O **{TRAP_EMOJI.get(2)} {c2['name']}** herda a linha do trilho (Rail) sem trânsito por dentro. Cães que gostam de correr por dentro são muito favorecidos aqui.")
+    for v in vazias:
+        if v == 1:
+            c2 = next((d for d in rank if d['trap'] == 2), None)
+            if c2:
+                insights.append(f"**🛣️ Pista Livre (Trap 1 Vazia):** A trap 1 vazia significa que o {TRAP_EMOJI.get(2)} {c2['name']} vai herdar a linha do trilho. Dá uma olhada nele.")
+        elif v == 6:
+            c5 = next((d for d in rank if d['trap'] == 5), None)
+            if c5:
+                insights.append(f"**🛣️ Pista Livre (Trap 6 Vazia):** O {TRAP_EMOJI.get(5)} {c5['name']} tem a pista livre por fora. Se ele gosta de correr aberto, pode surpreender.")
 
-    # 5. O Falso Favorito Bloqueado (Dados Insuficientes)
+    # 4. Quebra de Ritmo
+    top_split = min([d for d in rank if d.get("msplit") is not None], key=lambda x: x["msplit"], default=None)
+    top_ritmo = min([d for d in rank if d.get("ritmo") is not None], key=lambda x: x["ritmo"], default=None)
+    if top_split and top_ritmo and top_split["name"] != top_ritmo["name"]:
+        insights.append(f"**🏎️ Quebra de Ritmo:** O {TRAP_EMOJI.get(top_split['trap'])} {top_split['name']} tem a largada mais forte. Se ele puxar o pace, quem tem o melhor ritmo final ({TRAP_EMOJI.get(top_ritmo['trap'])} {top_ritmo['name']}) vai passar por cima no final.")
+
+    # 5. Falso Favorito Bloqueado
     if bloqueados:
-        b = bloqueados[0]
+        b = max(bloqueados, key=lambda x: x["overall"])
         if b["overall"] > fav["overall"]:
-            insights.append(f"**🚫 Falso Favorito Bloqueado:** O **{TRAP_EMOJI.get(b['trap'])} {b['name']}** tem o maior Overall bruto da pista ({b['overall']:.1f}), mas está bloqueado (Conf. {b['conf']:.0f}%). O histórico dele na distância exata é curto ou ruim demais. Não caia na armadilha.")
+            insights.append(f"**🚫 Falso Favorito:** O {TRAP_EMOJI.get(b['trap'])} {b['name']} tem Overall de {b['overall']:.1f}, mas foi bloqueado (Conf. {b['conf']:.0f}%) por falta de histórico válido. Cuidado com as odds dele.")
 
-    # Renderiza no máximo os 4 insights mais importantes (evita poluição visual)
-    for ins in insights[:4]:
-        st.markdown(f"- {ins}")
+    # Se a corrida for muito limpa e não gerar insights, avisa.
+    if not insights:
+        st.markdown("- **Corrida sem grandes armadilhas táticas.** O favorito é sólido e não há conflitos de pace ou traps vazias relevantes.")
+    else:
+        for ins in insights[:4]: # Mostra até 4 insights táticos
+            st.markdown(f"- {ins}")
