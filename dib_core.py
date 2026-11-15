@@ -533,7 +533,7 @@ def montar_avbs(rank, ctx):
 def get_rank_html(val, rank, max_rank):
     if val is None or rank is None: return "-"
     sup = {1: "¹", 2: "²", 3: "³", 4: "⁴", 5: "⁵", 6: "⁶"}.get(rank, "")
-    color = "color:#00ff00;font-weight:bold" if rank == 1 else ("color:#ff4b4b" if rank == max_rank and max_rank > 1 else "")
+    color = "color:#12873a;font-weight:bold" if rank == 1 else ("color:#ff4b4b" if rank == max_rank and max_rank > 1 else "")
     return f"<span style='{color}'>{val:.2f}{sup}</span>"
 
 def tbl(headers, rows):
@@ -603,11 +603,11 @@ def tabela_avb(lista, titulo):
         if val_v <= val_d: v_str += f" ({diff:{p}}{suffix})"
         else: d_str += f" (+{abs(diff):{p}}{suffix})"
         if is_time:
-            if val_v < val_d: v_str, d_str = f"<span style='color:#00ff00;font-weight:bold'>{v_str}</span>", f"<span style='color:#ff4b4b'>{d_str}</span>"
-            elif val_v > val_d: v_str, d_str = f"<span style='color:#ff4b4b'>{v_str}</span>", f"<span style='color:#00ff00;font-weight:bold'>{d_str}</span>"
+            if val_v < val_d: v_str, d_str = f"<span style='color:#12873a;font-weight:bold'>{v_str}</span>", f"<span style='color:#ff4b4b'>{d_str}</span>"
+            elif val_v > val_d: v_str, d_str = f"<span style='color:#ff4b4b'>{v_str}</span>", f"<span style='color:#12873a;font-weight:bold'>{d_str}</span>"
         else:
-            if val_v > val_d: v_str, d_str = f"<span style='color:#00ff00;font-weight:bold'>{v_str}</span>", f"<span style='color:#ff4b4b'>{d_str}</span>"
-            elif val_v < val_d: v_str, d_str = f"<span style='color:#ff4b4b'>{v_str}</span>", f"<span style='color:#00ff00;font-weight:bold'>{d_str}</span>"
+            if val_v > val_d: v_str, d_str = f"<span style='color:#12873a;font-weight:bold'>{v_str}</span>", f"<span style='color:#ff4b4b'>{d_str}</span>"
+            elif val_v < val_d: v_str, d_str = f"<span style='color:#ff4b4b'>{v_str}</span>", f"<span style='color:#12873a;font-weight:bold'>{d_str}</span>"
         return v_str, d_str
 
     rows = []
@@ -631,7 +631,7 @@ def tabela_avb(lista, titulo):
         r_v, r_d = fmt_pair(V['ritmo'], D['ritmo'], True, 2)
         rec_v, rec_d = fmt_pair(V['rec'], D['rec'], False, 1, True)
 
-        prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#00ff00'>{prob:.1f}%</span></td>"
+        prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#12873a'>{prob:.1f}%</span></td>"
 
         rows.append([
             f"{'⭐ ' if star else ''}{trap_label(V)} - {nome_marcado(V)}",
