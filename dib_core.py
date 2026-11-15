@@ -646,67 +646,69 @@ def tabela_avb(lista, titulo):
     st.markdown(tbl(heads, rows), unsafe_allow_html=True)
 
 # =====================================================================
-# LEITURA TÁTICA (CENÁRIO DA CORRIDA DINÂMICO)
+# LEITURA TÁTICA (NARRATIVA DINÂMICA DA CORRIDA)
 # =====================================================================
 def gerar_observacoes(rank, avbs, ctx):
     if not rank: return
     st.markdown("---")
-    st.markdown("#### 🏁 Leitura Tática da Corrida")
+    st.markdown("#### 🏁 Leitura Tática da Corrida (Narrativa)")
 
     elegiveis = [d for d in rank if not d.get("bloqueado")]
-    bloqueados = [d for d in rank if d.get("bloqueado")]
-
     if not elegiveis: 
-        st.warning("Todos os cães estão bloqueados ou sem dados suficientes para esta corrida.")
+        st.warning("Todos os cães estão bloqueados.")
         return
 
-    fav = elegiveis[0]
+    fav_app = elegiveis[0]
     insights = []
+    
+    # Extrai o Post Pick para cruzar com o App
+    pp_str = str(ctx.get("post_pick") or "")
+    pp_traps = [int(c) for c in pp_str if c.isdigit()]
+    pp_fav_trap = pp_traps[0] if pp_traps else None
+    pp_fav = next((d for d in elegiveis if d["trap"] == pp_fav_trap), None)
 
-    # 1. Efeito Dominó na Trap (Risco do Favorito)
-    if fav["perfil"] == "Trombador" or fav["fbt_cnt"] > 0:
-        c_fora = next((d for d in elegiveis if d["trap"] >= 4 and d["pos"] > 2), None)
-        if c_fora:
-            insights.append(f"**💥 Efeito Dominó na Trap:** O favorito {TRAP_EMOJI.get(fav['trap'])} {fav['name']} é um Trombador na trap interna. Se ele travar na 1ª curva, ele leva os cães do meio junto. Isso abre espaço para o {TRAP_EMOJI.get(c_fora['trap'])} {c_fora['name']}.")
-        else:
-            insights.append(f"**⚠️ Favorito de Risco:** O {TRAP_EMOJI.get(fav['trap'])} {fav['name']} domina o Overall, mas tem histórico de tráfego. Se ele se envolver em confusão, pode perder a prova.")
+    # 1. Divergência App vs Mercado (A Grande História)
+    if pp_fav and pp_fav["trap"] != fav_app["trap"]:
+        insights.append(f"**⚔️ Duelo de Favoritos:** O mercado elegeu o **{TRAP_EMOJI.get(pp_fav['trap'])} {pp_fav['name']}** (Post Pick 1), mas o App crava o **{TRAP_EMOJI.get(fav_app['trap'])} {fav_app['name']}** ({fav_app['overall']:.1f} de Overall) como o verdadeiro dono da prova. É um choque direto.")
+    else:
+        insights.append(f"**🤝 Consenso Total:** O mercado e o App concordam que o **{TRAP_EMOJI.get(fav_app['trap'])} {fav_app['name']}** é o cão a ser batido. Overall {fav_app['overall']:.1f} e Confiança {fav_app['conf']:.0f}%.")
 
-    # 2. Zebra de Valor
-    tadj_rank = sorted([d for d in elegiveis if d.get("tadj")], key=lambda x: x["tadj"])
-    if len(tadj_rank) >= 3:
-        top3_tadj_names = {d["name"] for d in tadj_rank[:3]}
-        zebras = [d for d in elegiveis if d["pos"] >= 3 and d["name"] in top3_tadj_names and d["name"] != fav["name"]]
-        if zebras:
-            z = zebras[0]
-            insights.append(f"**🦓 Zebra de Valor:** O {TRAP_EMOJI.get(z['trap'])} {z['name']} está em {z['pos']}º no Overall, mas tem o **{z['tadj']:.2f}** de Tadj (top 3 da corrida). O mercado pode não ter visto isso.")
+    # 2. Dinâmica de Pista (Trombadores vs Limpos)
+    trombadores = [d for d in elegiveis if d["perfil"] == "Trombador" and d["trap"] <= 4]
+    if len(trombadores) >= 2:
+        nomes_tromb = " e ".join([f"{TRAP_EMOJI.get(d['trap'])} {d['name']}" for d in trombadores])
+        insights.append(f"**💥 Risco de Colisão:** O {nomes_tromb} são Trombadores e correm nas traps de dentro. Se eles se chocarem na 1ª curva, quem corre limpo por fora (como o {TRAP_EMOJI.get(fav_app['trap'])} {fav_app['name']}) vai herdar a pista livre.")
 
-    # 3. Pista Livre (Trap Vazia)
-    vazias = ctx.get("vazias", [])
-    for v in vazias:
-        if v == 1:
-            c2 = next((d for d in rank if d['trap'] == 2), None)
-            if c2:
-                insights.append(f"**🛣️ Pista Livre (Trap 1 Vazia):** A trap 1 vazia significa que o {TRAP_EMOJI.get(2)} {c2['name']} vai herdar a linha do trilho. Dá uma olhada nele.")
-        elif v == 6:
-            c5 = next((d for d in rank if d['trap'] == 5), None)
-            if c5:
-                insights.append(f"**🛣️ Pista Livre (Trap 6 Vazia):** O {TRAP_EMOJI.get(5)} {c5['name']} tem a pista livre por fora. Se ele gosta de correr aberto, pode surpreender.")
-
-    # 4. Quebra de Ritmo
-    top_split = min([d for d in rank if d.get("msplit") is not None], key=lambda x: x["msplit"], default=None)
-    top_ritmo = min([d for d in rank if d.get("ritmo") is not None], key=lambda x: x["ritmo"], default=None)
-    if top_split and top_ritmo and top_split["name"] != top_ritmo["name"]:
-        insights.append(f"**🏎️ Quebra de Ritmo:** O {TRAP_EMOJI.get(top_split['trap'])} {top_split['name']} tem a largada mais forte. Se ele puxar o pace, quem tem o melhor ritmo final ({TRAP_EMOJI.get(top_ritmo['trap'])} {top_ritmo['name']}) vai passar por cima no final.")
-
-    # 5. Falso Favorito Bloqueado
+    # 3. O Falso Favorito (se houver)
+    bloqueados = [d for d in rank if d.get("bloqueado")]
     if bloqueados:
         b = max(bloqueados, key=lambda x: x["overall"])
-        if b["overall"] > fav["overall"]:
-            insights.append(f"**🚫 Falso Favorito:** O {TRAP_EMOJI.get(b['trap'])} {b['name']} tem Overall de {b['overall']:.1f}, mas foi bloqueado (Conf. {b['conf']:.0f}%) por falta de histórico válido. Cuidado com as odds dele.")
+        if b["overall"] > fav_app["overall"]:
+            insights.append(f"**🚫 Armadilha do Histórico:** O {TRAP_EMOJI.get(b['trap'])} {b['name']} tem Overall bruto de {b['overall']:.1f}, mas o App o bloqueou. O histórico dele nessa distância é curto ou ruim. Não caia na armadilha da odd baixa.")
 
-    # Se a corrida for muito limpa e não gerar insights, avisa.
+    # 4. Zebra de Valor (REAL: Precisa estar fora do Top 2 do App e fora do Top 2 do Mercado)
+    tadj_rank = sorted([d for d in elegiveis if d.get("tadj")], key=lambda x: x["tadj"])
+    if len(tadj_rank) >= 3:
+        top2_tadj_names = {d["name"] for d in tadj_rank[:2]}
+        for z in elegiveis:
+            if z["pos"] >= 4 and z["name"] in top2_tadj_names:
+                # Verifica se o mercado também desprezou ele
+                is_mkt_zebra = True
+                if pp_traps and z["trap"] in pp_traps[:2]:
+                    is_mkt_zebra = False
+                    
+                if is_mkt_zebra:
+                    insights.append(f"**🦓 A Zebra Escondida:** O {TRAP_EMOJI.get(z['trap'])} {z['name']} está apenas em {z['pos']}º no App, mas tem o **{z['tadj']:.2f}** de Tadj (Top 2 da prova). O mercado também esqueceu dele no Post Pick. É a aposta de risco/retorno mais alta da corrida.")
+
+    # 5. Alvo Exposto
+    alvos = [d for d in rank if d.get("alvo")]
+    if alvos:
+        nomes_alvo = ", ".join([f"{TRAP_EMOJI.get(a['trap'])} {a['name']}" for a in alvos])
+        insights.append(f"**🎯 O Bode Expiatório:** O {nomes_alvo} foi marcado como Alvo. Sem largada e com recuperação negativa, ele vai ficar preso no bolo. Evite apostar nele como vencedor.")
+
+    # Se não tiver dramas, diz que é uma corrida de rotina
     if not insights:
-        st.markdown("- **Corrida sem grandes armadilhas táticas.** O favorito é sólido e não há conflitos de pace ou traps vazias relevantes.")
-    else:
-        for ins in insights[:4]: # Mostra até 4 insights táticos
-            st.markdown(f"- {ins}")
+        insights.append("**📊 Corrida de Rotina:** O favorito tem dados sólidos, não há trombadores em excesso e as traps estão bem distribuídas. O App sugere seguir o Overall sem grandes riscos táticos.")
+
+    for ins in insights[:4]:
+        st.markdown(f"- {ins}")
