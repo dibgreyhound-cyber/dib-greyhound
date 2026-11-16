@@ -280,9 +280,11 @@ def buscar_form_raw(race_id, data_str):
 
 
 # ---------------------------------------------------------------- utilidades
-def hora_br(hhmm):
+def hora_br(hhmm, h24=False):
     h, m = [int(x) for x in hhmm.split(":")]
     t = datetime(2000, 1, 1, h, m) - timedelta(hours=3)
+    if h24:
+        return f"{t.hour:02d}:{t.minute:02d}"
     return f"{t.hour % 12 or 12}:{t.minute:02d}"
 
 
@@ -727,7 +729,7 @@ def preparar(race_id, r_date, c, classe_in, dist_in, pp_in, so_antes=False):
 
 
 def titulo_corrida(c, p=None, prefixo=""):
-    t = f"{c['pista']} {c['hora']} (BR {hora_br(c['hora'])})" if c.get("hora") else ""
+    t = f"{c['pista']} {c['hora']} (BR {hora_br(c['hora'], True)})" if c.get("hora") else ""
     extra = f" · {p['classe']} · {int(p['dist'])}m · Post Pick: {p['pp'] or '-'}" if p else \
         f" · {c.get('grade', '')} · {c.get('dist', '')}m"
     return f"### {prefixo}{t} · Race {c.get('num', '')}{extra}"
@@ -864,7 +866,7 @@ def cabecalho_corrida(c, p):
     titulo = ""
     if c.get("hora"):
         titulo = (f"<div style='font-size:1.7rem;font-weight:700;line-height:1.25;margin:4px 0 12px'>"
-                  f"{c['pista']} {c['hora']} (BR {hora_br(c['hora'])})</div>")
+                  f"{c['pista']} {c['hora']} (BR {hora_br(c['hora'], True)})</div>")
     num = str(c.get("num") or "").strip()
     chips = [f"Race {num}" if num else "", p["classe"], f"{int(p['dist'])}m"]
     chips_html = "".join(
@@ -1122,7 +1124,7 @@ def main():
             st.caption(f"{len(lista)} corridas · horário da pista (Brasil = −3h)")
             for c in lista:
                 ativo = sel and sel.get("id") == c["id"] and sel.get("modo") == modo
-                rotulo = f"{'▶ ' if ativo else ''}{c['hora']} (BR {hora_br(c['hora'])}) · {c['pista']} R{c['num'] or '?'} · " \
+                rotulo = f"{'▶ ' if ativo else ''}{c['hora']} (BR {hora_br(c['hora'], True)}) · {c['pista']} R{c['num'] or '?'} · " \
                          f"{c['grade'] or '?'} · {c['dist'] or '?'}m"
                 st.button(rotulo, key=f"{modo}_{c['id']}", use_container_width=True,
                           on_click=escolher, args=(c, data_str, modo))
