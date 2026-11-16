@@ -929,31 +929,33 @@ _JS_TRAVAR = """<script>
   var win, doc;
   try { win = window.parent; doc = win.document; } catch (e) { return; }
 
-  // Verifica se o Streamlit está no modo escuro de forma infalível
-  function isDarkMode() {
-    var app = doc.querySelector('.stApp');
-    if (app) {
-        if (app.getAttribute('data-theme') === 'dark') return true;
-        var bg = win.getComputedStyle(app).backgroundColor;
-        if (bg && bg.startsWith('rgb')) {
-            var p = bg.match(/\d+/g);
-            if (p && p.length >= 3 && (parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2]) < 300)) return true;
-        }
-    }
-    if (doc.body.classList.contains('dark') || doc.documentElement.getAttribute('data-theme') === 'dark') return true;
-    return false;
+  // Injeta o CSS usando as variáveis nativas do Streamlit para adaptar ao tema claro/escuro
+  var styleId = 'dib-sticky-style';
+  if (!doc.getElementById(styleId)) {
+    var style = doc.createElement('style');
+    style.id = styleId;
+    style.innerHTML = `
+      .dib-table.sticky-1 td:nth-child(1) { background-color: var(--background-color, #fff) !important; color: var(--text-color, #000) !important; }
+      .dib-table.sticky-1 th:nth-child(1) { background-color: var(--secondary-background-color, #f0f2f6) !important; color: var(--text-color, #000) !important; }
+
+      .dib-table.sticky-2 td:nth-child(1), .dib-table.sticky-2 td:nth-child(2) { background-color: var(--background-color, #fff) !important; color: var(--text-color, #000) !important; }
+      .dib-table.sticky-2 th:nth-child(1), .dib-table.sticky-2 th:nth-child(2) { background-color: var(--secondary-background-color, #f0f2f6) !important; color: var(--text-color, #000) !important; }
+    `;
+    doc.head.appendChild(style);
   }
 
   function travar(tabela, n) {
     var linhas = tabela.querySelectorAll('tr');
     if (!linhas.length) return false;
     var cab = linhas[0].children, lefts = [], i;
-    if (!cab[0] || cab[0].getBoundingClientRect().width === 0) return false;
+    if (!cab[0] || cab[0].getBoundingClientRect().width === 0) return false;   // tabela escondida
     for (i = 0; i < n; i++) {
       if (!cab[i]) return false;
       lefts.push(i === 0 ? 0 : Math.floor(cab[i].offsetLeft) - 1);
     }
-    var dark = isDarkMode();
+    
+    tabela.classList.add('sticky-' + n);
+
     Array.prototype.forEach.call(linhas, function (tr) {
       var c0 = tr.children[0];
       if (!c0 || (c0.colSpan && c0.colSpan > 1)) return;
@@ -963,15 +965,6 @@ _JS_TRAVAR = """<script>
         c.style.left = lefts[j] + 'px';
         c.style.zIndex = (c.tagName === 'TH') ? '3' : '2';
         
-        // Força a cor de fundo baseada no tema do Streamlit
-        if (dark) {
-            c.style.backgroundColor = (c.tagName === 'TH') ? '#262730' : '#0E1117';
-            c.style.color = '#FAFAFA';
-        } else {
-            c.style.backgroundColor = (c.tagName === 'TH') ? '#F0F2F6' : '#FFFFFF';
-            c.style.color = '#31333F';
-        }
-        
         var sombra = 'inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45)';
         if (j === n - 1) sombra += ', 3px 0 4px -2px rgba(0,0,0,.35)';
         c.style.boxShadow = sombra;
@@ -980,7 +973,7 @@ _JS_TRAVAR = """<script>
     return true;
   }
   function aplicar() {
-    Array.prototype.forEach.call(doc.querySelectorAll('table'), function (t) {
+    Array.prototype.forEach.call(doc.querySelectorAll('table.dib-table'), function (t) {
       if (t.getAttribute('data-dibfix') === '1') return;
       var tr0 = t.querySelector('tr');
       if (!tr0) return;
