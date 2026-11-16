@@ -311,34 +311,39 @@ def buscar_resultado(race_id, data_str, tid="", hora=""):
     if tid and hora:   # mesmos parametros da pagina "result-meeting-result" do site
         ex = f"race_id={race_id}&track_id={tid}&r_date={data_str}&r_time={hora}"
         urls += [f"{BASE}/results/blocks.sd?{ex}&blocks={b}"
-                 for b in ("result", "results", "header%2Cresult", "meeting-result", "result-meeting-result")]
+                 for b in ("result", "results", "header%2Cresult", "meeting-result", "result-meeting-result",
+                           "result-pager%2Cresult-header%2Cresult-tabs%2Cresult-title%2Cresult",
+                           "results-pager%2Cresults-header%2Cresults-title%2Cresults",
+                           "card-pager%2Ccard-header%2Ccard-tabs%2Ccard-title%2Ccard")]
         urls += [f"{BASE}/results/race.sd?{ex}", f"{BASE}/result/meeting-result.sd?{ex}"]
     urls += [u.format(rid=race_id, d=data_str) for u in RESULTADO_CANDIDATOS]
     return tentar(urls, achar_resultados)
 
 
 def resultado_pelo_form(c):
-    """Plano B: depois da corrida, o Form de cada galgo traz a corrida de hoje (posicao, margem, remarks).
-    Monta o resultado a partir dele quando o endereco oficial do resultado nao responde."""
+    """Plano B: depois da corrida, o Form de cada galgo pode trazer a corrida de hoje (posicao, margem, remarks).
+    Devolve (linhas, diagnostico). O diagnostico explica o que foi encontrado quando nao da para montar."""
     try:
         r = http().get(f"{BASE}/card/blocks.sd?race_id={c['id']}&r_date={c['data']}&blocks=form", timeout=15)
         r.raise_for_status()
         dogs = r.json().get("form", {}).get("dogs", [])
-    except Exception:
-        return []
+    except Exception as e:
+        return [], f"não consegui ler o Form ({str(e)[:60]})"
     if not dogs:
-        return []
+        return [], "o Form veio vazio"
     dib.descobrir_chaves(dogs)
     dist_c = float(c.get("dist") or 0)
     pista = str(c.get("pista") or "").strip().lower()
     hora = str(c.get("hora") or "").strip()
     grade_c = str(c.get("grade") or "").strip().upper()
-    linhas = []
+    datas, linhas = [], []
     for dog in dogs:
         achados = []
         for f in dog.get("forms", []):
             n = dib.norm_run(f)
-            if n["date_str"] != c["data"] or not n["fin"]:
+            iso = n["date"].strftime("%Y-%m-%d") if n["date"] else n["date_str"]
+            datas.append(iso)
+            if iso != c["data"] or not n["fin"]:
                 continue
             if dist_c and n["dist"] and abs(n["dist"] - dist_c) > 1:
                 continue
@@ -363,8 +368,10 @@ def resultado_pelo_form(c):
                        "sp": str(_get(f, "sp", EXTRA) or ""), "tempo": str(dib.pick_fb(f, "caltm") or ""),
                        "margem": str(dib.pick_fb(f, "by") or ""), "coment": trad or rem})
     if len(linhas) < 2:
-        return []
-    return sorted(linhas, key=lambda x: x["pos"])
+        recente = max(datas) if datas else "?"
+        return [], (f"o Form tem {len(dogs)} galgos, mas nenhum traz a corrida de {c['data']} "
+                    f"(data mais recente no Form: {recente})")
+    return sorted(linhas, key=lambda x: x["pos"]), ""
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -449,6 +456,8 @@ def mostrar_replay(c):
         st.caption("▶ Replay: esta corrida ainda não trouxe o código do vídeo (clipId vazio na lista). "
                    "Ele costuma aparecer depois que a corrida termina; toque em 🔄 para recarregar a lista.")
     _link(link_site(c), "Abrir resultado e replay no site")
+    st.caption("Se o botão abrir só a lista de corridas, copie este endereço e cole no navegador:")
+    st.code(link_site(c), language=None)
 
 
 # ---------------------------------------------------------------- descobrir enderecos (lendo o JavaScript do site)
@@ -1159,13 +1168,14 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
     st.markdown(titulo_corrida(c, None, "📊 Resultado · "))
     mostrar_replay(c)
     if not linhas:
-        linhas = resultado_pelo_form(c)
+        linhas, motivo_form = resultado_pelo_form(c)
         if linhas:
             st.caption("ℹ️ Resultado montado a partir do Form (o endereço oficial do resultado não respondeu). "
                        "Os comentários vêm dos remarks do Racing Post.")
     if not linhas:
         st.warning("Não consegui ler o resultado desta corrida (ela pode ainda não ter sido disputada). "
                    "Veja o diagnóstico abaixo.")
+        st.caption(f"Plano B (Form): {motivo_form}.")
         st.dataframe(pd.DataFrame(tent), use_container_width=True, hide_index=True)
         if primeira is not None:
             st.caption("Primeira resposta recebida:")
