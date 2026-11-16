@@ -455,19 +455,19 @@ def get_rank_html(val, rank, max_rank):
     return f"<span style='{color}'>{val:.2f}{sup}</span>"
 
 # =====================================================================
-# FIX: TRAVAMENTO DINÂMICO DE COLUNAS E CORES DO TEMA
+# FIX: TRAVAMENTO DINÂMICO E LARGURA MAX-CONTENT
 # =====================================================================
 def tbl(headers, rows, freeze_cols=1):
     css = """<style>
     .dib-container { overflow-x: auto; width: 100%; margin-bottom: 20px; }
-    .dib-table { width: 100%; border-collapse: separate; border-spacing: 0; text-align: center; font-size: 15px; table-layout: auto; }
+    .dib-table { min-width: max-content; border-collapse: separate; border-spacing: 0; text-align: center; font-size: 15px; }
     .dib-table th, .dib-table td { padding: 8px 6px; border-bottom: 1px solid rgba(128,128,128,0.2); white-space: nowrap; line-height: 1.3; }
     .dib-table th { background-color: var(--secondary-background-color, #f0f2f6); font-weight: 600; }
     """
     
     if freeze_cols == 2:
         css += """
-        /* Planilha de Projeção: Trava Trap (60px) e Galgo (180px) */
+        /* Planilha de Projeção: Trava Trap (60px) e Galgo (200px) */
         .dib-table td:nth-child(1), .dib-table th:nth-child(1) {
             position: sticky; left: 0px; z-index: 3;
             background-color: var(--background-color, #ffffff);
@@ -479,18 +479,18 @@ def tbl(headers, rows, freeze_cols=1):
         .dib-table td:nth-child(2), .dib-table th:nth-child(2) {
             position: sticky; left: 60px; z-index: 3;
             background-color: var(--background-color, #ffffff);
-            min-width: 180px; text-align: left;
+            min-width: 200px; text-align: left;
             border-right: 1px solid rgba(128,128,128,0.3);
         }
         .dib-table th:nth-child(2) { background-color: var(--secondary-background-color, #f0f2f6); z-index: 4; }
         """
     else:
         css += """
-        /* Planilha de AVB: Trava apenas AvB (220px) */
+        /* Planilha de AVB: Trava apenas AvB (260px) */
         .dib-table td:nth-child(1), .dib-table th:nth-child(1) {
             position: sticky; left: 0px; z-index: 3;
             background-color: var(--background-color, #ffffff);
-            min-width: 220px; text-align: left;
+            min-width: 260px; text-align: left;
             border-right: 1px solid rgba(128,128,128,0.3);
         }
         .dib-table th:nth-child(1) { background-color: var(--secondary-background-color, #f0f2f6); z-index: 4; }
