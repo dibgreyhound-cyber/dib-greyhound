@@ -929,20 +929,35 @@ _JS_TRAVAR = """<script>
   var win, doc;
   try { win = window.parent; doc = win.document; } catch (e) { return; }
 
-  // Injeta o CSS usando as variáveis nativas do Streamlit para adaptar ao tema claro/escuro
+  // Cores das colunas travadas = cores reais do tema atual (claro/escuro), atualizadas ao trocar o tema
   var styleId = 'dib-sticky-style';
-  if (!doc.getElementById(styleId)) {
-    var style = doc.createElement('style');
-    style.id = styleId;
-    style.innerHTML = `
-      .dib-table.sticky-1 td:nth-child(1) { background-color: var(--background-color, #fff) !important; color: var(--text-color, #000) !important; }
-      .dib-table.sticky-1 th:nth-child(1) { background-color: var(--secondary-background-color, #f0f2f6) !important; color: var(--text-color, #000) !important; }
-
-      .dib-table.sticky-2 td:nth-child(1), .dib-table.sticky-2 td:nth-child(2) { background-color: var(--background-color, #fff) !important; color: var(--text-color, #000) !important; }
-      .dib-table.sticky-2 th:nth-child(1), .dib-table.sticky-2 th:nth-child(2) { background-color: var(--secondary-background-color, #f0f2f6) !important; color: var(--text-color, #000) !important; }
-    `;
-    doc.head.appendChild(style);
+  var estilo = doc.getElementById(styleId);
+  if (!estilo) {
+    estilo = doc.createElement('style');
+    estilo.id = styleId;
+    doc.head.appendChild(estilo);
   }
+  estilo.innerHTML =
+    '.dib-table.sticky-1 td:nth-child(1):not(.sep):not(.sep-avb),' +
+    '.dib-table.sticky-2 td:nth-child(1):not(.sep):not(.sep-avb),' +
+    '.dib-table.sticky-2 td:nth-child(2):not(.sep):not(.sep-avb)' +
+    '{ background-color: var(--dib-bg, #fff) !important; }' +
+    '.dib-table.sticky-1 th:nth-child(1),' +
+    '.dib-table.sticky-2 th:nth-child(1),' +
+    '.dib-table.sticky-2 th:nth-child(2)' +
+    '{ background-color: var(--dib-bg-head, #f0f2f6) !important; }';
+  function cores() {
+    var app = doc.querySelector('.stApp') || doc.body;
+    var m = win.getComputedStyle(app).backgroundColor.match(/[\\d.]+/g);
+    if (!m || m.length < 3 || (m.length > 3 && parseFloat(m[3]) === 0)) return;
+    var r = +m[0], g = +m[1], b = +m[2];
+    function mix(c) { return Math.round(c * 0.9 + 128 * 0.1); }
+    var raiz = doc.documentElement;
+    raiz.style.setProperty('--dib-bg', 'rgb(' + r + ',' + g + ',' + b + ')');
+    raiz.style.setProperty('--dib-bg-head', 'rgb(' + mix(r) + ',' + mix(g) + ',' + mix(b) + ')');
+  }
+  cores();
+  setInterval(cores, 400);
 
   function travar(tabela, n) {
     var linhas = tabela.querySelectorAll('tr');
