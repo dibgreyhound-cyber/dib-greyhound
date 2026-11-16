@@ -454,40 +454,53 @@ def get_rank_html(val, rank, max_rank):
     color = "color:#12873a;font-weight:bold" if rank == 1 else ("color:#ff4b4b" if rank == max_rank and max_rank > 1 else "")
     return f"<span style='{color}'>{val:.2f}{sup}</span>"
 
+# =====================================================================
+# FIX: TRAVAMENTO DINÂMICO DE COLUNAS E CORES DO TEMA
+# =====================================================================
 def tbl(headers, rows, freeze_cols=1):
-    sticky_css = ""
-    for i in range(1, freeze_cols + 1):
-        left_pos = "0px" if i == 1 else "60px"
-        min_width = "60px" if i == 1 else "160px"
-        text_align = "center" if i == 1 else "left"
-        sticky_css += f"""
-        .dib-table td:nth-child({i}), .dib-table th:nth-child({i}) {{
-            position: sticky;
-            left: {left_pos};
-            background-color: #ffffff;
-            z-index: 2;
+    css = """<style>
+    .dib-container { overflow-x: auto; width: 100%; margin-bottom: 20px; }
+    .dib-table { width: 100%; border-collapse: separate; border-spacing: 0; text-align: center; font-size: 15px; table-layout: auto; }
+    .dib-table th, .dib-table td { padding: 8px 6px; border-bottom: 1px solid rgba(128,128,128,0.2); white-space: nowrap; line-height: 1.3; }
+    .dib-table th { background-color: var(--secondary-background-color, #f0f2f6); font-weight: 600; }
+    """
+    
+    if freeze_cols == 2:
+        css += """
+        /* Planilha de Projeção: Trava Trap (60px) e Galgo (180px) */
+        .dib-table td:nth-child(1), .dib-table th:nth-child(1) {
+            position: sticky; left: 0px; z-index: 3;
+            background-color: var(--background-color, #ffffff);
+            min-width: 60px; text-align: center;
             border-right: 1px solid rgba(128,128,128,0.3);
-            min-width: {min_width};
-            text-align: {text_align};
-        }}
-        .dib-table th:nth-child({i}) {{
-            background-color: #f0f2f6;
-            z-index: 3;
-        }}
-        @media (prefers-color-scheme: dark) {{
-            .dib-table td:nth-child({i}) {{ background-color: #0E1117; }}
-            .dib-table th:nth-child({i}) {{ background-color: #262730; }}
-        }}
+        }
+        .dib-table th:nth-child(1) { background-color: var(--secondary-background-color, #f0f2f6); z-index: 4; }
+        
+        .dib-table td:nth-child(2), .dib-table th:nth-child(2) {
+            position: sticky; left: 60px; z-index: 3;
+            background-color: var(--background-color, #ffffff);
+            min-width: 180px; text-align: left;
+            border-right: 1px solid rgba(128,128,128,0.3);
+        }
+        .dib-table th:nth-child(2) { background-color: var(--secondary-background-color, #f0f2f6); z-index: 4; }
         """
-    css = f"""<style>
-    .dib-container {{ overflow-x: auto; width: 100%; margin-bottom: 20px; }}
-    .dib-table {{ width: 100%; border-collapse: separate; border-spacing: 0; text-align: center; font-size: 15px; table-layout: auto; }}
-    .dib-table th, .dib-table td {{ padding: 8px 6px; border-bottom: 1px solid rgba(128,128,128,0.2); white-space: nowrap; line-height: 1.3; }}
-    .dib-table th {{ background-color: #f0f2f6; font-weight: 600; }}
-    {sticky_css}
-    .dib-table td.sep {{ padding: 0; height: 2px; background-color: rgba(128,128,128,0.4); }}
-    .dib-table td.sep-avb {{ padding: 0; height: 1px; background-color: rgba(128,128,128,0.15); }}
+    else:
+        css += """
+        /* Planilha de AVB: Trava apenas AvB (220px) */
+        .dib-table td:nth-child(1), .dib-table th:nth-child(1) {
+            position: sticky; left: 0px; z-index: 3;
+            background-color: var(--background-color, #ffffff);
+            min-width: 220px; text-align: left;
+            border-right: 1px solid rgba(128,128,128,0.3);
+        }
+        .dib-table th:nth-child(1) { background-color: var(--secondary-background-color, #f0f2f6); z-index: 4; }
+        """
+        
+    css += """
+    .dib-table td.sep { padding: 0; height: 2px; background-color: rgba(128,128,128,0.4); }
+    .dib-table td.sep-avb { padding: 0; height: 1px; background-color: rgba(128,128,128,0.15); }
     </style>"""
+    
     out = []
     for row in rows:
         if len(row) == 1 and "<hr" in str(row[0]): out.append(f"<tr><td class='sep' colspan='{len(headers)}'></td></tr>"); continue
@@ -514,6 +527,7 @@ def tabela_projecao(ds):
         max_rk[c] = len(vals)
         vals.sort(key=lambda x: x[1], reverse=(c == "rec"))
         for rank, (i, _) in enumerate(vals, 1): rk[c][i] = rank
+
     rows = []
     for i, d in enumerate(ds):
         if d["nd"]:
@@ -522,10 +536,13 @@ def tabela_projecao(ds):
         if d.get("remarks_translated"):
             rem_txt = ", ".join(set(d["remarks_translated"]))
             fat += f"<br><small style='color:#aaa'>{rem_txt}</small>"
+
         perfil_e = {"Limpo": "✅", "Irregular": "⚠️", "Trombador": "🔴"}[d["perfil"]]
         dias_txt = f"{d['dias']} ⚠️" if d['dias'] > 21 else str(d['dias'])
+
         split_display = get_rank_html(d["split"], rk["split"][i], max_rk["split"])
         msplit_display = get_rank_html(d["msplit"], rk["msplit"][i], max_rk["msplit"]) if d.get("msplit") else (f"<span style='color:#ffa500'>Pos: {d.get('msplit_pos', 0):.1f}</span>" if d.get("msplit_pos") else "-")
+
         rows.append([
             trap_label(d), nome_marcado(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}",
             f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", fat, f"{perfil_e} {d['perfil']}",
@@ -559,27 +576,33 @@ def tabela_avb(lista, titulo):
     rows = []
     for i, (V, D, prob) in enumerate(lista):
         if i > 0: rows.append(["<hr>"])
+
         ov_v, ov_d = fmt_pair(V['overall'], D['overall'], False, 1)
         cat_v, cat_d = fmt_pair(V['cat'], D['cat'], False, 1)
         sp_v, sp_d = fmt_pair(V['split'], D['split'], True, 2)
         t_v, t_d = fmt_pair(V['time'], D['time'], True, 2)
+
         if V.get("msplit") and D.get("msplit"):
             ms_v, ms_d = fmt_pair(V['msplit'], D['msplit'], True, 2)
         elif V.get("msplit_pos") and D.get("msplit_pos"):
             ms_v, ms_d = fmt_pair(V['msplit_pos'], D['msplit_pos'], True, 1)
         else:
             ms_v, ms_d = "-", "-"
+
         mt_v, mt_d = fmt_pair(V['mtime'], D['mtime'], True, 2)
         ta_v, ta_d = fmt_pair(V['tadj'], D['tadj'], True, 2)
         r_v, r_d = fmt_pair(V['ritmo'], D['ritmo'], True, 2)
         rec_v, rec_d = fmt_pair(V['rec'], D['rec'], False, 1, True)
+
         prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#12873a'>{prob:.1f}%</span></td>"
+
         rows.append([
             f"{trap_label(V)} - {nome_marcado(V)}",
             ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]),
             f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, r_v, rec_v, f"{V['conf']:.0f}%",
             prob_cell
         ])
+
         rows.append([
             f"{trap_label(D)} - {nome_marcado(D)}",
             ov_d, cat_d, D['perfil'], "-".join((r["grade"] or "?") for r in D["runs"]),
