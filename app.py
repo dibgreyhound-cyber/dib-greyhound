@@ -16,11 +16,11 @@ import streamlit.components.v1 as components
 
 st.set_page_config(page_title="DIB GREYHOUND", layout="wide", initial_sidebar_state="auto")
 
-# --- INÍCIO DO AJUSTE DO GALGO NO TOPO ---
+# --- BLOCO PARA O GALGO CORRENDO NO STATUS DO STREAMLIT ---
 st.markdown(
     """
     <style>
-    /* 1. Esconde o ícone original do Streamlit (esportes) */
+    /* 1. Força a esconder qualquer ícone de esporte original */
     [data-testid="stStatusWidget"] svg {
         display: none !important;
     }
@@ -51,7 +51,7 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-# --- FIM DO AJUSTE DO GALGO ---
+# --- FIM DO BLOCO DO GALGO ---
 
 import dib_core as dib
 
@@ -855,6 +855,7 @@ def gerar_texto_analise(c, p):
         nomes_alvo = ", ".join([d['name'] for d in alvos])
         txt.append(f"- 🎯 Alvo(s): {nomes_alvo} (fora do Top 3 largada e recuperação ≤ 0%).")
 
+    # DIB 3.5: Alerta de pista irlandesa e Alerta de Zebra
     all_splits = [d["msplit"] for d in p["rank"] if d.get("msplit") is not None]
     is_irish_metric = all(s < 2.0 for s in all_splits) if all_splits else False
 
@@ -927,33 +928,32 @@ _JS_TRAVAR = """<script>
 (function () {
   var win, doc;
   try { win = window.parent; doc = win.document; } catch (e) { return; }
-  
-  function fundo(el) {
-    var e = el;
-    while (e && e !== doc.documentElement) {
-      var b = win.getComputedStyle(e).backgroundColor;
-      if (b && b !== 'transparent' && !/^rgba\\(\\s*\\d+,\\s*\\d+,\\s*\\d+,\\s*0\\s*\\)$/.test(b)) return b;
-      e = e.parentElement;
+
+  // Verifica se o Streamlit está no modo escuro de forma infalível
+  function isDarkMode() {
+    var app = doc.querySelector('.stApp');
+    if (app) {
+        if (app.getAttribute('data-theme') === 'dark') return true;
+        var bg = win.getComputedStyle(app).backgroundColor;
+        if (bg && bg.startsWith('rgb')) {
+            var p = bg.match(/\d+/g);
+            if (p && p.length >= 3 && (parseInt(p[0]) + parseInt(p[1]) + parseInt(p[2]) < 300)) return true;
+        }
     }
-    
-    // Tenta pegar a variável de fundo do Streamlit
-    var cssVarBg = win.getComputedStyle(doc.documentElement).getPropertyValue('--background-color').trim();
-    if (cssVarBg) return cssVarBg;
-    
-    // Fallback para checagem explícita de dark mode
-    var isDark = doc.body.classList.contains('dark') || doc.documentElement.classList.contains('dark') || (doc.querySelector('.stApp') && doc.querySelector('.stApp').getAttribute('data-theme') === 'dark');
-    return isDark ? '#0E1117' : '#ffffff';
+    if (doc.body.classList.contains('dark') || doc.documentElement.getAttribute('data-theme') === 'dark') return true;
+    return false;
   }
-  
+
   function travar(tabela, n) {
     var linhas = tabela.querySelectorAll('tr');
     if (!linhas.length) return false;
     var cab = linhas[0].children, lefts = [], i;
-    if (!cab[0] || cab[0].getBoundingClientRect().width === 0) return false;   // tabela escondida
+    if (!cab[0] || cab[0].getBoundingClientRect().width === 0) return false;
     for (i = 0; i < n; i++) {
       if (!cab[i]) return false;
       lefts.push(i === 0 ? 0 : Math.floor(cab[i].offsetLeft) - 1);
     }
+    var dark = isDarkMode();
     Array.prototype.forEach.call(linhas, function (tr) {
       var c0 = tr.children[0];
       if (!c0 || (c0.colSpan && c0.colSpan > 1)) return;
@@ -962,7 +962,16 @@ _JS_TRAVAR = """<script>
         c.style.position = 'sticky';
         c.style.left = lefts[j] + 'px';
         c.style.zIndex = (c.tagName === 'TH') ? '3' : '2';
-        c.style.backgroundColor = fundo(c);
+        
+        // Força a cor de fundo baseada no tema do Streamlit
+        if (dark) {
+            c.style.backgroundColor = (c.tagName === 'TH') ? '#262730' : '#0E1117';
+            c.style.color = '#FAFAFA';
+        } else {
+            c.style.backgroundColor = (c.tagName === 'TH') ? '#F0F2F6' : '#FFFFFF';
+            c.style.color = '#31333F';
+        }
+        
         var sombra = 'inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45)';
         if (j === n - 1) sombra += ', 3px 0 4px -2px rgba(0,0,0,.35)';
         c.style.boxShadow = sombra;
@@ -1029,7 +1038,7 @@ def analisar(c, classe_in, dist_in, pp_in):
     st.markdown("---")
     with st.expander("📋 Exportar Análise (Copiar e Colar para o Chat)"):
         texto_gerado = gerar_texto_analise(c, p)
-        botao_copiar(texto_gerado)
+        botao_copiar(texto_gerado)  # Chama o botão JS
         st.text_area("Se o botão acima não funcionar, copie o texto aqui:", texto_gerado, height=200)
     fixar_colunas()
 
