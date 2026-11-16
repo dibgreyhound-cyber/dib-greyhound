@@ -1074,7 +1074,7 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
 _CSS_SIDEBAR = """<style>
 section[data-testid="stSidebar"]{width:21rem !important;min-width:21rem !important;max-width:21rem !important;}
 section[data-testid="stSidebar"] .stButton > button{padding:.35rem .4rem;min-height:0;}
-section[data-testid="stSidebar"] .stButton > button p{font-size:.76rem;line-height:1.25;}
+section[data-testid="stSidebar"] .stButton > button p{font-size:.85rem;line-height:1.25;}
 </style>"""
 
 
