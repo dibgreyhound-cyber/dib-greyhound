@@ -10,7 +10,7 @@ import requests
 import streamlit as st
 
 # =====================================================================
-# DICIONÁRIO DE REMARKS (TABELA DO MARKO)
+# DICIONÁRIO DE REMARKS
 # =====================================================================
 DICIONARIO_REMARKS = {
     "ald": "Liderou Sempre", "awk": "Desajeitado", "blk": "Trombada Forte",
@@ -31,17 +31,18 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 6.0 - Calibrado para o Ciclo 4)
+# CONFIGURAÇÃO GLOBAL (DIB 6.1 - Calibrado para o Ciclo 5)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
     "TRAP_VAZIA": 5.0, 
-    "TRAFEGO_SEVERO": -8.0,
+    "TRAFEGO_SEVERO": -12.0, # Ajuste 1: Aumentado de -8.0 para -12.0
     "CONF_MIN_VENCEDOR": 40.0,
 
-    "VEL_PTS": {"tadj": 100, "mtime": 80, "msplit": 80, "ritmo": 60},
+    # Ajuste 3: Aumento do peso de Split e Ritmo
+    "VEL_PTS": {"tadj": 100, "mtime": 80, "msplit": 100, "ritmo": 80},
     "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 10,
 }
 
@@ -125,18 +126,26 @@ def parts_of(rem):
 def count_traf(rem):
     return sum(1 for p in parts_of(rem) if RE_TRAF.search(p))
 
+# =====================================================================
+# TADJ CIRÚRGICO
+# =====================================================================
 def traffic_penalty(rem, peso=31.0):
     s = str(rem or "").lower()
     pen = 0.0
+    
     graves = sum(s.count(k) for k in ("baulk", "fell", "ko", "msdbrk"))
     if graves > 0: pen += graves * 0.30
+    
     moderados = sum(s.count(k) for k in ("bmp", "crd", "fcd", "crmp"))
     if moderados > 0: pen += moderados * 0.15
+    
     pen = min(pen, 0.50)
     if pen == 0: return 0.0
+    
     if peso > 30.0: fator = 0.8
     elif peso < 28.0: fator = 1.2
     else: fator = 1.0
+    
     return pen * fator
 
 def not_free(rem):
@@ -208,13 +217,11 @@ def extrair_metadados_json(data, info_card, dogs):
             if isinstance(src.get("form"), dict):
                 fontes.append(src["form"])
                 if isinstance(src["form"].get("race"), dict): fontes.append(src["form"]["race"])
-
     for src in fontes:
         pista = pick(src, ["trackName", "track", "meetingName", "courseName"])
         if pista: info["pista"] = str(pista).strip(); break
     if not info["pista"] and dogs and dogs[0].get("runs"):
         info["pista"] = str(dogs[0]["runs"][0].get("track", "Desconhecida")).strip()
-
     for src in fontes:
         for k in ["offTime", "scheduledTime", "displayTime", "time", "raceTime"]:
             val = src.get(k)
@@ -222,18 +229,15 @@ def extrair_metadados_json(data, info_card, dogs):
                 m = re.search(r"\b([1-9]|1[0-2]):\d{2}\b", str(val))
                 if m: info["hora"] = m.group(0); break
         if info["hora"]: break
-
     for src in fontes:
         r_num = pick(src, ["raceNum", "raceNumber", "rNum", "raceNumberDesc", "number"])
         if r_num is not None:
             info["race"] = str(r_num).replace("Race", "").strip(); break
-
     for src in fontes:
         grade = pick(src, ["raceClass", "grade", "class", "raceClassDesc", "raceGrade"])
         if grade: info["classe"] = str(grade).strip().upper(); break
     if not info["classe"] and dogs and dogs[0].get("runs"):
         info["classe"] = str(dogs[0]["runs"][0].get("grade", "")).strip().upper()
-
     for src in fontes:
         pp = pick(src, ["postPick", "post_pick", "tips", "tip"])
         if pp:
@@ -248,14 +252,12 @@ def extrair_dados_racingpost(url):
     try:
         if not url.startswith("http"):
             url = "https://greyhoundbet.racingpost.com/" + url
-
         race_id_match = re.search(r"race_id=(\d+)", url)
         r_date_match = re.search(r"r_date=([\d-]+)", url)
         if not race_id_match or not r_date_match:
             st.error("Não foi possível extrair o ID da corrida do link.")
             return None, None, None
         race_id, r_date_str = race_id_match.group(1), r_date_match.group(1)
-
         card_api_url = f"https://greyhoundbet.racingpost.com/card/race.sd?race_id={race_id}&r_date={r_date_str}"
         info_card = {}
         try:
@@ -263,17 +265,14 @@ def extrair_dados_racingpost(url):
             if resp_card.status_code == 200:
                 info_card = resp_card.json()
         except Exception: pass
-
         api_url = f"https://greyhoundbet.racingpost.com/card/blocks.sd?race_id={race_id}&r_date={r_date_str}&blocks=form"
         resp = requests.get(api_url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
         data = resp.json()
-
         dogs = data.get("form", {}).get("dogs", [])
         if not dogs:
             st.warning("Nenhum dado encontrado para esta corrida.")
             return None, None, None
-
         descobrir_chaves(dogs)
         out = []
         for dog in dogs:
@@ -283,13 +282,11 @@ def extrair_dados_racingpost(url):
                 "name": dog.get("dogName", "Desconhecido"),
                 "trap": trap or 0, "peso_atual": to_float(dog.get("weight")), "runs": runs,
             })
-
         existing_traps = {d["trap"] for d in out}
         for t in range(1, 7):
             if t not in existing_traps:
                 out.append({"name": "vacant", "trap": t, "peso_atual": None, "runs": []})
         out.sort(key=lambda x: x["trap"])
-
         meta_info = extrair_metadados_json(data, info_card, out)
         return out, {"r_date": r_date_str, "raw_first": dogs[0]}, meta_info
     except Exception as e:
@@ -332,7 +329,9 @@ def analisar_galgo(dog, ctx):
 
     valid_grades = [grade_num(r["grade"]) for r in R if grade_num(r["grade"]) is not None]
     avg_grade_n = sum(valid_grades) / len(valid_grades) if valid_grades else (today_n or 0)
-    base = 16.0 - avg_grade_n
+    
+    # Ajuste 2: Suavização da Categoria Base
+    base = 13.0 - (avg_grade_n * 0.6)
     d["cat_mod"], d["cat"] = mod, base + mod
 
     d["peso"] = dog.get("peso_atual") or R[0]["weight"]
@@ -416,9 +415,9 @@ def finalizar(ds, ctx):
         if d["early_cnt"] > 0 and d["perfil"] == "Limpo":
             f.append(("Ritmo Acelerado", d["early_cnt"] * 5.0))
         if d["saw_cnt"] > 0:
-            f.append(("Largada Lenta", d["saw_cnt"] * -4.0)) 
+            f.append(("Largada Lenta", d["saw_cnt"] * -6.0)) # Ajuste 1: -4.0 para -6.0
         if d["fbt_cnt"] > 0:
-            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -2.0))
+            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -4.0)) # Ajuste 1: -2.0 para -4.0
         if any(abs(d["trap"] - v) == 1 for v in vac):
             f.append(("Trap Vazia", CFG["TRAP_VAZIA"]))
         if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
@@ -444,8 +443,9 @@ def calc_prob(V, D, rank, ctx):
     score_v = 0.0
     score_d = 0.0
 
-    score_v += (30.0 - V["tadj"]) * 25.0
-    score_d += (30.0 - D["tadj"]) * 25.0
+    # Ajuste 1: Redução do peso do Tadj (de 25.0 para 15.0) para não esmagar os outros fatores
+    score_v += (30.0 - V["tadj"]) * 15.0
+    score_d += (30.0 - D["tadj"]) * 15.0
 
     if V.get("msplit") and D.get("msplit"):
         score_v += (6.0 - V["msplit"]) * 15.0
@@ -470,17 +470,24 @@ def calc_prob(V, D, rank, ctx):
     if V["trap"] in [1,2,3] and D["trap"] in [4,5,6]: score_v += 0.5
     if V["trap"] in [4,5,6] and D["trap"] in [1,2,3]: score_d += 0.5
 
+    # Ajuste 3: Bônus para quem tem o melhor Ritmo Final
+    if V["name"] in ctx.get("top3_ritmo", set()): score_v += 1.0
+    if D["name"] in ctx.get("top3_ritmo", set()): score_d += 1.0
+    
     if V["name"] in ctx.get("top3_ms", set()): score_v += 0.5
     if D["name"] in ctx.get("top3_ms", set()): score_d += 0.5
-    if V["name"] in ctx.get("top3_ritmo", set()): score_v += 0.5
-    if D["name"] in ctx.get("top3_ritmo", set()): score_d += 0.5
 
     diff = score_v - score_d
 
+    # Ajuste 1 (continuação): Curva logística menos sensível (0.15 -> 0.10)
     try:
-        prob = 100.0 / (1.0 + math.exp(-0.15 * diff))
+        prob = 100.0 / (1.0 + math.exp(-0.10 * diff))
     except OverflowError:
         prob = 100.0 if diff > 0 else 0.0
+
+    # Ajuste 2: Penalidade de -5% na probabilidade se o Vencedor for Trombador
+    if V.get("perfil") == "Trombador":
+        prob -= 5.0
 
     return max(10.0, min(90.0, prob))
 
@@ -627,7 +634,6 @@ def tabela_avb(lista, titulo):
 
         prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#12873a'>{prob:.1f}%</span></td>"
 
-        # ESTRELA DOURADA, MAIOR E COM ESPAÇO
         star = "<span style='color:#FFD700; font-size:16px; margin-right:6px;'>★</span>" if is_premium else ""
 
         rows.append([
