@@ -1069,9 +1069,19 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
 
 
 # ---------------------------------------------------------------- tela
+# Trava a largura da barra lateral no padrao (21rem) e usa letra menor nos botoes das corridas,
+# para o texto com o horario do Brasil caber sem alargar a barra.
+_CSS_SIDEBAR = """<style>
+section[data-testid="stSidebar"]{width:21rem !important;min-width:21rem !important;max-width:21rem !important;}
+section[data-testid="stSidebar"] .stButton > button{padding:.35rem .4rem;min-height:0;}
+section[data-testid="stSidebar"] .stButton > button p{font-size:.76rem;line-height:1.25;}
+</style>"""
+
+
 def main():
     st.title("🐾 DIB GREYHOUND")
 
+    st.markdown(_CSS_SIDEBAR, unsafe_allow_html=True)
     with st.sidebar:
         modo_txt = st.radio("Ver", ["🏁 Corridas", "📊 Resultados"], horizontal=True, label_visibility="collapsed")
         modo = "res" if "Resultados" in modo_txt else "ana"
