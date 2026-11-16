@@ -20,8 +20,8 @@ st.set_page_config(page_title="DIB GREYHOUND", layout="wide", initial_sidebar_st
 st.markdown(
     """
     <style>
-    /* 1. Esconde o ícone original do Streamlit */
-    [data-testid="stStatusWidget"] > div > svg {
+    /* 1. Força a esconder qualquer ícone de esporte original */
+    [data-testid="stStatusWidget"] svg {
         display: none !important;
     }
 
@@ -29,16 +29,17 @@ st.markdown(
     [data-testid="stStatusWidget"] > div::before {
         content: "";
         display: inline-block;
-        width: 26px;
-        height: 26px;
-        /* Silhueta de Galgo em SVG */
-        background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 42"><g fill="%23FF4B4B" stroke="%23FF4B4B" stroke-linecap="round" stroke-linejoin="round"><path stroke-width="0.4" d="M24 13 C32 9.6 44 8.8 54 8.6 C62 8.4 68 7.2 74 6 C78 5 81 4.2 84 3.8 C87 3.4 89 4 91 5 L99 9 C100.4 9.8 100.4 11 99 11.6 L94 12.4 C91 12.6 89.4 11.4 87 11.2 C83 11.6 80 13 78.4 15.6 C77.4 19.2 75 22.6 70 22.6 C65 22.6 60 20 55 18.4 C50 16.8 44 15.8 38 16 C32 16 27 16.6 24 14.8 Z"/><path stroke-width="0.3" d="M85.4 3.8 L86.4 0.6 L88.8 3.4 Z"/><path fill="none" stroke-width="2.6" d="M77 15.4 L88 18"/><path fill="none" stroke-width="1.6" d="M88 18 L98 18.6"/><path fill="none" stroke-width="2.4" d="M76 17 L85 21.6"/><path fill="none" stroke-width="1.6" d="M85 21.6 L94 22.4"/><path fill="none" stroke-width="5" d="M29 13.6 L19 19.4"/><path fill="none" stroke-width="2.4" d="M19 19.4 L10 24.6"/><path fill="none" stroke-width="1.7" d="M10 24.6 L4 26.4"/><path fill="none" stroke-width="3.8" d="M30 15.6 L23 24"/><path fill="none" stroke-width="2.2" d="M23 24 L15 30.4"/><path fill="none" stroke-width="1.7" d="M15 30.4 L8.4 32.6"/><path fill="none" stroke-width="1.2" d="M24 12.6 C18 14.2 12 15 5 13.4"/></g></svg>');
+        width: 32px;
+        height: 32px;
+        /* Silhueta de Galgo em SVG na cor cinza escuro (#31333F) */
+        background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 42"><g fill="%2331333F" stroke="%2331333F" stroke-linecap="round" stroke-linejoin="round"><path stroke-width="0.4" d="M24 13 C32 9.6 44 8.8 54 8.6 C62 8.4 68 7.2 74 6 C78 5 81 4.2 84 3.8 C87 3.4 89 4 91 5 L99 9 C100.4 9.8 100.4 11 99 11.6 L94 12.4 C91 12.6 89.4 11.4 87 11.2 C83 11.6 80 13 78.4 15.6 C77.4 19.2 75 22.6 70 22.6 C65 22.6 60 20 55 18.4 C50 16.8 44 15.8 38 16 C32 16 27 16.6 24 14.8 Z"/><path stroke-width="0.3" d="M85.4 3.8 L86.4 0.6 L88.8 3.4 Z"/><path fill="none" stroke-width="2.6" d="M77 15.4 L88 18"/><path fill="none" stroke-width="1.6" d="M88 18 L98 18.6"/><path fill="none" stroke-width="2.4" d="M76 17 L85 21.6"/><path fill="none" stroke-width="1.6" d="M85 21.6 L94 22.4"/><path fill="none" stroke-width="5" d="M29 13.6 L19 19.4"/><path fill="none" stroke-width="2.4" d="M19 19.4 L10 24.6"/><path fill="none" stroke-width="1.7" d="M10 24.6 L4 26.4"/><path fill="none" stroke-width="3.8" d="M30 15.6 L23 24"/><path fill="none" stroke-width="2.2" d="M23 24 L15 30.4"/><path fill="none" stroke-width="1.7" d="M15 30.4 L8.4 32.6"/><path fill="none" stroke-width="1.2" d="M24 12.6 C18 14.2 12 15 5 13.4"/></g></svg>');
         background-size: contain;
         background-repeat: no-repeat;
         background-position: center;
         margin-right: 8px;
+        vertical-align: middle;
         
-        /* Animação do galgo correndo (vai e volta) */
+        /* Animação do galgo correndo */
         animation: runDog 0.4s infinite alternate;
     }
 
