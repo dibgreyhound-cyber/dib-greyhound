@@ -522,7 +522,29 @@ def montar_avbs(rank, ctx):
                         continue
 
             if prob >= 60.0:
-                s1.append((V, D, prob)) # Estrela removida daqui
+                # =====================================================
+                # CRITÉRIOS PARA A ESTRELA (AVB PREMIUM)
+                # =====================================================
+                # 1. Vencedor no Top 3 Split e Desafiante fora do Top 3
+                c1 = (V["name"] in ctx.get("top3_ms", set())) and (D["name"] not in ctx.get("top3_ms", set()))
+                
+                # 2. Categoria do Vencedor igual ou melhor
+                c2 = V.get("cat", 0) >= D.get("cat", 0)
+                
+                # 3. Split e Média de Split do Vencedor melhores
+                c3 = (V.get("split") is not None and D.get("split") is not None and V["split"] < D["split"]) and \
+                     (V.get("msplit") is not None and D.get("msplit") is not None and V["msplit"] < D["msplit"])
+                     
+                # 4. Média Time menor e Time Ajustado (Tadj) mínimo 0.10s menor
+                c4 = (V.get("mtime") is not None and D.get("mtime") is not None and V["mtime"] < D["mtime"]) and \
+                     (V.get("tadj") is not None and D.get("tadj") is not None and V["tadj"] <= D["tadj"] - 0.10)
+                     
+                # 5. Recuperação do Vencedor >= 0 e melhor que a do Desafiante
+                c5 = (V.get("rec") is not None and D.get("rec") is not None and V["rec"] >= 0 and V["rec"] > D["rec"])
+
+                is_premium = c1 and c2 and c3 and c4 and c5
+                
+                s1.append((V, D, prob, is_premium))
 
     return sorted(s1, key=lambda x: -x[2])
 
@@ -607,7 +629,7 @@ def tabela_avb(lista, titulo):
         return v_str, d_str
 
     rows = []
-    for i, (V, D, prob) in enumerate(lista): # Star removida do unpack
+    for i, (V, D, prob, is_premium) in enumerate(lista):
         if i > 0: rows.append(["<hr>"])
 
         ov_v, ov_d = fmt_pair(V['overall'], D['overall'], False, 1)
@@ -629,8 +651,10 @@ def tabela_avb(lista, titulo):
 
         prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#12873a'>{prob:.1f}%</span></td>"
 
+        star = "<span style='color:#ffffff; font-size:12px;'>★</span> " if is_premium else ""
+
         rows.append([
-            f"{trap_label(V)} - {nome_marcado(V)}", # Emoji da estrela removido
+            f"{star}{trap_label(V)} - {nome_marcado(V)}",
             ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]),
             f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, r_v, rec_v, f"{V['conf']:.0f}%",
             prob_cell
