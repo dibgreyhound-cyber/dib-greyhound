@@ -31,7 +31,7 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 5.0 - Calibrado para o Ciclo 3)
+# CONFIGURAÇÃO GLOBAL (DIB 6.0 - Calibrado para o Ciclo 4)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
@@ -125,26 +125,18 @@ def parts_of(rem):
 def count_traf(rem):
     return sum(1 for p in parts_of(rem) if RE_TRAF.search(p))
 
-# =====================================================================
-# TADJ CIRÚRGICO
-# =====================================================================
 def traffic_penalty(rem, peso=31.0):
     s = str(rem or "").lower()
     pen = 0.0
-    
     graves = sum(s.count(k) for k in ("baulk", "fell", "ko", "msdbrk"))
     if graves > 0: pen += graves * 0.30
-    
     moderados = sum(s.count(k) for k in ("bmp", "crd", "fcd", "crmp"))
     if moderados > 0: pen += moderados * 0.15
-    
     pen = min(pen, 0.50)
     if pen == 0: return 0.0
-    
     if peso > 30.0: fator = 0.8
     elif peso < 28.0: fator = 1.2
     else: fator = 1.0
-    
     return pen * fator
 
 def not_free(rem):
@@ -308,7 +300,6 @@ def oficial(r, ctx):
     g = str(r["grade"] or "").strip().upper()
     if not g or g.startswith("HP"):
         return False
-        
     return (r["dist"] is not None
             and abs(r["dist"] - ctx["dist"]) < 1
             and r["caltm"] is not None and r["caltm"] > 0)
@@ -439,17 +430,16 @@ def finalizar(ds, ctx):
     ok.sort(key=lambda x: -x["overall"])
     for i, d in enumerate(ok, 1):
         d["pos"] = i
+        # A regra de bloqueio segue firme e forte
         d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"]
         
-        top2_safe = (i <= 2) and (d.get("rec", -100) > -10.0)
-        d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d["rec"] <= 0) and not top2_safe
+        # Ajuste 2: Alvo Menos Rigoroso
+        top2_safe = (i <= 2) and (d.get("rec", -100) >= -10.0)
+        d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d["rec"] < -10.0) and not top2_safe
         
         d["elegivel"] = not d["bloqueado"]
     return ok, top3_ms
 
-# =====================================================================
-# MATEMÁTICA LOGÍSTICA (SIGMOIDE)
-# =====================================================================
 def calc_prob(V, D, rank, ctx):
     if V.get("tadj") is None or D.get("tadj") is None: return 50.0
 
@@ -523,24 +513,17 @@ def montar_avbs(rank, ctx):
 
             if prob >= 60.0:
                 # =====================================================
-                # CRITÉRIOS PARA A ESTRELA (AVB PREMIUM)
+                # CRITÉRIOS PARA A ESTRELA (AVB PREMIUM) - Ajuste 3
                 # =====================================================
-                # 1. Vencedor no Top 3 Split e Desafiante fora do Top 3
                 c1 = (V["name"] in ctx.get("top3_ms", set())) and (D["name"] not in ctx.get("top3_ms", set()))
-                
-                # 2. Categoria do Vencedor igual ou melhor
                 c2 = V.get("cat", 0) >= D.get("cat", 0)
-                
-                # 3. Split e Média de Split do Vencedor melhores
                 c3 = (V.get("split") is not None and D.get("split") is not None and V["split"] < D["split"]) and \
                      (V.get("msplit") is not None and D.get("msplit") is not None and V["msplit"] < D["msplit"])
-                     
-                # 4. Média Time menor e Time Ajustado (Tadj) mínimo 0.10s menor
                 c4 = (V.get("mtime") is not None and D.get("mtime") is not None and V["mtime"] < D["mtime"]) and \
                      (V.get("tadj") is not None and D.get("tadj") is not None and V["tadj"] <= D["tadj"] - 0.10)
-                     
-                # 5. Recuperação do Vencedor >= 0 e melhor que a do Desafiante
-                c5 = (V.get("rec") is not None and D.get("rec") is not None and V["rec"] >= 0 and V["rec"] > D["rec"])
+                
+                # Mudança: Recuperação aceita até -10% e precisa ser melhor que a do desafiante
+                c5 = (V.get("rec") is not None and D.get("rec") is not None and V["rec"] >= -10.0 and V["rec"] > D["rec"])
 
                 is_premium = c1 and c2 and c3 and c4 and c5
                 
@@ -669,17 +652,16 @@ def tabela_avb(lista, titulo):
     heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Ritmo", "Recup.", "Conf.", "Probabilidade"]
     st.markdown(tbl(heads, rows), unsafe_allow_html=True)
 
-# =====================================================================
-# LEITURA TÁTICA (NARRATIVA DINÂMICA DA CORRIDA)
-# =====================================================================
 def gerar_observacoes(rank, avbs, ctx):
     if not rank: return
     st.markdown("---")
-    st.markdown("#### 🏁 Leitura Tática da Corrida (Narrativa)")
+    st.markdown("#### 🏁 Leitura Tática da Corrida")
 
     elegiveis = [d for d in rank if not d.get("bloqueado")]
+    bloqueados = [d for d in rank if d.get("bloqueado")]
+
     if not elegiveis: 
-        st.warning("Todos os cães estão bloqueados.")
+        st.warning("Todos os cães estão bloqueados ou sem dados suficientes para esta corrida.")
         return
 
     fav_app = elegiveis[0]
@@ -699,16 +681,17 @@ def gerar_observacoes(rank, avbs, ctx):
     if len(trombadores_internos) >= 2:
         nomes_tromb = " e ".join([f"{TRAP_EMOJI.get(d['trap'])} {d['name']}" for d in trombadores_internos])
         clean_candidates = [d for d in elegiveis if d["perfil"] != "Trombador"]
+        
         if clean_candidates:
             c_clean = clean_candidates[0]
             if c_clean["trap"] >= 5: local = "por fora"
             elif c_clean["trap"] == 4: local = "pelo meio"
             else: local = "no trilho (por dentro)"
+                
             insights.append(f"**💥 Risco de Colisão:** O {nomes_tromb} são Trombadores e correm nas traps internas. Se eles se chocarem na 1ª curva, o {TRAP_EMOJI.get(c_clean['trap'])} {c_clean['name']}, que corre {local} e está limpo, pode herdar a pista livre.")
         else:
             insights.append(f"**💥 Risco de Colisão:** O {nomes_tromb} são Trombadores e correm nas traps internas. A briga pelo trilho será intensa.")
 
-    bloqueados = [d for d in rank if d.get("bloqueado")]
     if bloqueados:
         b = max(bloqueados, key=lambda x: x["overall"])
         if b["overall"] > fav_app["overall"]:
