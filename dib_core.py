@@ -430,10 +430,8 @@ def finalizar(ds, ctx):
     ok.sort(key=lambda x: -x["overall"])
     for i, d in enumerate(ok, 1):
         d["pos"] = i
-        # A regra de bloqueio segue firme e forte
         d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"]
         
-        # Ajuste 2: Alvo Menos Rigoroso
         top2_safe = (i <= 2) and (d.get("rec", -100) >= -10.0)
         d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d["rec"] < -10.0) and not top2_safe
         
@@ -512,17 +510,12 @@ def montar_avbs(rank, ctx):
                         continue
 
             if prob >= 60.0:
-                # =====================================================
-                # CRITÉRIOS PARA A ESTRELA (AVB PREMIUM) - Ajuste 3
-                # =====================================================
                 c1 = (V["name"] in ctx.get("top3_ms", set())) and (D["name"] not in ctx.get("top3_ms", set()))
                 c2 = V.get("cat", 0) >= D.get("cat", 0)
                 c3 = (V.get("split") is not None and D.get("split") is not None and V["split"] < D["split"]) and \
                      (V.get("msplit") is not None and D.get("msplit") is not None and V["msplit"] < D["msplit"])
                 c4 = (V.get("mtime") is not None and D.get("mtime") is not None and V["mtime"] < D["mtime"]) and \
                      (V.get("tadj") is not None and D.get("tadj") is not None and V["tadj"] <= D["tadj"] - 0.10)
-                
-                # Mudança: Recuperação aceita até -10% e precisa ser melhor que a do desafiante
                 c5 = (V.get("rec") is not None and D.get("rec") is not None and V["rec"] >= -10.0 and V["rec"] > D["rec"])
 
                 is_premium = c1 and c2 and c3 and c4 and c5
@@ -634,7 +627,8 @@ def tabela_avb(lista, titulo):
 
         prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#12873a'>{prob:.1f}%</span></td>"
 
-        star = "<span style='color:#ffffff; font-size:12px;'>★</span> " if is_premium else ""
+        # ESTRELA DOURADA, MAIOR E COM ESPAÇO
+        star = "<span style='color:#FFD700; font-size:16px; margin-right:6px;'>★</span>" if is_premium else ""
 
         rows.append([
             f"{star}{trap_label(V)} - {nome_marcado(V)}",
