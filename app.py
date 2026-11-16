@@ -1112,7 +1112,7 @@ def main():
             st.caption(f"{len(lista)} corridas · horário da pista (Brasil = −3h)")
             for c in lista:
                 ativo = sel and sel.get("id") == c["id"] and sel.get("modo") == modo
-                rotulo = f"{'▶ ' if ativo else ''}{c['hora']} · {c['pista']} R{c['num'] or '?'} · " \
+                rotulo = f"{'▶ ' if ativo else ''}{c['hora']} (BR {hora_br(c['hora'])}) · {c['pista']} R{c['num'] or '?'} · " \
                          f"{c['grade'] or '?'} · {c['dist'] or '?'}m"
                 st.button(rotulo, key=f"{modo}_{c['id']}", use_container_width=True,
                           on_click=escolher, args=(c, data_str, modo))
