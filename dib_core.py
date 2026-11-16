@@ -522,7 +522,7 @@ def montar_avbs(rank, ctx):
                         continue
 
             if prob >= 60.0:
-                s1.append((V, D, prob, True))
+                s1.append((V, D, prob)) # Estrela removida daqui
 
     return sorted(s1, key=lambda x: -x[2])
 
@@ -607,7 +607,7 @@ def tabela_avb(lista, titulo):
         return v_str, d_str
 
     rows = []
-    for i, (V, D, prob, star) in enumerate(lista):
+    for i, (V, D, prob) in enumerate(lista): # Star removida do unpack
         if i > 0: rows.append(["<hr>"])
 
         ov_v, ov_d = fmt_pair(V['overall'], D['overall'], False, 1)
@@ -630,7 +630,7 @@ def tabela_avb(lista, titulo):
         prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#12873a'>{prob:.1f}%</span></td>"
 
         rows.append([
-            f"{'⭐ ' if star else ''}{trap_label(V)} - {nome_marcado(V)}",
+            f"{trap_label(V)} - {nome_marcado(V)}", # Emoji da estrela removido
             ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]),
             f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, r_v, rec_v, f"{V['conf']:.0f}%",
             prob_cell
@@ -646,7 +646,7 @@ def tabela_avb(lista, titulo):
     st.markdown(tbl(heads, rows), unsafe_allow_html=True)
 
 # =====================================================================
-# LEITURA TÁTICA (NARRATIVA DINÂMICA DA CORRIDA - CORRIGIDA)
+# LEITURA TÁTICA (NARRATIVA DINÂMICA DA CORRIDA)
 # =====================================================================
 def gerar_observacoes(rank, avbs, ctx):
     if not rank: return
@@ -661,60 +661,45 @@ def gerar_observacoes(rank, avbs, ctx):
     fav_app = elegiveis[0]
     insights = []
     
-    # Extrai o Post Pick para cruzar com o App
     pp_str = str(ctx.get("post_pick") or "")
     pp_traps = [int(c) for c in pp_str if c.isdigit()]
     pp_fav_trap = pp_traps[0] if pp_traps else None
     pp_fav = next((d for d in elegiveis if d["trap"] == pp_fav_trap), None)
 
-    # 1. Divergência App vs Mercado (A Grande História)
     if pp_fav and pp_fav["trap"] != fav_app["trap"]:
         insights.append(f"**⚔️ Duelo de Favoritos:** O mercado elegeu o **{TRAP_EMOJI.get(pp_fav['trap'])} {pp_fav['name']}** (Post Pick 1), mas o App crava o **{TRAP_EMOJI.get(fav_app['trap'])} {fav_app['name']}** ({fav_app['overall']:.1f} de Overall) como o verdadeiro dono da prova. É um choque direto.")
     else:
         insights.append(f"**🤝 Consenso Total:** O mercado e o App concordam que o **{TRAP_EMOJI.get(fav_app['trap'])} {fav_app['name']}** é o cão a ser batido. Overall {fav_app['overall']:.1f} e Confiança {fav_app['conf']:.0f}%.")
 
-    # 2. Dinâmica de Pista (Trombadores vs Limpos) - LÓGICA CORRIGIDA
     trombadores_internos = [d for d in elegiveis if d["perfil"] == "Trombador" and d["trap"] <= 4]
-    
     if len(trombadores_internos) >= 2:
         nomes_tromb = " e ".join([f"{TRAP_EMOJI.get(d['trap'])} {d['name']}" for d in trombadores_internos])
-        
-        # Procura um cão que NÃO seja trombador para ser o beneficiário
         clean_candidates = [d for d in elegiveis if d["perfil"] != "Trombador"]
-        
         if clean_candidates:
-            c_clean = clean_candidates[0] # Pega o melhor cão limpo
-            if c_clean["trap"] >= 5:
-                local = "por fora"
-            elif c_clean["trap"] == 4:
-                local = "pelo meio"
-            else:
-                local = "no trilho (por dentro)"
-                
+            c_clean = clean_candidates[0]
+            if c_clean["trap"] >= 5: local = "por fora"
+            elif c_clean["trap"] == 4: local = "pelo meio"
+            else: local = "no trilho (por dentro)"
             insights.append(f"**💥 Risco de Colisão:** O {nomes_tromb} são Trombadores e correm nas traps internas. Se eles se chocarem na 1ª curva, o {TRAP_EMOJI.get(c_clean['trap'])} {c_clean['name']}, que corre {local} e está limpo, pode herdar a pista livre.")
         else:
             insights.append(f"**💥 Risco de Colisão:** O {nomes_tromb} são Trombadores e correm nas traps internas. A briga pelo trilho será intensa.")
 
-    # 3. O Falso Favorito (se houver)
     bloqueados = [d for d in rank if d.get("bloqueado")]
     if bloqueados:
         b = max(bloqueados, key=lambda x: x["overall"])
         if b["overall"] > fav_app["overall"]:
             insights.append(f"**🚫 Armadilha do Histórico:** O {TRAP_EMOJI.get(b['trap'])} {b['name']} tem Overall bruto de {b['overall']:.1f}, mas o App o bloqueou. O histórico dele nessa distância é curto ou ruim. Não caia na armadilha da odd baixa.")
 
-    # 4. Zebra de Valor (Real)
     tadj_rank = sorted([d for d in elegiveis if d.get("tadj")], key=lambda x: x["tadj"])
     if len(tadj_rank) >= 3:
         top2_tadj_names = {d["name"] for d in tadj_rank[:2]}
         for z in elegiveis:
             if z["pos"] >= 4 and z["name"] in top2_tadj_names:
                 is_mkt_zebra = True
-                if pp_traps and z["trap"] in pp_traps[:2]:
-                    is_mkt_zebra = False
+                if pp_traps and z["trap"] in pp_traps[:2]: is_mkt_zebra = False
                 if is_mkt_zebra:
                     insights.append(f"**🦓 A Zebra Escondida:** O {TRAP_EMOJI.get(z['trap'])} {z['name']} está apenas em {z['pos']}º no App, mas tem o **{z['tadj']:.2f}** de Tadj (Top 2 da prova). O mercado também esqueceu dele no Post Pick. É a aposta de risco/retorno mais alta da corrida.")
 
-    # 5. Alvo Exposto
     alvos = [d for d in rank if d.get("alvo")]
     if alvos:
         nomes_alvo = ", ".join([f"{TRAP_EMOJI.get(a['trap'])} {a['name']}" for a in alvos])
