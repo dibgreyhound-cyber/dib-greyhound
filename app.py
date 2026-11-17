@@ -511,6 +511,44 @@ def testar_enderecos(race_id, data_str, bases, nomes):
     return testes, achado
 
 
+def descobrir_lista(data_str):
+    """Le o JavaScript do site, descobre os enderecos que ele usa para a lista de corridas do dia e testa cada um.
+    Devolve (endereco_com_{data} ou None, linhas_do_relatorio)."""
+    v = varrer_site()
+    caminhos = [("/" + p.lstrip("/")) for p in v["caminhos"] if re.search(r"meeting|list|race", p, re.I)]
+    bases = list(dict.fromkeys(caminhos[:8] + ["/meeting/blocks.sd", "/meeting-list/blocks.sd", "/meetings/blocks.sd"]))
+    blocos = [b for b in v["blocos"] if re.search(r"list|meeting|header|race", b, re.I)]
+    nomes = list(dict.fromkeys(blocos[:8] + ["header%2Clist", "list", "meeting-list", "meeting"]))
+    urls = []
+    for b_ in bases:
+        if "blocks" in b_:
+            urls += [f"{BASE}{b_}?r_date={data_str}&blocks={n}" for n in nomes]
+        else:
+            urls.append(f"{BASE}{b_}?r_date={data_str}")
+    urls = urls[:30]
+    achado, linhas = None, []
+    for u in urls:
+        time.sleep(0.25)
+        curto = u.replace(BASE, "")
+        try:
+            r = http().get(u, timeout=8)
+            js = r.json() if r.status_code == 200 else None
+        except Exception as e:
+            linhas.append(f"erro | {curto} | {str(e)[:40]}")
+            continue
+        n = len(achar_corridas(js)) if js is not None else 0
+        linhas.append(f"{r.status_code} | corridas={n} | {curto}")
+        if n >= 3 and not achado:
+            achado = u.replace(data_str, "{data}")
+            break
+    rel = [f"Lista do dia {data_str}",
+           "ARQUIVOS: " + ", ".join(v["scripts"]),
+           "ENDERECOS .sd (meeting/list/race): " + ", ".join(caminhos[:40]),
+           "BLOCKS: " + ", ".join(blocos[:40]),
+           "TESTES:", *linhas]
+    return achado, rel
+
+
 def painel_descobrir(race_id, data_str):
     st.markdown("---")
     st.markdown("#### 🧪 Procurando o endereço do resultado e do replay")
@@ -1207,13 +1245,25 @@ def main():
             dist_in = st.number_input("Distância (m) - 0 = da lista", value=0, step=10)
             pp_in = st.text_input("Post Pick (ex: 1-2-3)", value="")
             url_custom = st.text_input("Endereço da lista (use {data})", value="")
-        corridas, tentativas, primeira = buscar_lista(data_str, url_custom)
+        corridas, tentativas, primeira = buscar_lista(data_str, url_custom or st.session_state.get("url_lista_auto", ""))
         memoria = st.session_state.setdefault("lista_ok", {})
         if corridas:
             memoria[data_str] = corridas
         elif data_str in memoria:
             corridas = memoria[data_str]
             st.caption("⚠️ Usando a última lista carregada (o site não respondeu agora).")
+        if not corridas and st.session_state.get("desc_lista") != data_str:
+            st.session_state["desc_lista"] = data_str       # tenta descobrir o endereco 1 vez por data
+            with st.spinner("Procurando o endereço da lista no site..."):
+                try:
+                    achado_url, rel_lista = descobrir_lista(data_str)
+                except Exception as e:
+                    achado_url, rel_lista = None, [f"erro ao procurar: {e}"]
+            st.session_state["rel_lista"] = rel_lista
+            if achado_url:
+                st.session_state["url_lista_auto"] = achado_url
+                buscar_lista.clear()
+                st.rerun()
         sem_dados = not corridas and any(t.get("Status") in (404, 406) for t in tentativas) \
             and not any(t.get("Status") == 403 for t in tentativas)
         if sem_dados:
@@ -1263,6 +1313,12 @@ def main():
             if not corridas and primeira is not None:
                 st.caption("Resposta recebida:")
                 st.json(primeira if len(str(primeira)) < 6000 else {"(cortado)": str(primeira)[:6000]})
+            rel_l = st.session_state.get("rel_lista")
+            if rel_l and not corridas:
+                st.caption("Busca automática do endereço da lista (copie e cole no chat):")
+                texto_rel = "\n".join(rel_l)
+                botao_copiar(texto_rel)
+                st.text_area("Relatório da lista:", texto_rel, height=200)
         with st.expander("🔗 Usar link manual"):
             link = st.text_input("Link da corrida", placeholder="Cole o link aqui...")
             if st.button("Analisar link") and link:
