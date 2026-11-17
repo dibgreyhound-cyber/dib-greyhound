@@ -92,39 +92,60 @@ EXTRA = {"winsec": ["winnerOrSecond", "winSec", "wnSec", "winnerName", "secondNa
 
 
 # ---------------------------------------------------------------- conexao com o site
+_UA_WIN = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+           "Chrome/131.0.0.0 Safari/537.36")
+_UA_ANDROID = ("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) "
+               "Chrome/131.0.0.0 Mobile Safari/537.36")
+_UA_IPHONE = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 "
+              "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1")
+# "Perfis" de navegador: o site respondeu 406 (recusado) para o perfil antigo; o app testa os outros.
+_PERFIS = [
+    {"User-Agent": _UA_WIN, "Accept": "application/json, text/plain, */*", "Accept-Language": "en-GB,en;q=0.9",
+     "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/", "Origin": BASE,
+     "sec-ch-ua": '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
+     "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"',
+     "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-origin"},
+    {"User-Agent": _UA_ANDROID, "Accept": "application/json, text/plain, */*", "Accept-Language": "en-GB,en;q=0.9",
+     "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/", "Origin": BASE,
+     "sec-ch-ua": '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
+     "sec-ch-ua-mobile": "?1", "sec-ch-ua-platform": '"Android"',
+     "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-origin"},
+    {"User-Agent": _UA_IPHONE, "Accept": "*/*", "Accept-Language": "en-GB,en;q=0.9",
+     "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/"},
+    {"User-Agent": _UA_WIN, "Accept": "*/*", "Accept-Language": "en-GB,en;q=0.9"},
+]
+
+
 class _Http:
     def __init__(self):
+        self.perfil = 0
+        self.falhou_ate = 0.0
         self._nova_sessao()
 
-    def _nova_sessao(self):
-        """Cria uma sessao nova (cookies limpos) e visita a pagina inicial, como um navegador."""
+    def _nova_sessao(self, perfil=None):
+        """Sessao nova (cookies limpos) com o perfil de navegador escolhido; visita a pagina inicial."""
+        if perfil is not None:
+            self.perfil = perfil
         self.s = requests.Session()
-        self.s.headers.update({
-            "User-Agent": dib.HEADERS.get("User-Agent", "Mozilla/5.0"),
-            "Accept": "application/json, text/plain, */*", "Accept-Language": "en-GB,en;q=0.9",
-            "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/", "Origin": BASE})
+        self.s.headers.update(_PERFIS[self.perfil])
         try: self.s.get(BASE + "/", timeout=8)
         except Exception: pass
         self.criada = time.time()
 
     def get(self, url, headers=None, timeout=15):
-        # a sessao fica guardada enquanto o app esta no ar; se ficou velha (horas), renova antes de usar
-        if time.time() - self.criada > 3600:
+        if time.time() - self.criada > 3600:      # sessao velha: renova
             self._nova_sessao()
         r = self.s.get(url, timeout=timeout)
-        if r.status_code in (403, 406, 429):
-            # recusado: a sessao/cookies podem ter vencido. Renova a sessao e tenta de novo.
-            time.sleep(1.0)
-            self._nova_sessao()
-            r = self.s.get(url, timeout=timeout)
-        if r.status_code == 406:
-            # ainda "Not Acceptable": tenta com cabecalhos mais simples.
-            for h in ({"Accept": "*/*"},
-                      {"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                       "X-Requested-With": None}):
-                r = self.s.get(url, headers=h, timeout=timeout)
-                if r.status_code != 406:
-                    break
+        if r.status_code in (403, 406, 429) and time.time() > self.falhou_ate:
+            # recusado: testa os outros perfis de navegador, cada um com sessao nova; guarda o que funcionar
+            original = self.perfil
+            for k in range(1, len(_PERFIS) + 1):
+                self._nova_sessao((original + k) % len(_PERFIS))
+                r = self.s.get(url, timeout=timeout)
+                if r.status_code not in (403, 406, 429):
+                    return r
+            self.perfil = original
+            self.falhou_ate = time.time() + 60    # todos recusados: nao insiste por 1 minuto
         return r
 
 
@@ -294,8 +315,8 @@ def tentar(urls, parser):
                                "Endereço": curto})
             continue
         js, resposta = None, ""
-        if r.status_code != 200:   # mostra o comeco da resposta de erro (ajuda a entender o bloqueio)
-            resposta = r.text[:90].replace("\n", " ")
+        if r.status_code != 200:   # mostra o comeco da resposta de erro e o servidor (ajuda a entender o bloqueio)
+            resposta = (r.text[:70].replace("\n", " ") + f" | server={r.headers.get('Server', '?')}").strip(" |")
         else:
             try:
                 js = r.json()
