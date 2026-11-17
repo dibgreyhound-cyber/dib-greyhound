@@ -57,7 +57,6 @@ import dib_core as dib
 
 BASE = "https://greyhoundbet.racingpost.com"
 
-# Endereços atualizados com rotas alternativas (evita 404 e 406)
 LISTA_CANDIDATOS = [
     BASE + "/meeting/blocks.sd?r_date={d}&blocks=header%2Clist",
     BASE + "/meeting/blocks.sd?r_date={d}&blocks=list",
@@ -101,7 +100,6 @@ EXTRA = {"winsec": ["winnerOrSecond", "winSec", "wnSec", "winnerName", "secondNa
 class _Http:
     def __init__(self):
         self.s = requests.Session()
-        # Headers atualizados simulando um navegador real completo para evitar erros 406/403
         self.s.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8", 
@@ -175,7 +173,6 @@ dib.trap_label = lambda d: badge(d["trap"])
 
 # ---------------------------------------------------------------- botao copiar (JavaScript)
 def botao_copiar(texto):
-    """Cria um botão HTML nativo que copia o texto usando JavaScript."""
     texto_js = json.dumps(texto)
 
     html = f"""
@@ -408,7 +405,7 @@ def mostrar_replay(c):
     _link(f"{BASE}/#card/race_id={c['id']}&r_date={c['data']}", "Abrir esta corrida no site")
 
 
-# ---------------------------------------------------------------- descobrir enderecos (lendo o JavaScript do site)
+# ---------------------------------------------------------------- descobrir enderecos
 _RE_SD = re.compile(r"""["']((?:/?[\w\-]+/)*[\w\-]*\.sd)(?:\?[^"']*)?["']""")
 _RE_BLOCKS = re.compile(r"""blocks\s*[:=]\s*["']([\w,%\-]+)["']""")
 
@@ -526,7 +523,7 @@ def painel_descobrir(race_id, data_str):
     st.dataframe(pd.DataFrame(testes), use_container_width=True, hide_index=True)
 
 
-# ---------------------------------------------------------------- grafico estilo "Predictor" (barras pelo Overall)
+# ---------------------------------------------------------------- grafico estilo "Predictor"
 BAR_STYLE = {
     1: ("background:#c62828;", "invert"),
     2: ("background:#1d4ed8;", "invert"),
@@ -925,7 +922,7 @@ def cabecalho_corrida(c, p):
             "</div>")
 
 
-# ---------------------------------------------------------------- colunas travadas ao rolar para o lado
+# ---------------------------------------------------------------- colunas travadas
 _JS_TRAVAR = """<script>
 (function () {
   var win, doc;
