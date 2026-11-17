@@ -92,58 +92,24 @@ EXTRA = {"winsec": ["winnerOrSecond", "winSec", "wnSec", "winnerName", "secondNa
 
 
 # ---------------------------------------------------------------- conexao com o site
-_UA_WIN = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-           "Chrome/131.0.0.0 Safari/537.36")
-_UA_ANDROID = ("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) "
-               "Chrome/131.0.0.0 Mobile Safari/537.36")
-_UA_IPHONE = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 "
-              "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1")
-# "Perfis" de navegador: o site respondeu 406 (recusado) para o perfil antigo; o app testa os outros.
-_PERFIS = [
-    {"User-Agent": _UA_WIN, "Accept": "application/json, text/plain, */*", "Accept-Language": "en-GB,en;q=0.9",
-     "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/", "Origin": BASE,
-     "sec-ch-ua": '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
-     "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"',
-     "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-origin"},
-    {"User-Agent": _UA_ANDROID, "Accept": "application/json, text/plain, */*", "Accept-Language": "en-GB,en;q=0.9",
-     "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/", "Origin": BASE,
-     "sec-ch-ua": '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
-     "sec-ch-ua-mobile": "?1", "sec-ch-ua-platform": '"Android"',
-     "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-origin"},
-    {"User-Agent": _UA_IPHONE, "Accept": "*/*", "Accept-Language": "en-GB,en;q=0.9",
-     "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/"},
-    {"User-Agent": _UA_WIN, "Accept": "*/*", "Accept-Language": "en-GB,en;q=0.9"},
-]
-
-
 class _Http:
     def __init__(self):
-        self.perfil = 0
-        self.falhou_ate = 0.0
-        self._nova_sessao()
-
-    def _nova_sessao(self, perfil=None):
-        """Sessao nova (cookies limpos) com o perfil de navegador escolhido; visita a pagina inicial."""
-        if perfil is not None:
-            self.perfil = perfil
         self.s = requests.Session()
-        self.s.headers.update(_PERFIS[self.perfil])
-        try: self.s.get(BASE + "/", timeout=8)
-        except Exception: pass
-        self.criada = time.time()
+        self.s.headers.update({
+            "User-Agent": dib.HEADERS.get("User-Agent", "Mozilla/5.0"),
+            "Accept": "application/json, text/plain, */*", "Accept-Language": "en-GB,en;q=0.9",
+            "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/", "Origin": BASE})
+        self.pronto = False
 
     def get(self, url, headers=None, timeout=15):
-        # modo "quieto": 1 tentativa por consulta; se o site recusar, pausa 10 min sem insistir
-        if time.time() < self.falhou_ate and getattr(self, "ultima", None) is not None:
-            return self.ultima
-        if time.time() - self.criada > 3600:
-            self._nova_sessao()
+        if not self.pronto:
+            try: self.s.get(BASE + "/", timeout=8)
+            except Exception: pass
+            self.pronto = True
         r = self.s.get(url, timeout=timeout)
-        if r.status_code in (403, 406, 429, 580):
-            self.falhou_ate = time.time() + 600
-            self.ultima = r
-        else:
-            self.falhou_ate = 0.0
+        if r.status_code in (403, 429):
+            time.sleep(1.5)
+            r = self.s.get(url, timeout=timeout)
         return r
 
 
@@ -313,9 +279,7 @@ def tentar(urls, parser):
                                "Endereço": curto})
             continue
         js, resposta = None, ""
-        if r.status_code != 200:   # mostra o comeco da resposta de erro e o servidor (ajuda a entender o bloqueio)
-            resposta = (r.text[:70].replace("\n", " ") + f" | server={r.headers.get('Server', '?')}").strip(" |")
-        else:
+        if r.status_code == 200:
             try:
                 js = r.json()
             except Exception:   # resposta que nao e JSON: mostra o comeco para entender
@@ -507,44 +471,6 @@ def testar_enderecos(race_id, data_str, bases, nomes):
             if n >= 2 and not achado:
                 achado = u
     return testes, achado
-
-
-def descobrir_lista(data_str):
-    """Le o JavaScript do site, descobre os enderecos que ele usa para a lista de corridas do dia e testa cada um.
-    Devolve (endereco_com_{data} ou None, linhas_do_relatorio)."""
-    v = varrer_site()
-    caminhos = [("/" + p.lstrip("/")) for p in v["caminhos"] if re.search(r"meeting|list|race", p, re.I)]
-    bases = list(dict.fromkeys(caminhos[:8] + ["/meeting/blocks.sd", "/meeting-list/blocks.sd", "/meetings/blocks.sd"]))
-    blocos = [b for b in v["blocos"] if re.search(r"list|meeting|header|race", b, re.I)]
-    nomes = list(dict.fromkeys(blocos[:8] + ["header%2Clist", "list", "meeting-list", "meeting"]))
-    urls = []
-    for b_ in bases:
-        if "blocks" in b_:
-            urls += [f"{BASE}{b_}?r_date={data_str}&blocks={n}" for n in nomes]
-        else:
-            urls.append(f"{BASE}{b_}?r_date={data_str}")
-    urls = urls[:30]
-    achado, linhas = None, []
-    for u in urls:
-        time.sleep(0.25)
-        curto = u.replace(BASE, "")
-        try:
-            r = http().get(u, timeout=8)
-            js = r.json() if r.status_code == 200 else None
-        except Exception as e:
-            linhas.append(f"erro | {curto} | {str(e)[:40]}")
-            continue
-        n = len(achar_corridas(js)) if js is not None else 0
-        linhas.append(f"{r.status_code} | corridas={n} | {curto}")
-        if n >= 3 and not achado:
-            achado = u.replace(data_str, "{data}")
-            break
-    rel = [f"Lista do dia {data_str}",
-           "ARQUIVOS: " + ", ".join(v["scripts"]),
-           "ENDERECOS .sd (meeting/list/race): " + ", ".join(caminhos[:40]),
-           "BLOCKS: " + ", ".join(blocos[:40]),
-           "TESTES:", *linhas]
-    return achado, rel
 
 
 def painel_descobrir(race_id, data_str):
@@ -1216,73 +1142,32 @@ section[data-testid="stSidebar"] .stButton > button p{font-size:.85rem;line-heig
 </style>"""
 
 
-def _ir_dia(d):
-    st.session_state["data_sel"] = d
-
-
 def main():
     st.title("🐾 DIB GREYHOUND")
-    hoje_uk = agora_uk().date()
-    if "data_pendente" in st.session_state:          # troca de dia pedida antes de criar o campo de data
-        st.session_state["data_sel"] = st.session_state.pop("data_pendente")
 
     st.markdown(_CSS_SIDEBAR, unsafe_allow_html=True)
     with st.sidebar:
         modo_txt = st.radio("Ver", ["🏁 Corridas", "📊 Resultados"], horizontal=True, label_visibility="collapsed")
         modo = "res" if "Resultados" in modo_txt else "ana"
-        # com a data ja guardada na sessao, nao se passa "value" (evita o aviso do Streamlit)
-        data = st.date_input("Data", key="data_sel") if "data_sel" in st.session_state \
-            else st.date_input("Data", value=hoje_uk, key="data_sel")
+        data = st.date_input("Data", value=agora_uk().date())
         data_str = data.strftime("%Y-%m-%d")
-        aviso = st.session_state.get("aviso_dia")
-        if aviso and aviso[0] == data:
-            st.caption("📅 " + aviso[1])
         ocultar = st.checkbox("Ocultar corridas já realizadas", value=True) if modo == "ana" else False
         with st.expander("⚙️ Ajustes (opcional)"):
             classe_in = st.text_input("Classe (vazio = da lista)", value="")
             dist_in = st.number_input("Distância (m) - 0 = da lista", value=0, step=10)
             pp_in = st.text_input("Post Pick (ex: 1-2-3)", value="")
             url_custom = st.text_input("Endereço da lista (use {data})", value="")
-        corridas, tentativas, primeira = buscar_lista(data_str, url_custom or st.session_state.get("url_lista_auto", ""))
+        corridas, tentativas, primeira = buscar_lista(data_str, url_custom)
         memoria = st.session_state.setdefault("lista_ok", {})
         if corridas:
             memoria[data_str] = corridas
         elif data_str in memoria:
             corridas = memoria[data_str]
             st.caption("⚠️ Usando a última lista carregada (o site não respondeu agora).")
-        if not corridas and st.session_state.pop("quer_descobrir", False):
-            st.session_state["desc_lista"] = data_str       # tenta descobrir o endereco 1 vez por data
-            with st.spinner("Procurando o endereço da lista no site..."):
-                try:
-                    achado_url, rel_lista = descobrir_lista(data_str)
-                except Exception as e:
-                    achado_url, rel_lista = None, [f"erro ao procurar: {e}"]
-            st.session_state["rel_lista"] = rel_lista
-            if achado_url:
-                st.session_state["url_lista_auto"] = achado_url
-                buscar_lista.clear()
-                st.rerun()
-        sem_dados = not corridas and any(t.get("Status") in (404, 406) for t in tentativas) \
-            and not any(t.get("Status") == 403 for t in tentativas)
-        if sem_dados:
-            # o site ainda nao publicou as corridas desse dia (ex.: virou o dia no Reino Unido de madrugada)
-            anterior = data - timedelta(days=1)
-            if data == hoje_uk and st.session_state.get("auto_dia") != data_str:
-                st.session_state["auto_dia"] = data_str
-                st.session_state["data_pendente"] = anterior
-                st.session_state["aviso_dia"] = (anterior, f"O site ainda não publicou as corridas de "
-                                                 f"{data.strftime('%d/%m')}; mostrando {anterior.strftime('%d/%m')}.")
-                st.rerun()
-            st.warning(f"O site não trouxe as corridas de {data.strftime('%d/%m/%Y')} (resposta 404/406). "
-                       "Pode ser que ainda não estejam publicadas ou que o site tenha recusado a consulta. "
-                       "Veja a coluna Resposta no diagnóstico abaixo.")
-            st.button(f"📅 Ver {anterior.strftime('%d/%m')}", on_click=_ir_dia, args=(anterior,))
-            st.caption("⏳ O site está recusando as consultas do app. Espere uns 10 minutos sem recarregar e toque em Recarregar lista.")
-        elif not corridas and any(t.get("Status") == 403 for t in tentativas):
+        if not corridas and any(t.get("Status") == 403 for t in tentativas):
             st.error("O site recusou o acesso (403). Costuma ser bloqueio temporário por muitas consultas "
                      "ou data ainda indisponível. Espere alguns minutos, escolha o dia anterior ou toque em Tentar de novo.")
         if st.button("🔄 Recarregar lista"):
-            http().falhou_ate = 0.0
             buscar_lista.clear()
             st.rerun()
 
@@ -1291,7 +1176,7 @@ def main():
             pistas = sorted({c["pista"] for c in corridas})
             filtro = st.multiselect("Pistas (vazio = todas)", pistas)
             lista = [c for c in corridas if not filtro or c["pista"] in filtro]
-            hoje = data == hoje_uk
+            hoje = data == agora_uk().date()
             limite = agora_uk().strftime("%H:%M")
             if modo == "ana" and ocultar and hoje:
                 lista = [c for c in lista if c["hora"] >= limite]
@@ -1305,7 +1190,7 @@ def main():
                          f"{c['grade'] or '?'} · {c['dist'] or '?'}m"
                 st.button(rotulo, key=f"{modo}_{c['id']}", use_container_width=True,
                           on_click=escolher, args=(c, data_str, modo))
-        elif not sem_dados:
+        else:
             st.warning("Não consegui carregar a lista. Veja o diagnóstico abaixo.")
 
         with st.expander("🔎 Diagnóstico da lista"):
@@ -1313,12 +1198,6 @@ def main():
             if not corridas and primeira is not None:
                 st.caption("Resposta recebida:")
                 st.json(primeira if len(str(primeira)) < 6000 else {"(cortado)": str(primeira)[:6000]})
-            rel_l = st.session_state.get("rel_lista")
-            if rel_l and not corridas:
-                st.caption("Busca automática do endereço da lista (copie e cole no chat):")
-                texto_rel = "\n".join(rel_l)
-                botao_copiar(texto_rel)
-                st.text_area("Relatório da lista:", texto_rel, height=200)
         with st.expander("🔗 Usar link manual"):
             link = st.text_input("Link da corrida", placeholder="Cole o link aqui...")
             if st.button("Analisar link") and link:
