@@ -56,23 +56,18 @@ st.markdown(
 import dib_core as dib
 
 BASE = "https://greyhoundbet.racingpost.com"
-
 LISTA_CANDIDATOS = [
     BASE + "/meeting/blocks.sd?r_date={d}&blocks=header%2Clist",
     BASE + "/meeting/blocks.sd?r_date={d}&blocks=list",
-    BASE + "/meeting/blocks.sd?r_date={d}&blocks=header,list",
     BASE + "/meeting-list/blocks.sd?r_date={d}&blocks=list",
     BASE + "/meeting/list.sd?r_date={d}",
-    BASE + "/card/blocks.sd?r_date={d}&blocks=list",
 ]
-
 RESULTADO_CANDIDATOS = (
-    [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult", "header,result")]
+    [BASE + "/results/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results", "header%2Cresult")]
     + [BASE + "/result/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results")]
     + [BASE + "/card/blocks.sd?race_id={rid}&r_date={d}&blocks=" + b for b in ("result", "results")]
     + [BASE + "/results/race.sd?race_id={rid}&r_date={d}"]
 )
-
 KEYS = {
     "id": ["raceId", "race_id", "rid"],
     "hora": ["raceDate", "offTime", "scheduledTime", "displayTime", "raceTime", "time", "startTime"],
@@ -101,32 +96,20 @@ class _Http:
     def __init__(self):
         self.s = requests.Session()
         self.s.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8", 
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "X-Requested-With": "XMLHttpRequest", 
-            "Referer": BASE + "/", 
-            "Origin": BASE,
-            "Connection": "keep-alive"
-        })
+            "User-Agent": dib.HEADERS.get("User-Agent", "Mozilla/5.0"),
+            "Accept": "application/json, text/plain, */*", "Accept-Language": "en-GB,en;q=0.9",
+            "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/", "Origin": BASE})
         self.pronto = False
 
     def get(self, url, headers=None, timeout=15):
         if not self.pronto:
-            try: 
-                self.s.get(BASE + "/", timeout=8)
-            except Exception: 
-                pass
+            try: self.s.get(BASE + "/", timeout=8)
+            except Exception: pass
             self.pronto = True
-        r = self.s.get(url, headers=headers, timeout=timeout)
-        if r.status_code in (403, 406, 429):
-            time.sleep(2.0)
-            try:
-                self.s.get(BASE + "/", timeout=5)
-            except Exception:
-                pass
-            r = self.s.get(url, headers=headers, timeout=timeout)
+        r = self.s.get(url, timeout=timeout)
+        if r.status_code in (403, 429):
+            time.sleep(1.5)
+            r = self.s.get(url, timeout=timeout)
         return r
 
 
@@ -151,10 +134,8 @@ BADGE_STYLE = {
 
 
 def badge(t):
-    try: 
-        t = int(t)
-    except Exception: 
-        return ""
+    try: t = int(t)
+    except Exception: return ""
     return (f"<span style='display:inline-block;min-width:24px;height:24px;line-height:24px;text-align:center;"
             f"border-radius:4px;font-weight:700;font-size:14px;vertical-align:middle;{BADGE_STYLE.get(t, '')}'>{t}</span>")
 
@@ -173,6 +154,7 @@ dib.trap_label = lambda d: badge(d["trap"])
 
 # ---------------------------------------------------------------- botao copiar (JavaScript)
 def botao_copiar(texto):
+    """Cria um botão HTML nativo que copia o texto usando JavaScript."""
     texto_js = json.dumps(texto)
 
     html = f"""
@@ -300,7 +282,7 @@ def tentar(urls, parser):
         if r.status_code == 200:
             try:
                 js = r.json()
-            except Exception:
+            except Exception:   # resposta que nao e JSON: mostra o comeco para entender
                 resposta = r.text[:90].replace("\n", " ")
         res = parser(js) if js is not None else []
         tentativas.append({"Status": r.status_code, "Achados": len(res),
@@ -337,11 +319,7 @@ def buscar_form_raw(race_id, data_str):
 
 # ---------------------------------------------------------------- utilidades
 def hora_br(hhmm, h24=False):
-    try:
-        parts = str(hhmm).split(":")
-        h, m = int(parts[0]), int(parts[1])
-    except Exception:
-        return hhmm
+    h, m = [int(x) for x in hhmm.split(":")]
     t = datetime(2000, 1, 1, h, m) - timedelta(hours=3)
     if h24:
         return f"{t.hour:02d}:{t.minute:02d}"
@@ -405,7 +383,7 @@ def mostrar_replay(c):
     _link(f"{BASE}/#card/race_id={c['id']}&r_date={c['data']}", "Abrir esta corrida no site")
 
 
-# ---------------------------------------------------------------- descobrir enderecos
+# ---------------------------------------------------------------- descobrir enderecos (lendo o JavaScript do site)
 _RE_SD = re.compile(r"""["']((?:/?[\w\-]+/)*[\w\-]*\.sd)(?:\?[^"']*)?["']""")
 _RE_BLOCKS = re.compile(r"""blocks\s*[:=]\s*["']([\w,%\-]+)["']""")
 
@@ -454,6 +432,7 @@ def _galgos_com_posicao(js):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def varrer_site():
+    """Le a pagina inicial e os arquivos JavaScript do site (so na primeira vez)."""
     html = _baixar(BASE + "/")
     scripts = []
     for u in re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html):
@@ -523,7 +502,7 @@ def painel_descobrir(race_id, data_str):
     st.dataframe(pd.DataFrame(testes), use_container_width=True, hide_index=True)
 
 
-# ---------------------------------------------------------------- grafico estilo "Predictor"
+# ---------------------------------------------------------------- grafico estilo "Predictor" (barras pelo Overall)
 BAR_STYLE = {
     1: ("background:#c62828;", "invert"),
     2: ("background:#1d4ed8;", "invert"),
@@ -535,6 +514,8 @@ BAR_STYLE = {
 
 
 def greyhound_svg(trap):
+    """Silhueta de greyhound em galope estendido (de lado, olhando p/ a direita).
+    Branca; preta na barra 3 (fundo claro); com contorno escuro na barra 6 (listrada)."""
     cor = "#111" if trap == 3 else "#fff"
     if trap == 6:
         sh = "filter:drop-shadow(0 0 .6px #000) drop-shadow(0 0 .6px #000) drop-shadow(0 0 .6px #000);"
@@ -546,32 +527,40 @@ def greyhound_svg(trap):
         f"<svg viewBox='0 0 104 42' width='28' height='11' xmlns='http://www.w3.org/2000/svg' "
         f"style='display:block;{sh}'>"
         f"<g fill='{cor}' stroke='{cor}' stroke-linecap='round' stroke-linejoin='round'>"
+        # tronco, pescoço fino e cabeça comprida
         "<path stroke-width='0.4' d='M24 13 C32 9.6 44 8.8 54 8.6 C62 8.4 68 7.2 74 6 C78 5 81 4.2 84 3.8 "
         "C87 3.4 89 4 91 5 L99 9 C100.4 9.8 100.4 11 99 11.6 L94 12.4 C91 12.6 89.4 11.4 87 11.2 "
         "C83 11.6 80 13 78.4 15.6 C77.4 19.2 75 22.6 70 22.6 C65 22.6 60 20 55 18.4 C50 16.8 44 15.8 38 16 "
         "C32 16 27 16.6 24 14.8 Z'/>"
+        # orelha
         "<path stroke-width='0.3' d='M85.4 3.8 L86.4 0.6 L88.8 3.4 Z'/>"
+        # patas dianteiras esticadas para a frente
         "<path fill='none' stroke-width='2.6' d='M77 15.4 L88 18'/>"
         "<path fill='none' stroke-width='1.6' d='M88 18 L98 18.6'/>"
         "<path fill='none' stroke-width='2.4' d='M76 17 L85 21.6'/>"
         "<path fill='none' stroke-width='1.6' d='M85 21.6 L94 22.4'/>"
+        # patas traseiras esticadas para trás
         "<path fill='none' stroke-width='5' d='M29 13.6 L19 19.4'/>"
         "<path fill='none' stroke-width='2.4' d='M19 19.4 L10 24.6'/>"
         "<path fill='none' stroke-width='1.7' d='M10 24.6 L4 26.4'/>"
         "<path fill='none' stroke-width='3.8' d='M30 15.6 L23 24'/>"
         "<path fill='none' stroke-width='2.2' d='M23 24 L15 30.4'/>"
         "<path fill='none' stroke-width='1.7' d='M15 30.4 L8.4 32.6'/>"
+        # rabo fino
         "<path fill='none' stroke-width='1.2' d='M24 12.6 C18 14.2 12 15 5 13.4'/>"
         "</g></svg>"
     )
 
 
 def badge_p(t):
+    """Número da trap em tamanho reduzido (só para o gráfico)."""
     return (badge(t).replace("min-width:24px;height:24px;line-height:24px", "min-width:16px;height:16px;line-height:16px")
             .replace("font-size:14px", "font-size:11px"))
 
 
 def grafico_predictor(ds):
+    """Uma barra por galgo (na ordem das traps). Tamanho = Overall / maior Overall; o maior Overall enche a barra.
+    No fim de cada barra vai o galgo correndo, com a casaca da respectiva trap."""
     com = [d for d in ds if not d.get("nd") and d.get("overall") is not None]
     if not com:
         return ""
@@ -599,13 +588,14 @@ def grafico_predictor(ds):
             "<div style='height:6px'></div>" + "".join(linhas) + "</div>")
 
 
-# ---------------------------------------------------------------- post pick
+# ---------------------------------------------------------------- post pick (galgos indicados pelo Racing Post)
 _RE_PP_TXT = re.compile(r"post\s*pick\s*[:\-]?\s*((?:[1-6]\s*[-,/]\s*)*[1-6])(?!\d)", re.I)
 _RE_SEQ = re.compile(r"[1-6](?:\s*[-,/]\s*[1-6]){1,5}")
 _TRAP_KEYS = ("trapNum", "trap", "dogTrap")
 
 
 def _nums_pp(v):
+    """Extrai numeros de trap (1-6) de um valor: '1-2-5', [1,2,5], [{'trapNum': 1}, ...]."""
     if isinstance(v, bool):
         return []
     if isinstance(v, int):
@@ -626,6 +616,9 @@ def _nums_pp(v):
 
 
 def extrair_post_pick(obj):
+    """Procura o Post Pick em qualquer lugar do JSON, em ordem de confianca:
+    1) chave 'postPick'/'post_pick'; 2) texto 'POST PICK: 1-2-5'; 3) chave com 'pick';
+    4) chave com 'tip' cujo valor e uma sequencia de traps (ex.: '1-2-5')."""
     n1, n2, n3, n4 = [], [], [], []
 
     def walk(o, caminho):
@@ -660,6 +653,7 @@ def extrair_post_pick(obj):
 
 
 def pistas_post_pick(obj, limite=15):
+    """Lista (caminho = valor) das chaves/textos que parecem ligados a post pick/tips, para diagnostico."""
     res = []
 
     def walk(o, caminho):
@@ -684,6 +678,7 @@ def pistas_post_pick(obj, limite=15):
 
 
 def _corrida_no_json(obj, race_id):
+    """Dentro do JSON da lista de corridas, devolve o trecho (dict) da corrida pedida."""
     achado = []
 
     def walk(o):
@@ -703,6 +698,7 @@ def _corrida_no_json(obj, race_id):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def buscar_post_pick(race_id, data_str):
+    """Tenta varias respostas do site ate achar o Post Pick. Devolve ('1-2-5', diagnostico)."""
     diag = []
     urls = [f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks={b}"
             for b in ("card", "header%2Ccard", "card-header", "card-title",
@@ -720,7 +716,7 @@ def buscar_post_pick(race_id, data_str):
                          "Endereço": curto})
             continue
         alvo = js
-        if js is not None and "/meeting/" in u:
+        if js is not None and "/meeting/" in u:      # lista do dia: olhar so a corrida pedida
             alvo = _corrida_no_json(js, race_id)
         nums, onde = extrair_post_pick(alvo) if alvo is not None else ([], "")
         diag.append({"Status": r.status_code,
@@ -734,6 +730,7 @@ def buscar_post_pick(race_id, data_str):
 
 
 def _fmt_pp(pp):
+    """Padroniza para '1-2-5' (aceita '1,2,5', '1 2 5', '125'...)."""
     n = re.findall(r"[1-6]", str(pp or ""))
     return "-".join(dict.fromkeys(n)) if n else ""
 
@@ -822,6 +819,7 @@ def gerar_texto_analise(c, p):
             txt.append(f"| {V['trap']} - {V['name']} | {D['trap']} - {D['name']} | {prob:.1f}% |")
 
     txt.append("")
+
     txt.append("**🏁 O Cenário da Corrida:**")
 
     elegiveis = [d for d in p["rank"] if not d.get("bloqueado")]
@@ -857,6 +855,7 @@ def gerar_texto_analise(c, p):
         nomes_alvo = ", ".join([d['name'] for d in alvos])
         txt.append(f"- 🎯 Alvo(s): {nomes_alvo} (fora do Top 3 largada e recuperação ≤ 0%).")
 
+    # DIB 3.5: Alerta de pista irlandesa e Alerta de Zebra
     all_splits = [d["msplit"] for d in p["rank"] if d.get("msplit") is not None]
     is_irish_metric = all(s < 2.0 for s in all_splits) if all_splits else False
 
@@ -894,11 +893,13 @@ def gerar_texto_analise(c, p):
 
 
 def badge_g(t):
+    """Número da trap em tamanho maior (cabeçalho da corrida)."""
     return (badge(t).replace("min-width:24px;height:24px;line-height:24px", "min-width:30px;height:30px;line-height:30px")
             .replace("font-size:14px", "font-size:17px"))
 
 
 def cabecalho_corrida(c, p):
+    """Cabeçalho: pista/hora, chips (Race, classe, distância), Classificação geral e Post Pick do site."""
     borda = "border:1px solid rgba(128,128,128,.35);"
     titulo = ""
     if c.get("hora"):
@@ -922,12 +923,13 @@ def cabecalho_corrida(c, p):
             "</div>")
 
 
-# ---------------------------------------------------------------- colunas travadas
+# ---------------------------------------------------------------- colunas travadas ao rolar para o lado
 _JS_TRAVAR = """<script>
 (function () {
   var win, doc;
   try { win = window.parent; doc = win.document; } catch (e) { return; }
 
+  // Cores das colunas travadas = cores reais do tema atual (claro/escuro), atualizadas ao trocar o tema
   var styleId = 'dib-sticky-style';
   var estilo = doc.getElementById(styleId);
   if (!estilo) {
@@ -961,7 +963,7 @@ _JS_TRAVAR = """<script>
     var linhas = tabela.querySelectorAll('tr');
     if (!linhas.length) return false;
     var cab = linhas[0].children, lefts = [], i;
-    if (!cab[0] || cab[0].getBoundingClientRect().width === 0) return false;
+    if (!cab[0] || cab[0].getBoundingClientRect().width === 0) return false;   // tabela escondida
     for (i = 0; i < n; i++) {
       if (!cab[i]) return false;
       lefts.push(i === 0 ? 0 : Math.floor(cab[i].offsetLeft) - 1);
@@ -994,8 +996,8 @@ _JS_TRAVAR = """<script>
         return (c.innerText || '').trim().toLowerCase();
       });
       var n = 0;
-      if (cab[0] === 'trap' && cab[1] === 'galgo') n = 2;
-      else if (cab[0] === 'avb') n = 1;
+      if (cab[0] === 'trap' && cab[1] === 'galgo') n = 2;      // Planilha de Projecao
+      else if (cab[0] === 'avb') n = 1;                         // Planilha de AVB
       if (n && travar(t, n)) t.setAttribute('data-dibfix', '1');
     });
   }
@@ -1010,6 +1012,7 @@ _JS_TRAVAR = """<script>
 
 
 def fixar_colunas():
+    """Trava (sticky) Trap+Galgo na Planilha de Projeção e AvB na Planilha de AVB ao rolar para o lado."""
     components.html(_JS_TRAVAR + f"<!-- {time.time()} -->", height=0)
 
 
@@ -1039,10 +1042,11 @@ def analisar(c, classe_in, dist_in, pp_in):
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
 
+    # BOTÃO DE EXPORTAR COM CÓPIA AUTOMÁTICA
     st.markdown("---")
     with st.expander("📋 Exportar Análise (Copiar e Colar para o Chat)"):
         texto_gerado = gerar_texto_analise(c, p)
-        botao_copiar(texto_gerado)
+        botao_copiar(texto_gerado)  # Chama o botão JS
         st.text_area("Se o botão acima não funcionar, copie o texto aqui:", texto_gerado, height=200)
     fixar_colunas()
 
@@ -1095,12 +1099,9 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
             st.json(primeira if len(str(primeira)) < 6000 else {"(cortado)": str(primeira)[:6000]})
         painel_descobrir(c["id"], c["data"])
         return
-    
-    tabela_html(
-        ["Pos", "Trap", "Galgo", "SP", "Tempo", "Margem", "Comentário"],
-        [[f"{l['pos']}º", badge(l["trap"]), l["nome"], l["sp"], l["tempo"], l["margem"], l["coment"]] for l in linhas]
-    )
-    
+    tabela_html(["Pos", "Trap", "Galgo", "SP", "Tempo", "Margem", "Comentário"],
+                [[f"{l['pos']}º", badge(l["trap"]), l["nome"], l["sp"], l["tempo"], l["margem"], l["coment"]]
+                 for l in linhas])
     try:
         p = preparar(c["id"], c["data"], c, classe_in, dist_in, pp_in, so_antes=True)
         if not p or not p["rank"]:
@@ -1108,14 +1109,11 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
         prev = {d["trap"]: d["pos"] for d in p["rank"]}
         real = {l["trap"]: l["pos"] for l in linhas if l["trap"]}
         st.markdown("#### 🔍 Previsto × Real (projeção só com corridas anteriores)")
-        
-        tabela_html(
-            ["Real", "Galgo", "Previsto"],
-            [[f"{l['pos']}º", f"{badge(l['trap'])} {l['nome']}", f"{prev.get(l['trap'], '-']}º"] for l in linhas]
-        )
-        
+        tabela_html(["Real", "Galgo", "Previsto"],
+                    [[f"{l['pos']}º", f"{badge(l['trap'])} {l['nome']}", f"{prev.get(l['trap'], '-')}º"]
+                     for l in linhas])
         fav, venc = p["rank"][0], linhas[0]
-        top3_prev = {d["trap"] for d in p["rank'][:3]}
+        top3_prev = {d["trap"] for d in p["rank"][:3]}
         top3_real = {l["trap"] for l in linhas[:3] if l["trap"]}
         st.markdown(f"- **Vencedor:** previsto {badge(fav['trap'])} {fav['name']} → "
                     f"{'✅ acertou' if fav['trap'] == venc['trap'] else '❌ venceu ' + venc['nome']}",
@@ -1135,6 +1133,8 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
 
 
 # ---------------------------------------------------------------- tela
+# Trava a largura da barra lateral no padrao (21rem) e usa letra menor nos botoes das corridas,
+# para o texto com o horario do Brasil caber sem alargar a barra.
 _CSS_SIDEBAR = """<style>
 section[data-testid="stSidebar"]{width:21rem !important;min-width:21rem !important;max-width:21rem !important;}
 section[data-testid="stSidebar"] .stButton > button{padding:.35rem .4rem;min-height:0;}
@@ -1164,9 +1164,9 @@ def main():
         elif data_str in memoria:
             corridas = memoria[data_str]
             st.caption("⚠️ Usando a última lista carregada (o site não respondeu agora).")
-        if not corridas and any(t.get("Status") in (403, 406, 429) for t in tentativas):
-            st.error("O site recusou o acesso (403/406/429). Proteção Cloudflare ativa ou muitas requisições. "
-                     "Aguarde alguns segundos ou clique em Recarregar lista.")
+        if not corridas and any(t.get("Status") == 403 for t in tentativas):
+            st.error("O site recusou o acesso (403). Costuma ser bloqueio temporário por muitas consultas "
+                     "ou data ainda indisponível. Espere alguns minutos, escolha o dia anterior ou toque em Tentar de novo.")
         if st.button("🔄 Recarregar lista"):
             buscar_lista.clear()
             st.rerun()
