@@ -1095,9 +1095,12 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
             st.json(primeira if len(str(primeira)) < 6000 else {"(cortado)": str(primeira)[:6000]})
         painel_descobrir(c["id"], c["data"])
         return
-    tabela_html(["Pos", "Trap", "Galgo", "SP", "Tempo", "Margem", "Comentário"],
-                [[f"{l['pos']}º", badge(l["trap"]), l["nome"], l["sp"], l["tempo"], l["margem"], l["coment"]]
-                 for l in linhas])
+    
+    tabela_html(
+        ["Pos", "Trap", "Galgo", "SP", "Tempo", "Margem", "Comentário"],
+        [[f"{l['pos']}º", badge(l["trap"]), l["nome"], l["sp"], l["tempo"], l["margem"], l["coment"]] for l in linhas]
+    )
+    
     try:
         p = preparar(c["id"], c["data"], c, classe_in, dist_in, pp_in, so_antes=True)
         if not p or not p["rank"]:
@@ -1105,11 +1108,14 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
         prev = {d["trap"]: d["pos"] for d in p["rank"]}
         real = {l["trap"]: l["pos"] for l in linhas if l["trap"]}
         st.markdown("#### 🔍 Previsto × Real (projeção só com corridas anteriores)")
-        tabela_html(["Real", "Galgo", "Previsto"],
-                    [[f"{l['pos']}º", f"{badge(l['trap'])} {l['nome']}", f"{prev.get(l['trap'], '-']}º"]
-                     for l in linhas])
+        
+        tabela_html(
+            ["Real", "Galgo", "Previsto"],
+            [[f"{l['pos']}º", f"{badge(l['trap'])} {l['nome']}", f"{prev.get(l['trap'], '-']}º"] for l in linhas]
+        )
+        
         fav, venc = p["rank"][0], linhas[0]
-        top3_prev = {d["trap"] for d in p["rank"][:3]}
+        top3_prev = {d["trap"] for d in p["rank'][:3]}
         top3_real = {l["trap"] for l in linhas[:3] if l["trap"]}
         st.markdown(f"- **Vencedor:** previsto {badge(fav['trap'])} {fav['name']} → "
                     f"{'✅ acertou' if fav['trap'] == venc['trap'] else '❌ venceu ' + venc['nome']}",
