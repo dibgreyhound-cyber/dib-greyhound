@@ -1142,27 +1142,15 @@ section[data-testid="stSidebar"] .stButton > button p{font-size:.85rem;line-heig
 </style>"""
 
 
-def _ir_dia(d):
-    st.session_state["data_sel"] = d
-
-
 def main():
     st.title("🐾 DIB GREYHOUND")
-    hoje_uk = agora_uk().date()
-    if "data_pendente" in st.session_state:          # troca de dia pedida antes de criar o campo de data
-        st.session_state["data_sel"] = st.session_state.pop("data_pendente")
 
     st.markdown(_CSS_SIDEBAR, unsafe_allow_html=True)
     with st.sidebar:
         modo_txt = st.radio("Ver", ["🏁 Corridas", "📊 Resultados"], horizontal=True, label_visibility="collapsed")
         modo = "res" if "Resultados" in modo_txt else "ana"
-        # com a data ja guardada na sessao, nao se passa "value" (evita o aviso do Streamlit)
-        data = st.date_input("Data", key="data_sel") if "data_sel" in st.session_state \
-            else st.date_input("Data", value=hoje_uk, key="data_sel")
+        data = st.date_input("Data", value=agora_uk().date())
         data_str = data.strftime("%Y-%m-%d")
-        aviso = st.session_state.get("aviso_dia")
-        if aviso and aviso[0] == data:
-            st.caption("📅 " + aviso[1])
         ocultar = st.checkbox("Ocultar corridas já realizadas", value=True) if modo == "ana" else False
         with st.expander("⚙️ Ajustes (opcional)"):
             classe_in = st.text_input("Classe (vazio = da lista)", value="")
@@ -1176,21 +1164,7 @@ def main():
         elif data_str in memoria:
             corridas = memoria[data_str]
             st.caption("⚠️ Usando a última lista carregada (o site não respondeu agora).")
-        sem_dados = not corridas and any(t.get("Status") in (404, 406) for t in tentativas) \
-            and not any(t.get("Status") == 403 for t in tentativas)
-        if sem_dados:
-            # o site ainda nao publicou as corridas desse dia (ex.: virou o dia no Reino Unido de madrugada)
-            anterior = data - timedelta(days=1)
-            if data == hoje_uk and st.session_state.get("auto_dia") != data_str:
-                st.session_state["auto_dia"] = data_str
-                st.session_state["data_pendente"] = anterior
-                st.session_state["aviso_dia"] = (anterior, f"O site ainda não publicou as corridas de "
-                                                 f"{data.strftime('%d/%m')}; mostrando {anterior.strftime('%d/%m')}.")
-                st.rerun()
-            st.warning(f"O site ainda não trouxe as corridas de {data.strftime('%d/%m/%Y')}. "
-                       "Elas costumam aparecer mais tarde. Enquanto isso, veja o dia anterior.")
-            st.button(f"📅 Ver {anterior.strftime('%d/%m')}", on_click=_ir_dia, args=(anterior,))
-        elif not corridas and any(t.get("Status") == 403 for t in tentativas):
+        if not corridas and any(t.get("Status") == 403 for t in tentativas):
             st.error("O site recusou o acesso (403). Costuma ser bloqueio temporário por muitas consultas "
                      "ou data ainda indisponível. Espere alguns minutos, escolha o dia anterior ou toque em Tentar de novo.")
         if st.button("🔄 Recarregar lista"):
@@ -1202,7 +1176,7 @@ def main():
             pistas = sorted({c["pista"] for c in corridas})
             filtro = st.multiselect("Pistas (vazio = todas)", pistas)
             lista = [c for c in corridas if not filtro or c["pista"] in filtro]
-            hoje = data == hoje_uk
+            hoje = data == agora_uk().date()
             limite = agora_uk().strftime("%H:%M")
             if modo == "ana" and ocultar and hoje:
                 lista = [c for c in lista if c["hora"] >= limite]
@@ -1216,7 +1190,7 @@ def main():
                          f"{c['grade'] or '?'} · {c['dist'] or '?'}m"
                 st.button(rotulo, key=f"{modo}_{c['id']}", use_container_width=True,
                           on_click=escolher, args=(c, data_str, modo))
-        elif not sem_dados:
+        else:
             st.warning("Não consegui carregar a lista. Veja o diagnóstico abaixo.")
 
         with st.expander("🔎 Diagnóstico da lista"):
