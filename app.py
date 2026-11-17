@@ -76,7 +76,6 @@ KEYS = {
     "grade": ["raceClass", "raceGrade", "grade", "class", "raceClassDesc"],
     "dist": ["distMetres", "distMeters", "distance", "dist", "raceDistance"],
     "clip": ["clipId", "clip_id", "videoId", "replayId"],
-    "tid": ["trackId", "track_id", "trackID", "tid"],
 }
 RES = {
     "nome": ["dogName", "dog_name", "name"],
@@ -218,12 +217,10 @@ def _hhmm(v):
 def achar_corridas(obj):
     achados = {}
 
-    def walk(o, pista_ctx, tid_ctx=""):
+    def walk(o, pista_ctx):
         if isinstance(o, dict):
             p = _get(o, "pista")
             if isinstance(p, str): pista_ctx = p
-            t_ = _get(o, "tid")
-            if t_ is not None and re.fullmatch(r"\d{1,4}", str(t_)): tid_ctx = str(t_)
             rid = _get(o, "id")
             hora = _hhmm(_get(o, "hora"))
             if rid is not None and re.fullmatch(r"\d{5,9}", str(rid)) and hora:
@@ -233,11 +230,11 @@ def achar_corridas(obj):
                     "num": str(_get(o, "num") or "").replace("Race", "").strip(),
                     "grade": re.sub(r"[()\s]", "", str(g or "")).upper(),
                     "dist": int(re.sub(r"\D", "", str(d))) if d and re.search(r"\d", str(d)) else 0,
-                    "clip": str(_get(o, "clip") or ""), "tid": tid_ctx,
+                    "clip": str(_get(o, "clip") or ""),
                 }
-            for v in o.values(): walk(v, pista_ctx, tid_ctx)
+            for v in o.values(): walk(v, pista_ctx)
         elif isinstance(o, list):
-            for v in o: walk(v, pista_ctx, tid_ctx)
+            for v in o: walk(v, pista_ctx)
 
     walk(obj, "")
     return sorted(achados.values(), key=lambda c: (c["hora"], c["pista"]))
@@ -306,72 +303,8 @@ def buscar_lista(data_str, url_custom):
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def buscar_resultado(race_id, data_str, tid="", hora=""):
-    urls = []
-    if tid and hora:   # mesmos parametros da pagina "result-meeting-result" do site
-        ex = f"race_id={race_id}&track_id={tid}&r_date={data_str}&r_time={hora}"
-        urls += [f"{BASE}/results/blocks.sd?{ex}&blocks={b}"
-                 for b in ("result", "results", "header%2Cresult", "meeting-result", "result-meeting-result",
-                           "result-pager%2Cresult-header%2Cresult-tabs%2Cresult-title%2Cresult",
-                           "results-pager%2Cresults-header%2Cresults-title%2Cresults",
-                           "card-pager%2Ccard-header%2Ccard-tabs%2Ccard-title%2Ccard")]
-        urls += [f"{BASE}/results/race.sd?{ex}", f"{BASE}/result/meeting-result.sd?{ex}"]
-    urls += [u.format(rid=race_id, d=data_str) for u in RESULTADO_CANDIDATOS]
-    return tentar(urls, achar_resultados)
-
-
-def resultado_pelo_form(c):
-    """Plano B: depois da corrida, o Form de cada galgo pode trazer a corrida de hoje (posicao, margem, remarks).
-    Devolve (linhas, diagnostico). O diagnostico explica o que foi encontrado quando nao da para montar."""
-    try:
-        r = http().get(f"{BASE}/card/blocks.sd?race_id={c['id']}&r_date={c['data']}&blocks=form", timeout=15)
-        r.raise_for_status()
-        dogs = r.json().get("form", {}).get("dogs", [])
-    except Exception as e:
-        return [], f"não consegui ler o Form ({str(e)[:60]})"
-    if not dogs:
-        return [], "o Form veio vazio"
-    dib.descobrir_chaves(dogs)
-    dist_c = float(c.get("dist") or 0)
-    pista = str(c.get("pista") or "").strip().lower()
-    hora = str(c.get("hora") or "").strip()
-    grade_c = str(c.get("grade") or "").strip().upper()
-    datas, linhas = [], []
-    for dog in dogs:
-        achados = []
-        for f in dog.get("forms", []):
-            n = dib.norm_run(f)
-            iso = n["date"].strftime("%Y-%m-%d") if n["date"] else n["date_str"]
-            datas.append(iso)
-            if iso != c["data"] or not n["fin"]:
-                continue
-            if dist_c and n["dist"] and abs(n["dist"] - dist_c) > 1:
-                continue
-            tr = n["track"].strip().lower()
-            if pista and tr and pista not in tr and tr not in pista:
-                continue
-            bruto = str(dib.pick_fb(f, "date") or "")
-            m = re.search(r"(\d{1,2}):(\d{2})", bruto)
-            hhmm = f"{int(m.group(1)):02d}:{m.group(2)}" if m else ""
-            achados.append((f, n, hhmm))
-        if not achados:
-            continue
-        pref = [a for a in achados if hora and a[2] == hora] or \
-               [a for a in achados if grade_c and a[1]["grade"] == grade_c] or achados
-        f, n, _ = pref[0]
-        rem = n["remarks"]
-        trad = ", ".join(dict.fromkeys(dib.DICIONARIO_REMARKS[t] for t in re.split(r"[,\s]+", rem.lower())
-                                        if t in dib.DICIONARIO_REMARKS))
-        trap = n["trap"] or (re.search(r"\d+", str(dog.get("trapNum", ""))) and
-                             int(re.search(r"\d+", str(dog.get("trapNum", ""))).group()))
-        linhas.append({"pos": n["fin"], "trap": trap or None, "nome": dog.get("dogName", "?"),
-                       "sp": str(_get(f, "sp", EXTRA) or ""), "tempo": str(dib.pick_fb(f, "caltm") or ""),
-                       "margem": str(dib.pick_fb(f, "by") or ""), "coment": trad or rem})
-    if len(linhas) < 2:
-        recente = max(datas) if datas else "?"
-        return [], (f"o Form tem {len(dogs)} galgos, mas nenhum traz a corrida de {c['data']} "
-                    f"(data mais recente no Form: {recente})")
-    return sorted(linhas, key=lambda x: x["pos"]), ""
+def buscar_resultado(race_id, data_str):
+    return tentar([u.format(rid=race_id, d=data_str) for u in RESULTADO_CANDIDATOS], achar_resultados)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -433,14 +366,6 @@ def _link(url, rotulo):
 
 
 # ---------------------------------------------------------------- replay
-def link_site(c):
-    """Link da corrida no site: pagina de resultado (com replay) quando se sabe track_id e hora."""
-    if c.get("tid") and c.get("hora"):
-        return (f"{BASE}/#result-meeting-result/race_id={c['id']}&track_id={c['tid']}"
-                f"&r_date={c['data']}&r_time={c['hora']}")
-    return f"{BASE}/#card/race_id={c['id']}&r_date={c['data']}"
-
-
 def mostrar_replay(c):
     clip = str(c.get("clip") or "").strip()
     if clip:
@@ -455,9 +380,7 @@ def mostrar_replay(c):
     else:
         st.caption("▶ Replay: esta corrida ainda não trouxe o código do vídeo (clipId vazio na lista). "
                    "Ele costuma aparecer depois que a corrida termina; toque em 🔄 para recarregar a lista.")
-    _link(link_site(c), "Abrir resultado e replay no site")
-    st.caption("Se o botão abrir só a lista de corridas, copie este endereço e cole no navegador:")
-    st.code(link_site(c), language=None)
+    _link(f"{BASE}/#card/race_id={c['id']}&r_date={c['data']}", "Abrir esta corrida no site")
 
 
 # ---------------------------------------------------------------- descobrir enderecos (lendo o JavaScript do site)
@@ -1164,18 +1087,12 @@ def mostrar_form(c):
 
 # ---------------------------------------------------------------- resultados
 def mostrar_resultado(c, classe_in, dist_in, pp_in):
-    linhas, tent, primeira = buscar_resultado(c["id"], c["data"], c.get("tid", ""), c.get("hora", ""))
+    linhas, tent, primeira = buscar_resultado(c["id"], c["data"])
     st.markdown(titulo_corrida(c, None, "📊 Resultado · "))
     mostrar_replay(c)
     if not linhas:
-        linhas, motivo_form = resultado_pelo_form(c)
-        if linhas:
-            st.caption("ℹ️ Resultado montado a partir do Form (o endereço oficial do resultado não respondeu). "
-                       "Os comentários vêm dos remarks do Racing Post.")
-    if not linhas:
         st.warning("Não consegui ler o resultado desta corrida (ela pode ainda não ter sido disputada). "
                    "Veja o diagnóstico abaixo.")
-        st.caption(f"Plano B (Form): {motivo_form}.")
         st.dataframe(pd.DataFrame(tent), use_container_width=True, hide_index=True)
         if primeira is not None:
             st.caption("Primeira resposta recebida:")
@@ -1287,11 +1204,8 @@ def main():
                 rid = re.search(r"race_id=(\d+)", link)
                 rd = re.search(r"r_date=([\d-]+)", link)
                 if rid and rd:
-                    tid_l = re.search(r"track_id=(\d+)", link)
-                    rt_l = re.search(r"r_time=(\d{1,2}:\d{2})", link)
-                    escolher({"id": rid.group(1), "hora": rt_l.group(1) if rt_l else "", "pista": "", "num": "",
-                              "grade": "", "dist": 0, "tid": tid_l.group(1) if tid_l else ""},
-                             rd.group(1), "res" if "result" in link.lower() else "ana")
+                    escolher({"id": rid.group(1), "hora": "", "pista": "", "num": "", "grade": "", "dist": 0},
+                             rd.group(1), "ana")
                     st.rerun()
                 else:
                     st.error("Link inválido: precisa ter race_id e r_date.")
