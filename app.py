@@ -133,19 +133,17 @@ class _Http:
         self.criada = time.time()
 
     def get(self, url, headers=None, timeout=15):
-        if time.time() - self.criada > 3600:      # sessao velha: renova
+        # modo "quieto": 1 tentativa por consulta; se o site recusar, pausa 10 min sem insistir
+        if time.time() < self.falhou_ate and getattr(self, "ultima", None) is not None:
+            return self.ultima
+        if time.time() - self.criada > 3600:
             self._nova_sessao()
         r = self.s.get(url, timeout=timeout)
-        if r.status_code in (403, 406, 429) and time.time() > self.falhou_ate:
-            # recusado: testa os outros perfis de navegador, cada um com sessao nova; guarda o que funcionar
-            original = self.perfil
-            for k in range(1, len(_PERFIS) + 1):
-                self._nova_sessao((original + k) % len(_PERFIS))
-                r = self.s.get(url, timeout=timeout)
-                if r.status_code not in (403, 406, 429):
-                    return r
-            self.perfil = original
-            self.falhou_ate = time.time() + 60    # todos recusados: nao insiste por 1 minuto
+        if r.status_code in (403, 406, 429, 580):
+            self.falhou_ate = time.time() + 600
+            self.ultima = r
+        else:
+            self.falhou_ate = 0.0
         return r
 
 
@@ -1252,7 +1250,7 @@ def main():
         elif data_str in memoria:
             corridas = memoria[data_str]
             st.caption("⚠️ Usando a última lista carregada (o site não respondeu agora).")
-        if not corridas and st.session_state.get("desc_lista") != data_str:
+        if not corridas and st.session_state.pop("quer_descobrir", False):
             st.session_state["desc_lista"] = data_str       # tenta descobrir o endereco 1 vez por data
             with st.spinner("Procurando o endereço da lista no site..."):
                 try:
@@ -1279,10 +1277,12 @@ def main():
                        "Pode ser que ainda não estejam publicadas ou que o site tenha recusado a consulta. "
                        "Veja a coluna Resposta no diagnóstico abaixo.")
             st.button(f"📅 Ver {anterior.strftime('%d/%m')}", on_click=_ir_dia, args=(anterior,))
+            st.caption("⏳ O site está recusando as consultas do app. Espere uns 10 minutos sem recarregar e toque em Recarregar lista.")
         elif not corridas and any(t.get("Status") == 403 for t in tentativas):
             st.error("O site recusou o acesso (403). Costuma ser bloqueio temporário por muitas consultas "
                      "ou data ainda indisponível. Espere alguns minutos, escolha o dia anterior ou toque em Tentar de novo.")
         if st.button("🔄 Recarregar lista"):
+            http().falhou_ate = 0.0
             buscar_lista.clear()
             st.rerun()
 
