@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timedelta
 
 import pandas as pd
-import requests
+from curl_cffi import requests as curl_requests
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -91,54 +91,42 @@ EXTRA = {"winsec": ["winnerOrSecond", "winSec", "wnSec", "winnerName", "secondNa
          "trainer": ["trainerName", "trainer", "trainer_name"]}
 
 
-# ---------------------------------------------------------------- conexao com o site (BYPASS REFORÇADO)
+# ---------------------------------------------------------------- conexao com o site (CURL_CFFI)
 class _Http:
     def __init__(self):
-        self.s = requests.Session()
-        # Headers simulando um navegador Chrome real no Windows
+        # Usa a sessão do curl_cffi, que simula um navegador real via TLS impersonate
+        self.s = curl_requests.Session(impersonate="chrome")
         self.s.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
-            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "en-GB,en;q=0.9",
             "X-Requested-With": "XMLHttpRequest",
             "Referer": BASE + "/",
             "Origin": BASE,
-            "Connection": "keep-alive",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-origin",
-            "Sec-GPC": "1",
-            "Upgrade-Insecure-Requests": "1",
-            "Cache-Control": "max-age=0"
         })
         self.pronto = False
 
     def get(self, url, headers=None, timeout=15):
         if not self.pronto:
-            try: 
-                # Aquece a sessão visitando a home page para pegar os cookies (Cloudflare/WAF)
+            try:
                 self.s.get(BASE + "/", timeout=10)
-                time.sleep(0.5) # Dá um pequeno delay para parecer humano
-            except Exception: 
+                time.sleep(1)  # Pequeno delay para simular um humano
+            except Exception:
                 pass
             self.pronto = True
 
         try:
             r = self.s.get(url, timeout=timeout)
-        except requests.exceptions.RequestException:
+        except Exception:
             return None
 
-        # Se tomar bloqueio 403, 429 ou 406, espera e tenta novamente com novos parâmetros
         if r.status_code in (403, 406, 429):
-            time.sleep(2)
-            # Tenta novamente usando o cache-buster para evitar cache do WAF
-            url_retry = url + ("&" if "?" in url else "?") + f"_={int(time.time()*1000)}"
+            time.sleep(2.5)
+            url_retry = url + ("&" if "?" in url else "?") + f"_={int(time.time() * 1000)}"
             try:
                 r = self.s.get(url_retry, timeout=timeout)
-            except requests.exceptions.RequestException:
+            except Exception:
                 pass
-        
+
         return r
 
 
@@ -182,7 +170,6 @@ dib.trap_label = lambda d: badge(d["trap"])
 
 # ---------------------------------------------------------------- botao copiar (JavaScript)
 def botao_copiar(texto):
-    """Cria um botão HTML nativo que copia o texto usando JavaScript."""
     texto_js = json.dumps(texto)
 
     html = f"""
@@ -299,13 +286,13 @@ def tentar(urls, parser):
     tentativas, achado, primeira = [], [], None
     for u in urls:
         curto = u.replace(BASE, "")
-        time.sleep(0.8) # Aumentado o delay para evitar bloqueios
+        time.sleep(0.5)
         r = http().get(u, timeout=10)
         js, resposta = None, ""
         if r is not None and r.status_code == 200:
             try:
                 js = r.json()
-            except Exception:   # resposta que nao e JSON: mostra o comeco para entender
+            except Exception:
                 resposta = r.text[:90].replace("\n", " ")
         status = r.status_code if r is not None else "Erro"
         res = parser(js) if js is not None else []
@@ -409,7 +396,7 @@ def mostrar_replay(c):
     _link(f"{BASE}/#card/race_id={c['id']}&r_date={c['data']}", "Abrir esta corrida no site")
 
 
-# ---------------------------------------------------------------- descobrir enderecos (lendo o JavaScript do site)
+# ---------------------------------------------------------------- descobrir enderecos
 _RE_SD = re.compile(r"""["']((?:/?[\w\-]+/)*[\w\-]*\.sd)(?:\?[^"']*)?["']""")
 _RE_BLOCKS = re.compile(r"""blocks\s*[:=]\s*["']([\w,%\-]+)["']""")
 
@@ -455,7 +442,6 @@ def _galgos_com_posicao(js):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def varrer_site():
-    """Le a pagina inicial e os arquivos JavaScript do site (so na primeira vez)."""
     html = _baixar(BASE + "/")
     scripts = []
     for u in re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html):
@@ -526,7 +512,7 @@ def painel_descobrir(race_id, data_str):
     st.dataframe(pd.DataFrame(testes), use_container_width=True, hide_index=True)
 
 
-# ---------------------------------------------------------------- grafico estilo "Predictor" (barras pelo Overall)
+# ---------------------------------------------------------------- grafico estilo "Predictor"
 BAR_STYLE = {
     1: ("background:#c62828;", "invert"),
     2: ("background:#1d4ed8;", "invert"),
@@ -538,7 +524,6 @@ BAR_STYLE = {
 
 
 def greyhound_svg(trap):
-    """Silhueta de greyhound em galope estendido (de lado, olhando p/ a direita)."""
     cor = "#111" if trap == 3 else "#fff"
     if trap == 6:
         sh = "filter:drop-shadow(0 0 .6px #000) drop-shadow(0 0 .6px #000) drop-shadow(0 0 .6px #000);"
@@ -603,7 +588,7 @@ def grafico_predictor(ds):
             "<div style='height:6px'></div>" + "".join(linhas) + "</div>")
 
 
-# ---------------------------------------------------------------- post pick (galgos indicados pelo Racing Post)
+# ---------------------------------------------------------------- post pick
 _RE_PP_TXT = re.compile(r"post\s*pick\s*[:\-]?\s*((?:[1-6]\s*[-,/]\s*)*[1-6])(?!\d)", re.I)
 _RE_SEQ = re.compile(r"[1-6](?:\s*[-,/]\s*[1-6]){1,5}")
 _TRAP_KEYS = ("trapNum", "trap", "dogTrap")
