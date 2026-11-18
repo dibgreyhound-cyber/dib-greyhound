@@ -38,13 +38,16 @@ CFG = {
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
     "TRAP_VAZIA": 5.0, 
-    "TRAFEGO_SEVERO": -12.0, # Ajuste 1: Aumentado de -8.0 para -12.0
+    "TRAFEGO_SEVERO": -12.0,
     "CONF_MIN_VENCEDOR": 40.0,
 
-    # Ajuste 3: Aumento do peso de Split e Ritmo
-    "VEL_PTS": {"tadj": 100, "mtime": 80, "msplit": 100, "ritmo": 80},
-    "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 10,
+    # [AJUSTE] Redução do peso bruto de tempo para equilibrar com categoria e trap
+    "VEL_PTS": {"tadj": 40, "mtime": 30, "msplit": 40, "ritmo": 30},
+    "CONSIST_PTS": 20, "PICO_PTS": 15, "RECUP_PTS": 15,
 }
+
+# [AJUSTE] Bônus/Penalidade por caixa (Trap)
+TRAP_BIAS = {1: 15.0, 2: 10.0, 3: 5.0, 4: 0.0, 5: -5.0, 6: -10.0}
 
 FIELD_MAP = {
     "date": ["raceTime", "raceDate", "date"], "track": ["trackName", "track"],
@@ -330,7 +333,6 @@ def analisar_galgo(dog, ctx):
     valid_grades = [grade_num(r["grade"]) for r in R if grade_num(r["grade"]) is not None]
     avg_grade_n = sum(valid_grades) / len(valid_grades) if valid_grades else (today_n or 0)
     
-    # Ajuste 2: Suavização da Categoria Base
     base = 13.0 - (avg_grade_n * 0.6)
     d["cat_mod"], d["cat"] = mod, base + mod
 
@@ -351,7 +353,7 @@ def analisar_galgo(dog, ctx):
     if has_split:
         d["ritmo"] = d["mtime"] - d["msplit"] if d["mtime"] and d["msplit"] else None
     else:
-        d["ritmo"] = d["mtime"]
+        d["ritmo"] = None # [AJUSTE] Evita que quem não tem split seja o mais rápido na reta final
 
     peso_atual = d["peso"] or 31.0
     adj_times = [r["caltm"] - traffic_penalty(r["remarks"], peso_atual) for r in R]
@@ -361,7 +363,8 @@ def analisar_galgo(dog, ctx):
     d["sd"] = float(np.std(cal)) if len(cal) > 1 else 0.0
     d["pico"] = min(cal) if cal else None
 
-    recs = [(bends_digits(r["bends"])[0] - r["fin"]) / CFG["N_CORREDORES"] * 100.0 for r in R if bends_digits(r["bends"]) and r["fin"] and not not_free(r["remarks"])]
+    # [AJUSTE] Removido o 'not not_free' para permitir calcular recuperação mesmo com esbarrões leves
+    recs = [(bends_digits(r["bends"])[0] - r["fin"]) / CFG["N_CORREDORES"] * 100.0 for r in R if bends_digits(r["bends"]) and r["fin"]]
     d["rec"] = float(np.mean(recs)) if recs else 0.0
     d["rec_txt"] = f"{d['rec']:+.2f}% ({'Ganhou' if d['rec'] > 0.005 else ('Perdeu' if d['rec'] < -0.005 else 'Manteve')})"
 
@@ -403,8 +406,10 @@ def finalizar(ds, ctx):
         return maxp * (hi - d[key]) / (hi - lo) if invert else maxp * (d[key] - lo) / (hi - lo)
 
     for d in ok:
-        pts_cat = d["cat"] * 1.5
+        # [AJUSTE] Novo cálculo de Overall com peso maior para Categoria e Trap
+        pts_cat = d["cat"] * 4.0 
         pts_perfil = CFG["PERFIL_PTS"][d["perfil"]]
+        pts_trap = TRAP_BIAS.get(d["trap"], 0.0)
 
         vel = (pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) +
                pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) +
@@ -415,16 +420,17 @@ def finalizar(ds, ctx):
         if d["early_cnt"] > 0 and d["perfil"] == "Limpo":
             f.append(("Ritmo Acelerado", d["early_cnt"] * 5.0))
         if d["saw_cnt"] > 0:
-            f.append(("Largada Lenta", d["saw_cnt"] * -6.0)) # Ajuste 1: -4.0 para -6.0
+            f.append(("Largada Lenta", d["saw_cnt"] * -6.0))
         if d["fbt_cnt"] > 0:
-            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -4.0)) # Ajuste 1: -2.0 para -4.0
+            f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -4.0))
         if any(abs(d["trap"] - v) == 1 for v in vac):
             f.append(("Trap Vazia", CFG["TRAP_VAZIA"]))
         if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
             f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"]))
 
         d["fatores"] = f
-        d["overall"] = vel + pts_cat + pts_perfil + pts_prop("sd", CFG["CONSIST_PTS"], d, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_prop("rec", CFG["RECUP_PTS"], d, False) + sum(v for _, v in f)
+        # [AJUSTE] Soma do Overall incluindo a nova variável pts_trap
+        d["overall"] = vel + pts_cat + pts_perfil + pts_trap + pts_prop("sd", CFG["CONSIST_PTS"], d, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_prop("rec", CFG["RECUP_PTS"], d, False) + sum(v for _, v in f)
 
     ok.sort(key=lambda x: -x["overall"])
     for i, d in enumerate(ok, 1):
@@ -443,13 +449,14 @@ def calc_prob(V, D, rank, ctx):
     score_v = 0.0
     score_d = 0.0
 
-    # Ajuste 1: Redução do peso do Tadj (de 25.0 para 15.0) para não esmagar os outros fatores
-    score_v += (30.0 - V["tadj"]) * 15.0
-    score_d += (30.0 - D["tadj"]) * 15.0
+    # [AJUSTE] Peso da Velocidade aumentado (15.0 para 25.0)
+    score_v += (30.0 - V["tadj"]) * 25.0
+    score_d += (30.0 - D["tadj"]) * 25.0
 
     if V.get("msplit") and D.get("msplit"):
-        score_v += (6.0 - V["msplit"]) * 15.0
-        score_d += (6.0 - D["msplit"]) * 15.0
+        # [AJUSTE] Peso do Split aumentado (15.0 para 20.0)
+        score_v += (6.0 - V["msplit"]) * 20.0
+        score_d += (6.0 - D["msplit"]) * 20.0
 
     if V.get("rec") is not None and D.get("rec") is not None:
         score_v += V["rec"] * 0.1
@@ -470,7 +477,6 @@ def calc_prob(V, D, rank, ctx):
     if V["trap"] in [1,2,3] and D["trap"] in [4,5,6]: score_v += 0.5
     if V["trap"] in [4,5,6] and D["trap"] in [1,2,3]: score_d += 0.5
 
-    # Ajuste 3: Bônus para quem tem o melhor Ritmo Final
     if V["name"] in ctx.get("top3_ritmo", set()): score_v += 1.0
     if D["name"] in ctx.get("top3_ritmo", set()): score_d += 1.0
     
@@ -479,13 +485,12 @@ def calc_prob(V, D, rank, ctx):
 
     diff = score_v - score_d
 
-    # Ajuste 1 (continuação): Curva logística menos sensível (0.15 -> 0.10)
+    # [AJUSTE] Curva logística mais suave (-0.10 para -0.04) para AVBs realistas
     try:
-        prob = 100.0 / (1.0 + math.exp(-0.10 * diff))
+        prob = 100.0 / (1.0 + math.exp(-0.04 * diff))
     except OverflowError:
         prob = 100.0 if diff > 0 else 0.0
 
-    # Ajuste 2: Penalidade de -5% na probabilidade se o Vencedor for Trombador
     if V.get("perfil") == "Trombador":
         prob -= 5.0
 
@@ -525,7 +530,8 @@ def montar_avbs(rank, ctx):
                      (V.get("tadj") is not None and D.get("tadj") is not None and V["tadj"] <= D["tadj"] - 0.10)
                 c5 = (V.get("rec") is not None and D.get("rec") is not None and V["rec"] >= -10.0 and V["rec"] > D["rec"])
 
-                is_premium = c1 and c2 and c3 and c4 and c5
+                # [AJUSTE] Basta acertar 3 das 5 condições para ser Premium (era exigido as 5)
+                is_premium = sum([c1, c2, c3, c4, c5]) >= 3
                 
                 s1.append((V, D, prob, is_premium))
 
