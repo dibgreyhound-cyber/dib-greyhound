@@ -31,13 +31,13 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 6.4 - Curva AVB Realista)
+# CONFIGURAÇÃO GLOBAL (DIB 7.0 - Calibrado por Backtest)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
-    "TRAP_VAZIA": 5.0, 
+    "TRAP_VAZIA": 12.0, 
     "TRAFEGO_SEVERO": -12.0,
     "CONF_MIN_VENCEDOR": 40.0,
 
@@ -45,8 +45,8 @@ CFG = {
     "CONSIST_PTS": 20, "PICO_PTS": 15, "RECUP_PTS": 15,
 }
 
-# Bônus/Penalidade por caixa (Trap)
-TRAP_BIAS = {1: 15.0, 2: 10.0, 3: 5.0, 4: 0.0, 5: -5.0, 6: -10.0}
+# [AJUSTE 5 CICLOS] Trap 1 não é mais mágica. Reduzido de 15 para 8. Trap 6 não é o fim do mundo (-8).
+TRAP_BIAS = {1: 8.0, 2: 6.0, 3: 4.0, 4: 0.0, 5: -4.0, 6: -8.0}
 
 FIELD_MAP = {
     "date": ["raceTime", "raceDate", "date"], "track": ["trackName", "track"],
@@ -407,6 +407,9 @@ def finalizar(ds, ctx):
         pts_cat = d["cat"] * 4.0 
         pts_perfil = CFG["PERFIL_PTS"][d["perfil"]]
         pts_trap = TRAP_BIAS.get(d["trap"], 0.0)
+        
+        # [AJUSTE 5 CICLOS] Castigo pesado para quem só correu Trial (ex: Grouchos Saphire)
+        pts_trial = -25.0 if d.get("n_trials", 0) >= 3 else 0.0
 
         vel = (pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) +
                pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) +
@@ -422,19 +425,29 @@ def finalizar(ds, ctx):
             f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -4.0))
         if any(abs(d["trap"] - v) == 1 for v in vac):
             f.append(("Trap Vazia", CFG["TRAP_VAZIA"]))
+            
+        # [AJUSTE 5 CICLOS] Se for Trombador, mas tiver o melhor Early Pace (Top 2), ele não leva o castigo.
         if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
-            f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"]))
+            if d.get("msplit_pos") and d["msplit_pos"] <= 2:
+                pass # Ele escapa da trombada porque larga na frente
+            else:
+                f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"]))
+
+        # [AJUSTE 5 CICLOS] Conflito de Pace: Se tem 3+ cães rápidos, quem tem boa recuperação ganha bônus.
+        if len(top3_ms) >= 3 and d["saw_cnt"] > 0 and d.get("rec", 0) > 0:
+            f.append(("Conflito Pace (Favorável)", 10.0))
 
         d["fatores"] = f
-        d["overall"] = vel + pts_cat + pts_perfil + pts_trap + pts_prop("sd", CFG["CONSIST_PTS"], d, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_prop("rec", CFG["RECUP_PTS"], d, False) + sum(v for _, v in f)
+        d["overall"] = vel + pts_cat + pts_perfil + pts_trap + pts_trial + pts_prop("sd", CFG["CONSIST_PTS"], d, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_prop("rec", CFG["RECUP_PTS"], d, False) + sum(v for _, v in f)
 
     ok.sort(key=lambda x: -x["overall"])
     for i, d in enumerate(ok, 1):
         d["pos"] = i
         d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"]
         
+        # [AJUSTE 5 CICLOS] Alvo só se a recuperação for HORRÍVEL (-20.0), senão Daytona Rock é punido injustamente.
         top2_safe = (i <= 2) and (d.get("rec", -100) >= -10.0)
-        d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d["rec"] < -10.0) and not top2_safe
+        d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d.get("rec", 0) < -20.0) and not top2_safe
         
         d["elegivel"] = not d["bloqueado"]
     return ok, top3_ms
@@ -452,7 +465,6 @@ def calc_prob(V, D, rank, ctx):
     diff += trap_bias.get(V["trap"], 0.0)
     diff -= trap_bias.get(D["trap"], 0.0)
 
-    # [AJUSTE] Curva realista de mercado (-0.015) e teto de 75%
     try:
         prob = 100.0 / (1.0 + math.exp(-0.015 * diff))
     except OverflowError:
