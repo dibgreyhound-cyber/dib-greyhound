@@ -91,25 +91,54 @@ EXTRA = {"winsec": ["winnerOrSecond", "winSec", "wnSec", "winnerName", "secondNa
          "trainer": ["trainerName", "trainer", "trainer_name"]}
 
 
-# ---------------------------------------------------------------- conexao com o site
+# ---------------------------------------------------------------- conexao com o site (BYPASS REFORÇADO)
 class _Http:
     def __init__(self):
         self.s = requests.Session()
+        # Headers simulando um navegador Chrome real no Windows
         self.s.headers.update({
-            "User-Agent": dib.HEADERS.get("User-Agent", "Mozilla/5.0"),
-            "Accept": "application/json, text/plain, */*", "Accept-Language": "en-GB,en;q=0.9",
-            "X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/", "Origin": BASE})
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": BASE + "/",
+            "Origin": BASE,
+            "Connection": "keep-alive",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-GPC": "1",
+            "Upgrade-Insecure-Requests": "1",
+            "Cache-Control": "max-age=0"
+        })
         self.pronto = False
 
     def get(self, url, headers=None, timeout=15):
         if not self.pronto:
-            try: self.s.get(BASE + "/", timeout=8)
-            except Exception: pass
+            try: 
+                # Aquece a sessão visitando a home page para pegar os cookies (Cloudflare/WAF)
+                self.s.get(BASE + "/", timeout=10)
+                time.sleep(0.5) # Dá um pequeno delay para parecer humano
+            except Exception: 
+                pass
             self.pronto = True
-        r = self.s.get(url, timeout=timeout)
-        if r.status_code in (403, 429):
-            time.sleep(1.5)
+
+        try:
             r = self.s.get(url, timeout=timeout)
+        except requests.exceptions.RequestException:
+            return None
+
+        # Se tomar bloqueio 403, 429 ou 406, espera e tenta novamente com novos parâmetros
+        if r.status_code in (403, 406, 429):
+            time.sleep(2)
+            # Tenta novamente usando o cache-buster para evitar cache do WAF
+            url_retry = url + ("&" if "?" in url else "?") + f"_={int(time.time()*1000)}"
+            try:
+                r = self.s.get(url_retry, timeout=timeout)
+            except requests.exceptions.RequestException:
+                pass
+        
         return r
 
 
@@ -119,7 +148,6 @@ def http():
 
 
 dib.requests = http()
-
 
 # ---------------------------------------------------------------- numeros dos galgos
 BADGE_STYLE = {
@@ -271,21 +299,17 @@ def tentar(urls, parser):
     tentativas, achado, primeira = [], [], None
     for u in urls:
         curto = u.replace(BASE, "")
-        time.sleep(0.3)
-        try:
-            r = http().get(u, timeout=8)
-        except Exception as e:
-            tentativas.append({"Status": f"erro: {str(e)[:40]}", "Achados": 0, "Chaves": "", "Resposta": "",
-                               "Endereço": curto})
-            continue
+        time.sleep(0.8) # Aumentado o delay para evitar bloqueios
+        r = http().get(u, timeout=10)
         js, resposta = None, ""
-        if r.status_code == 200:
+        if r is not None and r.status_code == 200:
             try:
                 js = r.json()
             except Exception:   # resposta que nao e JSON: mostra o comeco para entender
                 resposta = r.text[:90].replace("\n", " ")
+        status = r.status_code if r is not None else "Erro"
         res = parser(js) if js is not None else []
-        tentativas.append({"Status": r.status_code, "Achados": len(res),
+        tentativas.append({"Status": status, "Achados": len(res),
                            "Chaves": _chaves(js) if js is not None else "", "Resposta": resposta,
                            "Endereço": curto})
         if primeira is None and js is not None and not res: primeira = js
@@ -311,10 +335,12 @@ def buscar_resultado(race_id, data_str):
 def buscar_form_raw(race_id, data_str):
     try:
         r = http().get(f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks=form", timeout=15)
-        r.raise_for_status()
-        return r.json().get("form", {}).get("dogs", [])
+        if r is not None:
+            r.raise_for_status()
+            return r.json().get("form", {}).get("dogs", [])
     except Exception:
-        return []
+        pass
+    return []
 
 
 # ---------------------------------------------------------------- utilidades
@@ -389,12 +415,9 @@ _RE_BLOCKS = re.compile(r"""blocks\s*[:=]\s*["']([\w,%\-]+)["']""")
 
 
 def _baixar(url, tam=3_000_000):
-    try:
-        r = http().get(url, timeout=15)
-        if r.status_code == 200:
-            return r.text[:tam]
-    except Exception:
-        pass
+    r = http().get(url, timeout=15)
+    if r is not None and r.status_code == 200:
+        return r.text[:tam]
     return ""
 
 
@@ -459,14 +482,15 @@ def testar_enderecos(race_id, data_str, bases, nomes):
         for b in nomes:
             u = f"{BASE}{p}?race_id={race_id}&r_date={data_str}&blocks={b}"
             time.sleep(0.25)
-            try:
-                r = http().get(u, timeout=8)
-                js = r.json() if r.status_code == 200 else None
-            except Exception:
-                testes.append({"Status": "não é JSON", "Galgos": 0, "Chaves": "", "Endereço": u.replace(BASE, "")})
-                continue
+            r = http().get(u, timeout=8)
+            js = None
+            if r is not None and r.status_code == 200:
+                try:
+                    js = r.json()
+                except Exception:
+                    pass
             n = _galgos_com_posicao(js) if js is not None else 0
-            testes.append({"Status": r.status_code, "Galgos": n, "Chaves": _chaves(js) if js is not None else "",
+            testes.append({"Status": r.status_code if r else "Erro", "Galgos": n, "Chaves": _chaves(js) if js is not None else "",
                            "Endereço": u.replace(BASE, "")})
             if n >= 2 and not achado:
                 achado = u
@@ -514,8 +538,7 @@ BAR_STYLE = {
 
 
 def greyhound_svg(trap):
-    """Silhueta de greyhound em galope estendido (de lado, olhando p/ a direita).
-    Branca; preta na barra 3 (fundo claro); com contorno escuro na barra 6 (listrada)."""
+    """Silhueta de greyhound em galope estendido (de lado, olhando p/ a direita)."""
     cor = "#111" if trap == 3 else "#fff"
     if trap == 6:
         sh = "filter:drop-shadow(0 0 .6px #000) drop-shadow(0 0 .6px #000) drop-shadow(0 0 .6px #000);"
@@ -527,40 +550,32 @@ def greyhound_svg(trap):
         f"<svg viewBox='0 0 104 42' width='28' height='11' xmlns='http://www.w3.org/2000/svg' "
         f"style='display:block;{sh}'>"
         f"<g fill='{cor}' stroke='{cor}' stroke-linecap='round' stroke-linejoin='round'>"
-        # tronco, pescoço fino e cabeça comprida
         "<path stroke-width='0.4' d='M24 13 C32 9.6 44 8.8 54 8.6 C62 8.4 68 7.2 74 6 C78 5 81 4.2 84 3.8 "
         "C87 3.4 89 4 91 5 L99 9 C100.4 9.8 100.4 11 99 11.6 L94 12.4 C91 12.6 89.4 11.4 87 11.2 "
         "C83 11.6 80 13 78.4 15.6 C77.4 19.2 75 22.6 70 22.6 C65 22.6 60 20 55 18.4 C50 16.8 44 15.8 38 16 "
         "C32 16 27 16.6 24 14.8 Z'/>"
-        # orelha
         "<path stroke-width='0.3' d='M85.4 3.8 L86.4 0.6 L88.8 3.4 Z'/>"
-        # patas dianteiras esticadas para a frente
         "<path fill='none' stroke-width='2.6' d='M77 15.4 L88 18'/>"
         "<path fill='none' stroke-width='1.6' d='M88 18 L98 18.6'/>"
         "<path fill='none' stroke-width='2.4' d='M76 17 L85 21.6'/>"
         "<path fill='none' stroke-width='1.6' d='M85 21.6 L94 22.4'/>"
-        # patas traseiras esticadas para trás
         "<path fill='none' stroke-width='5' d='M29 13.6 L19 19.4'/>"
         "<path fill='none' stroke-width='2.4' d='M19 19.4 L10 24.6'/>"
         "<path fill='none' stroke-width='1.7' d='M10 24.6 L4 26.4'/>"
         "<path fill='none' stroke-width='3.8' d='M30 15.6 L23 24'/>"
         "<path fill='none' stroke-width='2.2' d='M23 24 L15 30.4'/>"
         "<path fill='none' stroke-width='1.7' d='M15 30.4 L8.4 32.6'/>"
-        # rabo fino
         "<path fill='none' stroke-width='1.2' d='M24 12.6 C18 14.2 12 15 5 13.4'/>"
         "</g></svg>"
     )
 
 
 def badge_p(t):
-    """Número da trap em tamanho reduzido (só para o gráfico)."""
     return (badge(t).replace("min-width:24px;height:24px;line-height:24px", "min-width:16px;height:16px;line-height:16px")
             .replace("font-size:14px", "font-size:11px"))
 
 
 def grafico_predictor(ds):
-    """Uma barra por galgo (na ordem das traps). Tamanho = Overall / maior Overall; o maior Overall enche a barra.
-    No fim de cada barra vai o galgo correndo, com a casaca da respectiva trap."""
     com = [d for d in ds if not d.get("nd") and d.get("overall") is not None]
     if not com:
         return ""
@@ -595,7 +610,6 @@ _TRAP_KEYS = ("trapNum", "trap", "dogTrap")
 
 
 def _nums_pp(v):
-    """Extrai numeros de trap (1-6) de um valor: '1-2-5', [1,2,5], [{'trapNum': 1}, ...]."""
     if isinstance(v, bool):
         return []
     if isinstance(v, int):
@@ -616,9 +630,6 @@ def _nums_pp(v):
 
 
 def extrair_post_pick(obj):
-    """Procura o Post Pick em qualquer lugar do JSON, em ordem de confianca:
-    1) chave 'postPick'/'post_pick'; 2) texto 'POST PICK: 1-2-5'; 3) chave com 'pick';
-    4) chave com 'tip' cujo valor e uma sequencia de traps (ex.: '1-2-5')."""
     n1, n2, n3, n4 = [], [], [], []
 
     def walk(o, caminho):
@@ -653,7 +664,6 @@ def extrair_post_pick(obj):
 
 
 def pistas_post_pick(obj, limite=15):
-    """Lista (caminho = valor) das chaves/textos que parecem ligados a post pick/tips, para diagnostico."""
     res = []
 
     def walk(o, caminho):
@@ -678,7 +688,6 @@ def pistas_post_pick(obj, limite=15):
 
 
 def _corrida_no_json(obj, race_id):
-    """Dentro do JSON da lista de corridas, devolve o trecho (dict) da corrida pedida."""
     achado = []
 
     def walk(o):
@@ -698,7 +707,6 @@ def _corrida_no_json(obj, race_id):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def buscar_post_pick(race_id, data_str):
-    """Tenta varias respostas do site ate achar o Post Pick. Devolve ('1-2-5', diagnostico)."""
     diag = []
     urls = [f"{BASE}/card/blocks.sd?race_id={race_id}&r_date={data_str}&blocks={b}"
             for b in ("card", "header%2Ccard", "card-header", "card-title",
@@ -708,18 +716,17 @@ def buscar_post_pick(race_id, data_str):
     for u in urls:
         curto = u.replace(BASE, "")
         time.sleep(0.2)
-        try:
-            r = http().get(u, timeout=8)
-            js = r.json() if r.status_code == 200 else None
-        except Exception as e:
-            diag.append({"Status": f"erro: {str(e)[:30]}", "Achado": "", "Chaves": "", "Pistas": [],
-                         "Endereço": curto})
-            continue
+        r = http().get(u, timeout=8)
+        js = None
+        if r is not None and r.status_code == 200:
+            try: js = r.json()
+            except Exception: pass
+            
         alvo = js
-        if js is not None and "/meeting/" in u:      # lista do dia: olhar so a corrida pedida
+        if js is not None and "/meeting/" in u:
             alvo = _corrida_no_json(js, race_id)
         nums, onde = extrair_post_pick(alvo) if alvo is not None else ([], "")
-        diag.append({"Status": r.status_code,
+        diag.append({"Status": r.status_code if r else "Erro",
                      "Achado": f"{'-'.join(map(str, nums))} em {onde}" if nums else "",
                      "Chaves": _chaves(js) if js is not None else "",
                      "Pistas": pistas_post_pick(alvo) if alvo is not None else [],
@@ -730,7 +737,6 @@ def buscar_post_pick(race_id, data_str):
 
 
 def _fmt_pp(pp):
-    """Padroniza para '1-2-5' (aceita '1,2,5', '1 2 5', '125'...)."""
     n = re.findall(r"[1-6]", str(pp or ""))
     return "-".join(dict.fromkeys(n)) if n else ""
 
@@ -855,7 +861,6 @@ def gerar_texto_analise(c, p):
         nomes_alvo = ", ".join([d['name'] for d in alvos])
         txt.append(f"- 🎯 Alvo(s): {nomes_alvo} (fora do Top 3 largada e recuperação ≤ 0%).")
 
-    # DIB 3.5: Alerta de pista irlandesa e Alerta de Zebra
     all_splits = [d["msplit"] for d in p["rank"] if d.get("msplit") is not None]
     is_irish_metric = all(s < 2.0 for s in all_splits) if all_splits else False
 
@@ -893,13 +898,11 @@ def gerar_texto_analise(c, p):
 
 
 def badge_g(t):
-    """Número da trap em tamanho maior (cabeçalho da corrida)."""
     return (badge(t).replace("min-width:24px;height:24px;line-height:24px", "min-width:30px;height:30px;line-height:30px")
             .replace("font-size:14px", "font-size:17px"))
 
 
 def cabecalho_corrida(c, p):
-    """Cabeçalho: pista/hora, chips (Race, classe, distância), Classificação geral e Post Pick do site."""
     borda = "border:1px solid rgba(128,128,128,.35);"
     titulo = ""
     if c.get("hora"):
@@ -929,7 +932,6 @@ _JS_TRAVAR = """<script>
   var win, doc;
   try { win = window.parent; doc = win.document; } catch (e) { return; }
 
-  // Cores das colunas travadas = cores reais do tema atual (claro/escuro), atualizadas ao trocar o tema
   var styleId = 'dib-sticky-style';
   var estilo = doc.getElementById(styleId);
   if (!estilo) {
@@ -963,7 +965,7 @@ _JS_TRAVAR = """<script>
     var linhas = tabela.querySelectorAll('tr');
     if (!linhas.length) return false;
     var cab = linhas[0].children, lefts = [], i;
-    if (!cab[0] || cab[0].getBoundingClientRect().width === 0) return false;   // tabela escondida
+    if (!cab[0] || cab[0].getBoundingClientRect().width === 0) return false;
     for (i = 0; i < n; i++) {
       if (!cab[i]) return false;
       lefts.push(i === 0 ? 0 : Math.floor(cab[i].offsetLeft) - 1);
@@ -996,8 +998,8 @@ _JS_TRAVAR = """<script>
         return (c.innerText || '').trim().toLowerCase();
       });
       var n = 0;
-      if (cab[0] === 'trap' && cab[1] === 'galgo') n = 2;      // Planilha de Projecao
-      else if (cab[0] === 'avb') n = 1;                         // Planilha de AVB
+      if (cab[0] === 'trap' && cab[1] === 'galgo') n = 2;
+      else if (cab[0] === 'avb') n = 1;
       if (n && travar(t, n)) t.setAttribute('data-dibfix', '1');
     });
   }
@@ -1012,7 +1014,6 @@ _JS_TRAVAR = """<script>
 
 
 def fixar_colunas():
-    """Trava (sticky) Trap+Galgo na Planilha de Projeção e AvB na Planilha de AVB ao rolar para o lado."""
     components.html(_JS_TRAVAR + f"<!-- {time.time()} -->", height=0)
 
 
@@ -1042,11 +1043,10 @@ def analisar(c, classe_in, dist_in, pp_in):
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
 
-    # BOTÃO DE EXPORTAR COM CÓPIA AUTOMÁTICA
     st.markdown("---")
     with st.expander("📋 Exportar Análise (Copiar e Colar para o Chat)"):
         texto_gerado = gerar_texto_analise(c, p)
-        botao_copiar(texto_gerado)  # Chama o botão JS
+        botao_copiar(texto_gerado)
         st.text_area("Se o botão acima não funcionar, copie o texto aqui:", texto_gerado, height=200)
     fixar_colunas()
 
@@ -1133,8 +1133,6 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
 
 
 # ---------------------------------------------------------------- tela
-# Trava a largura da barra lateral no padrao (21rem) e usa letra menor nos botoes das corridas,
-# para o texto com o horario do Brasil caber sem alargar a barra.
 _CSS_SIDEBAR = """<style>
 section[data-testid="stSidebar"]{width:21rem !important;min-width:21rem !important;max-width:21rem !important;}
 section[data-testid="stSidebar"] .stButton > button{padding:.35rem .4rem;min-height:0;}
@@ -1164,9 +1162,9 @@ def main():
         elif data_str in memoria:
             corridas = memoria[data_str]
             st.caption("⚠️ Usando a última lista carregada (o site não respondeu agora).")
-        if not corridas and any(t.get("Status") == 403 for t in tentativas):
-            st.error("O site recusou o acesso (403). Costuma ser bloqueio temporário por muitas consultas "
-                     "ou data ainda indisponível. Espere alguns minutos, escolha o dia anterior ou toque em Tentar de novo.")
+        if not corridas and any(t.get("Status") in (403, 406) for t in tentativas):
+            st.error("O site recusou o acesso (bloqueio Anti-Bot). Costuma ser bloqueio temporário. "
+                     "Espere alguns minutos, escolha o dia anterior ou toque em Tentar de novo.")
         if st.button("🔄 Recarregar lista"):
             buscar_lista.clear()
             st.rerun()
