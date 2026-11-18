@@ -91,42 +91,49 @@ EXTRA = {"winsec": ["winnerOrSecond", "winSec", "wnSec", "winnerName", "secondNa
          "trainer": ["trainerName", "trainer", "trainer_name"]}
 
 
-# ---------------------------------------------------------------- conexao com o site (CURL_CFFI)
+# ---------------------------------------------------------------- conexao com o site (CURL_CFFI REFORÇADO)
 class _Http:
     def __init__(self):
-        # Usa a sessão do curl_cffi, que simula um navegador real via TLS impersonate
-        self.s = curl_requests.Session(impersonate="chrome")
+        self.s = curl_requests.Session(impersonate="chrome120")
         self.s.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "en-GB,en;q=0.9",
+            "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
             "X-Requested-With": "XMLHttpRequest",
             "Referer": BASE + "/",
             "Origin": BASE,
+            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
         })
         self.pronto = False
 
     def get(self, url, headers=None, timeout=15):
         if not self.pronto:
-            try:
+            try: 
                 self.s.get(BASE + "/", timeout=10)
-                time.sleep(1)  # Pequeno delay para simular um humano
-            except Exception:
+                time.sleep(0.5)
+            except Exception: 
                 pass
             self.pronto = True
 
         try:
-            r = self.s.get(url, timeout=timeout)
+            r = self.s.get(url, headers=headers, timeout=timeout)
         except Exception:
             return None
 
         if r.status_code in (403, 406, 429):
-            time.sleep(2.5)
-            url_retry = url + ("&" if "?" in url else "?") + f"_={int(time.time() * 1000)}"
+            time.sleep(2)
+            url_retry = url + ("&" if "?" in url else "?") + f"_={int(time.time()*1000)}"
             try:
-                r = self.s.get(url_retry, timeout=timeout)
+                r = self.s.get(url_retry, headers=headers, timeout=timeout)
             except Exception:
                 pass
-
+        
         return r
 
 
@@ -1168,7 +1175,7 @@ def main():
                 lista = sorted(lista, key=lambda c: (c["hora"], c["pista"]), reverse=True)
             st.caption(f"{len(lista)} corridas · horário da pista (Brasil = −3h)")
             for c in lista:
-                ativo = sel and sel.get("id") == c["id"] and sel.get("modo") == modo
+                ativo = sel and sel.get("id") == c["id"] and sel.get("modo"] == modo
                 rotulo = f"{'▶ ' if ativo else ''}{c['hora']} (BR {hora_br(c['hora'], True)}) · {c['pista']} R{c['num'] or '?'} · " \
                          f"{c['grade'] or '?'} · {c['dist'] or '?'}m"
                 st.button(rotulo, key=f"{modo}_{c['id']}", use_container_width=True,
