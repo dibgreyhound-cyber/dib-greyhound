@@ -443,10 +443,8 @@ def finalizar(ds, ctx):
 def calc_prob(V, D, rank, ctx):
     if V.get("overall") is None or D.get("overall") is None: return 50.0
 
-    # A diferença de pontos no Overall dita a probabilidade
     diff = V["overall"] - D["overall"]
 
-    # Ajustes táticos finos para desempatar
     pp = str(ctx.get("post_pick") or "")
     if pp and str(V["trap"]) in pp: diff += 1.5
     if pp and str(D["trap"]) in pp: diff -= 1.5
@@ -492,7 +490,6 @@ def montar_avbs(rank, ctx):
                 
                 s1.append((V, D, prob, is_premium))
 
-    # Ordena pela probabilidade do maior para o menor
     return sorted(s1, key=lambda x: -x[2])
 
 def get_rank_html(val, rank, max_rank):
@@ -560,4 +557,124 @@ def tabela_avb(lista, titulo):
     st.markdown(f"#### {titulo}")
     if not lista: st.info("Nenhum confronto com vantagem superior a 58% nesta corrida."); return
 
-    def fmt_pair(val_v, val_d, is_time=False, precision
+    def fmt_pair(val_v, val_d, is_time=False, precision=2, is_pct=False):
+        if val_v is None or val_d is None: return "-", "-"
+        p, suffix = f".{precision}f", "%" if is_pct else ""
+        v_str, d_str = f"{val_v:{p}}{suffix}", f"{val_d:{p}}{suffix}"
+        diff = val_v - val_d
+        if val_v <= val_d: v_str += f" ({diff:{p}}{suffix})"
+        else: d_str += f" (+{abs(diff):{p}}{suffix})"
+        if is_time:
+            if val_v < val_d: v_str, d_str = f"<span style='color:#12873a;font-weight:bold'>{v_str}</span>", f"<span style='color:#ff4b4b'>{d_str}</span>"
+            elif val_v > val_d: v_str, d_str = f"<span style='color:#ff4b4b'>{v_str}</span>", f"<span style='color:#12873a;font-weight:bold'>{d_str}</span>"
+        else:
+            if val_v > val_d: v_str, d_str = f"<span style='color:#12873a;font-weight:bold'>{v_str}</span>", f"<span style='color:#ff4b4b'>{d_str}</span>"
+            elif val_v < val_d: v_str, d_str = f"<span style='color:#ff4b4b'>{v_str}</span>", f"<span style='color:#12873a;font-weight:bold'>{d_str}</span>"
+        return v_str, d_str
+
+    rows = []
+    for i, (V, D, prob, is_premium) in enumerate(lista):
+        if i > 0: rows.append(["<hr>"])
+
+        ov_v, ov_d = fmt_pair(V['overall'], D['overall'], False, 1)
+        cat_v, cat_d = fmt_pair(V['cat'], D['cat'], False, 1)
+        sp_v, sp_d = fmt_pair(V['split'], D['split'], True, 2)
+        t_v, t_d = fmt_pair(V['time'], D['time'], True, 2)
+
+        if V.get("msplit") and D.get("msplit"):
+            ms_v, ms_d = fmt_pair(V['msplit'], D['msplit'], True, 2)
+        elif V.get("msplit_pos") and D.get("msplit_pos"):
+            ms_v, ms_d = fmt_pair(V['msplit_pos'], D['msplit_pos'], True, 1)
+        else:
+            ms_v, ms_d = "-", "-"
+
+        mt_v, mt_d = fmt_pair(V['mtime'], D['mtime'], True, 2)
+        ta_v, ta_d = fmt_pair(V['tadj'], D['tadj'], True, 2)
+        r_v, r_d = fmt_pair(V['ritmo'], D['ritmo'], True, 2)
+        rec_v, rec_d = fmt_pair(V['rec'], D['rec'], False, 1, True)
+
+        prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#12873a'>{prob:.1f}%</span></td>"
+
+        star = "<span style='color:#FFD700; font-size:16px; margin-right:6px;'>★</span>" if is_premium else ""
+
+        rows.append([
+            f"{star}{trap_label(V)} - {nome_marcado(V)}",
+            ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]),
+            f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, r_v, rec_v, f"{V['conf']:.0f}%",
+            prob_cell
+        ])
+
+        rows.append([
+            f"{trap_label(D)} - {nome_marcado(D)}",
+            ov_d, cat_d, D['perfil'], "-".join((r["grade"] or "?") for r in D["runs"]),
+            f"{D['peso']:.1f}", f"{D['dias']}", sp_d, t_d, ms_d, mt_d, ta_d, r_d, rec_d, f"{D['conf']:.0f}%"
+        ])
+
+    heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Ritmo", "Recup.", "Conf.", "Probabilidade"]
+    st.markdown(tbl(heads, rows), unsafe_allow_html=True)
+
+def gerar_observacoes(rank, avbs, ctx):
+    if not rank: return
+    st.markdown("---")
+    st.markdown("#### 🏁 Leitura Tática da Corrida")
+
+    elegiveis = [d for d in rank if not d.get("bloqueado")]
+    bloqueados = [d for d in rank if d.get("bloqueado")]
+
+    if not elegiveis: 
+        st.warning("Todos os cães estão bloqueados ou sem dados suficientes para esta corrida.")
+        return
+
+    fav_app = elegiveis[0]
+    insights = []
+    
+    pp_str = str(ctx.get("post_pick") or "")
+    pp_traps = [int(c) for c in pp_str if c.isdigit()]
+    pp_fav_trap = pp_traps[0] if pp_traps else None
+    pp_fav = next((d for d in elegiveis if d["trap"] == pp_fav_trap), None)
+
+    if pp_fav and pp_fav["trap"] != fav_app["trap"]:
+        insights.append(f"**⚔️ Duelo de Favoritos:** O mercado elegeu o **{TRAP_EMOJI.get(pp_fav['trap'])} {pp_fav['name']}** (Post Pick 1), mas o App crava o **{TRAP_EMOJI.get(fav_app['trap'])} {fav_app['name']}** ({fav_app['overall']:.1f} de Overall) como o verdadeiro dono da prova. É um choque direto.")
+    else:
+        insights.append(f"**🤝 Consenso Total:** O mercado e o App concordam que o **{TRAP_EMOJI.get(fav_app['trap'])} {fav_app['name']}** é o cão a ser batido. Overall {fav_app['overall']:.1f} e Confiança {fav_app['conf']:.0f}%.")
+
+    trombadores_internos = [d for d in elegiveis if d["perfil"] == "Trombador" and d["trap"] <= 4]
+    if len(trombadores_internos) >= 2:
+        nomes_tromb = " e ".join([f"{TRAP_EMOJI.get(d['trap'])} {d['name']}" for d in trombadores_internos])
+        clean_candidates = [d for d in elegiveis if d["perfil"] != "Trombador"]
+        
+        if clean_candidates:
+            c_clean = clean_candidates[0]
+            if c_clean["trap"] >= 5: local = "por fora"
+            elif c_clean["trap"] == 4: local = "pelo meio"
+            else: local = "no trilho (por dentro)"
+                
+            insights.append(f"**💥 Risco de Colisão:** O {nomes_tromb} são Trombadores e correm nas traps internas. Se eles se chocarem na 1ª curva, o {TRAP_EMOJI.get(c_clean['trap'])} {c_clean['name']}, que corre {local} e está limpo, pode herdar a pista livre.")
+        else:
+            insights.append(f"**💥 Risco de Colisão:** O {nomes_tromb} são Trombadores e correm nas traps internas. A briga pelo trilho será intensa.")
+
+    if bloqueados:
+        b = max(bloqueados, key=lambda x: x["overall"])
+        if b["overall"] > fav_app["overall"]:
+            insights.append(f"**🚫 Armadilha do Histórico:** O {TRAP_EMOJI.get(b['trap'])} {b['name']} tem Overall bruto de {b['overall']:.1f}, mas o App o bloqueou. O histórico dele nessa distância é curto ou ruim. Não caia na armadilha da odd baixa.")
+
+    tadj_rank = sorted([d for d in elegiveis if d.get("tadj")], key=lambda x: x["tadj"])
+    if len(tadj_rank) >= 3:
+        top2_tadj_names = {d["name"] for d in tadj_rank[:2]}
+        for z in elegiveis:
+            if z["pos"] >= 4 and z["name"] in top2_tadj_names:
+                is_mkt_zebra = True
+                if pp_traps and z["trap"] in pp_traps[:2]: is_mkt_zebra = False
+                if is_mkt_zebra:
+                    insights.append(f"**🦓 A Zebra Escondida:** O {TRAP_EMOJI.get(z['trap'])} {z['name']} está apenas em {z['pos']}º no App, mas tem o **{z['tadj']:.2f}** de Tadj (Top 2 da prova). O mercado também esqueceu dele no Post Pick. É a aposta de risco/retorno mais alta da corrida.")
+
+    alvos = [d for d in rank if d.get("alvo")]
+    if alvos:
+        nomes_alvo = ", ".join([f"{TRAP_EMOJI.get(a['trap'])} {a['name']}" for a in alvos])
+        insights.append(f"**🎯 O Bode Expiatório:** O {nomes_alvo} foi marcado como Alvo. Sem largada e com recuperação negativa, ele vai ficar preso no bolo. Evite apostar nele como vencedor.")
+
+    if not insights:
+        insights.append("**📊 Corrida de Rotina:** O favorito tem dados sólidos, não há trombadores em excesso e as traps estão bem distribuídas. O App sugere seguir o Overall sem grandes riscos táticos.")
+
+    for ins in insights[:4]:
+        st.markdown(f"- {ins}")
