@@ -31,7 +31,7 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 6.3 - Final Calibrado)
+# CONFIGURAÇÃO GLOBAL (DIB 6.4 - Curva AVB Realista)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
@@ -41,7 +41,6 @@ CFG = {
     "TRAFEGO_SEVERO": -12.0,
     "CONF_MIN_VENCEDOR": 40.0,
 
-    # Peso da velocidade equilibrado para não esmagar categoria e trap
     "VEL_PTS": {"tadj": 40, "mtime": 30, "msplit": 40, "ritmo": 30},
     "CONSIST_PTS": 20, "PICO_PTS": 15, "RECUP_PTS": 15,
 }
@@ -453,12 +452,13 @@ def calc_prob(V, D, rank, ctx):
     diff += trap_bias.get(V["trap"], 0.0)
     diff -= trap_bias.get(D["trap"], 0.0)
 
+    # [AJUSTE] Curva realista de mercado (-0.015) e teto de 75%
     try:
-        prob = 100.0 / (1.0 + math.exp(-0.08 * diff))
+        prob = 100.0 / (1.0 + math.exp(-0.015 * diff))
     except OverflowError:
         prob = 100.0 if diff > 0 else 0.0
 
-    return max(10.0, min(90.0, prob))
+    return max(25.0, min(75.0, prob))
 
 def montar_avbs(rank, ctx):
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 20.0]
