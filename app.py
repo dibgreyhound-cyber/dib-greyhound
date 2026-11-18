@@ -91,32 +91,25 @@ EXTRA = {"winsec": ["winnerOrSecond", "winSec", "wnSec", "winnerName", "secondNa
          "trainer": ["trainerName", "trainer", "trainer_name"]}
 
 
-# ---------------------------------------------------------------- conexao com o site (CURL_CFFI REFORÇADO)
+# ---------------------------------------------------------------- conexao com o site (CURL_CFFI LIMPO)
 class _Http:
     def __init__(self):
+        # O impersonate="chrome120" já cuida de todo o disfarce de TLS e User-Agent perfeitamente
         self.s = curl_requests.Session(impersonate="chrome120")
         self.s.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
-            "Accept-Encoding": "gzip, deflate, br",
-            "X-Requested-With": "XMLHttpRequest",
             "Referer": BASE + "/",
             "Origin": BASE,
-            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"Windows"',
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-origin",
         })
         self.pronto = False
 
     def get(self, url, headers=None, timeout=15):
         if not self.pronto:
             try: 
+                # Visita a home page primeiro para capturar os cookies de sessão do WAF
                 self.s.get(BASE + "/", timeout=10)
-                time.sleep(0.5)
+                time.sleep(1)
             except Exception: 
                 pass
             self.pronto = True
