@@ -31,7 +31,7 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 6.1 - Calibrado para o Ciclo 5)
+# CONFIGURAÇÃO GLOBAL (DIB 6.2 - Calibrado Pós-Análise)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
@@ -353,7 +353,7 @@ def analisar_galgo(dog, ctx):
     if has_split:
         d["ritmo"] = d["mtime"] - d["msplit"] if d["mtime"] and d["msplit"] else None
     else:
-        d["ritmo"] = None # [AJUSTE] Evita que quem não tem split seja o mais rápido na reta final
+        d["ritmo"] = None # [AJUSTE] Não usa Mtime como Ritmo se não tiver Split
 
     peso_atual = d["peso"] or 31.0
     adj_times = [r["caltm"] - traffic_penalty(r["remarks"], peso_atual) for r in R]
@@ -406,7 +406,7 @@ def finalizar(ds, ctx):
         return maxp * (hi - d[key]) / (hi - lo) if invert else maxp * (d[key] - lo) / (hi - lo)
 
     for d in ok:
-        # [AJUSTE] Novo cálculo de Overall com peso maior para Categoria e Trap
+        # [AJUSTE] Categoria pesa mais (1.5 para 4.0) e nova Trap Bias
         pts_cat = d["cat"] * 4.0 
         pts_perfil = CFG["PERFIL_PTS"][d["perfil"]]
         pts_trap = TRAP_BIAS.get(d["trap"], 0.0)
@@ -429,7 +429,7 @@ def finalizar(ds, ctx):
             f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"]))
 
         d["fatores"] = f
-        # [AJUSTE] Soma do Overall incluindo a nova variável pts_trap
+        # [AJUSTE] Soma final agora inclui pts_trap
         d["overall"] = vel + pts_cat + pts_perfil + pts_trap + pts_prop("sd", CFG["CONSIST_PTS"], d, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_prop("rec", CFG["RECUP_PTS"], d, False) + sum(v for _, v in f)
 
     ok.sort(key=lambda x: -x["overall"])
@@ -444,17 +444,19 @@ def finalizar(ds, ctx):
     return ok, top3_ms
 
 def calc_prob(V, D, rank, ctx):
-    if V.get("tadj") is None or D.get("tadj") is None: return 50.0
+    # [AJUSTE] Fallback para Mtime se faltar Tadj
+    tadj_v = V.get("tadj") or V.get("mtime")
+    tadj_d = D.get("tadj") or D.get("mtime")
+    if tadj_v is None or tadj_d is None: return 50.0
 
     score_v = 0.0
     score_d = 0.0
 
-    # [AJUSTE] Peso da Velocidade aumentado (15.0 para 25.0)
-    score_v += (30.0 - V["tadj"]) * 25.0
-    score_d += (30.0 - D["tadj"]) * 25.0
+    # [AJUSTE] Multiplicadores de Velocidade mais fortes
+    score_v += (30.0 - tadj_v) * 25.0
+    score_d += (30.0 - tadj_d) * 25.0
 
     if V.get("msplit") and D.get("msplit"):
-        # [AJUSTE] Peso do Split aumentado (15.0 para 20.0)
         score_v += (6.0 - V["msplit"]) * 20.0
         score_d += (6.0 - D["msplit"]) * 20.0
 
@@ -471,11 +473,14 @@ def calc_prob(V, D, rank, ctx):
     score_v += peso_v * 0.1
     score_d += peso_d * 0.1
 
+    # [AJUSTE] Trap bias tático direto na probabilidade
+    trap_bias = {1: 2.0, 2: 1.0, 3: 0.5, 4: 0.0, 5: -1.0, 6: -2.0}
+    score_v += trap_bias.get(V["trap"], 0.0)
+    score_d += trap_bias.get(D["trap"], 0.0)
+
     pp = str(ctx.get("post_pick") or "")
     if pp and str(V["trap"]) in pp: score_v += 0.5
     if pp and str(D["trap"]) in pp: score_d += 0.5
-    if V["trap"] in [1,2,3] and D["trap"] in [4,5,6]: score_v += 0.5
-    if V["trap"] in [4,5,6] and D["trap"] in [1,2,3]: score_d += 0.5
 
     if V["name"] in ctx.get("top3_ritmo", set()): score_v += 1.0
     if D["name"] in ctx.get("top3_ritmo", set()): score_d += 1.0
@@ -485,9 +490,9 @@ def calc_prob(V, D, rank, ctx):
 
     diff = score_v - score_d
 
-    # [AJUSTE] Curva logística mais suave (-0.10 para -0.04) para AVBs realistas
+    # [AJUSTE] Curva Logística -0.06 para equilibrar AVBs
     try:
-        prob = 100.0 / (1.0 + math.exp(-0.04 * diff))
+        prob = 100.0 / (1.0 + math.exp(-0.06 * diff))
     except OverflowError:
         prob = 100.0 if diff > 0 else 0.0
 
@@ -497,7 +502,8 @@ def calc_prob(V, D, rank, ctx):
     return max(10.0, min(90.0, prob))
 
 def montar_avbs(rank, ctx):
-    elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 40.0]
+    # [AJUSTE] Confiança mínima caiu de 40 para 20 (aceita cão com 1 corrida)
+    elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 20.0]
     if len(elig) < 2: return []
 
     s1 = []
@@ -514,23 +520,17 @@ def montar_avbs(rank, ctx):
             if V.get("bloqueado", False) or V.get("alvo", False):
                 continue
 
-            if V.get("tadj") is not None and D.get("tadj") is not None:
-                if V["tadj"] >= D["tadj"]:
-                    if prob >= 68.0 and (V["tadj"] - D["tadj"]) <= 0.15:
-                        pass
-                    else:
-                        continue
+            # [AJUSTE CRÍTICO] Removido o bloqueio que cancelava se o Vencedor fosse mais lento no Tadj
 
-            if prob >= 60.0:
+            # [AJUSTE] Régua do AVB baixou de 60.0 para 58.0
+            if prob >= 58.0:
                 c1 = (V["name"] in ctx.get("top3_ms", set())) and (D["name"] not in ctx.get("top3_ms", set()))
                 c2 = V.get("cat", 0) >= D.get("cat", 0)
-                c3 = (V.get("split") is not None and D.get("split") is not None and V["split"] < D["split"]) and \
-                     (V.get("msplit") is not None and D.get("msplit") is not None and V["msplit"] < D["msplit"])
-                c4 = (V.get("mtime") is not None and D.get("mtime") is not None and V["mtime"] < D["mtime"]) and \
-                     (V.get("tadj") is not None and D.get("tadj") is not None and V["tadj"] <= D["tadj"] - 0.10)
+                c3 = (V.get("split") is not None and D.get("split") is not None and V["split"] < D["split"])
+                c4 = (V.get("mtime") is not None and D.get("mtime") is not None and V["mtime"] < D["mtime"])
                 c5 = (V.get("rec") is not None and D.get("rec") is not None and V["rec"] >= -10.0 and V["rec"] > D["rec"])
 
-                # [AJUSTE] Basta acertar 3 das 5 condições para ser Premium (era exigido as 5)
+                # [AJUSTE] Precisa de 3 acertos para ser Premium
                 is_premium = sum([c1, c2, c3, c4, c5]) >= 3
                 
                 s1.append((V, D, prob, is_premium))
@@ -600,7 +600,7 @@ def tabela_projecao(ds):
 
 def tabela_avb(lista, titulo):
     st.markdown(f"#### {titulo}")
-    if not lista: st.info("Nenhum confronto com vantagem superior a 60% nesta corrida."); return
+    if not lista: st.info("Nenhum confronto com vantagem superior a 58% nesta corrida."); return
 
     def fmt_pair(val_v, val_d, is_time=False, precision=2, is_pct=False):
         if val_v is None or val_d is None: return "-", "-"
