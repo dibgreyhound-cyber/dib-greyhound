@@ -917,22 +917,40 @@ _JS_TRAVAR = """<script>
   var win, doc;
   try { win = window.parent; doc = win.document; } catch (e) { return; }
 
-  var styleId = 'dib-sticky-style';
+  // As colunas travadas ficam no CSS (vale para TODAS as linhas, inclusive as de baixo);
+  // o JavaScript so marca a tabela e mede a largura da 1a coluna.
+  var NOT = ':not(.sep):not(.sep-avb)';
+  var CSS =
+    '.dib-table.sticky-1 td:nth-child(1)' + NOT + ',' +
+    '.dib-table.sticky-2 td:nth-child(1)' + NOT + ',' +
+    '.dib-table.sticky-1 th:nth-child(1),' +
+    '.dib-table.sticky-2 th:nth-child(1)' +
+    '{ position: sticky !important; left: 0 !important; z-index: 2 !important;' +
+    '  box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45) !important; }' +
+    '.dib-table.sticky-2 td:nth-child(2)' + NOT + ',' +
+    '.dib-table.sticky-2 th:nth-child(2)' +
+    '{ position: sticky !important; left: var(--dib-left2, 0px) !important; z-index: 2 !important;' +
+    '  box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45), 3px 0 4px -2px rgba(0,0,0,.35) !important; }' +
+    '.dib-table.sticky-1 td:nth-child(1)' + NOT + ',' +
+    '.dib-table.sticky-2 td:nth-child(1)' + NOT + ',' +
+    '.dib-table.sticky-2 td:nth-child(2)' + NOT +
+    '{ background-color: var(--dib-bg, #fff) !important; }' +
+    '.dib-table.sticky-1 th:nth-child(1),' +
+    '.dib-table.sticky-2 th:nth-child(1),' +
+    '.dib-table.sticky-2 th:nth-child(2)' +
+    '{ background-color: var(--dib-bg-head, #f0f2f6) !important; z-index: 3 !important; }' +
+    '.dib-table.sticky-1 td:nth-child(1)' + NOT + '{ box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45), 3px 0 4px -2px rgba(0,0,0,.35) !important; }' +
+    '.dib-table.sticky-1 th:nth-child(1){ box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45), 3px 0 4px -2px rgba(0,0,0,.35) !important; }';
+
+  var styleId = 'dib-sticky-style-v2';
   var estilo = doc.getElementById(styleId);
   if (!estilo) {
     estilo = doc.createElement('style');
     estilo.id = styleId;
     doc.head.appendChild(estilo);
   }
-  estilo.innerHTML =
-    '.dib-table.sticky-1 td:nth-child(1):not(.sep):not(.sep-avb),' +
-    '.dib-table.sticky-2 td:nth-child(1):not(.sep):not(.sep-avb),' +
-    '.dib-table.sticky-2 td:nth-child(2):not(.sep):not(.sep-avb)' +
-    '{ background-color: var(--dib-bg, #fff) !important; }' +
-    '.dib-table.sticky-1 th:nth-child(1),' +
-    '.dib-table.sticky-2 th:nth-child(1),' +
-    '.dib-table.sticky-2 th:nth-child(2)' +
-    '{ background-color: var(--dib-bg-head, #f0f2f6) !important; }';
+  estilo.innerHTML = CSS;
+
   function cores() {
     var app = doc.querySelector('.stApp') || doc.body;
     var m = win.getComputedStyle(app).backgroundColor.match(/[\\d.]+/g);
@@ -946,37 +964,8 @@ _JS_TRAVAR = """<script>
   cores();
   setInterval(cores, 400);
 
-  function travar(tabela, n) {
-    var linhas = tabela.querySelectorAll('tr');
-    if (!linhas.length) return false;
-    var cab = linhas[0].children, lefts = [], i;
-    if (!cab[0] || cab[0].getBoundingClientRect().width === 0) return false;
-    for (i = 0; i < n; i++) {
-      if (!cab[i]) return false;
-      lefts.push(i === 0 ? 0 : Math.floor(cab[i].offsetLeft) - 1);
-    }
-    
-    tabela.classList.add('sticky-' + n);
-
-    Array.prototype.forEach.call(linhas, function (tr) {
-      var c0 = tr.children[0];
-      if (!c0 || (c0.colSpan && c0.colSpan > 1)) return;
-      for (var j = 0; j < n && j < tr.children.length; j++) {
-        var c = tr.children[j];
-        c.style.position = 'sticky';
-        c.style.left = lefts[j] + 'px';
-        c.style.zIndex = (c.tagName === 'TH') ? '3' : '2';
-        
-        var sombra = 'inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45)';
-        if (j === n - 1) sombra += ', 3px 0 4px -2px rgba(0,0,0,.35)';
-        c.style.boxShadow = sombra;
-      }
-    });
-    return true;
-  }
   function aplicar() {
     Array.prototype.forEach.call(doc.querySelectorAll('table.dib-table'), function (t) {
-      if (t.getAttribute('data-dibfix') === '1') return;
       var tr0 = t.querySelector('tr');
       if (!tr0) return;
       var cab = Array.prototype.map.call(tr0.children, function (c) {
@@ -985,15 +974,16 @@ _JS_TRAVAR = """<script>
       var n = 0;
       if (cab[0] === 'trap' && cab[1] === 'galgo') n = 2;
       else if (cab[0] === 'avb') n = 1;
-      if (n && travar(t, n)) t.setAttribute('data-dibfix', '1');
+      if (!n) return;
+      if (n === 2 && tr0.children[0]) {
+        var w = Math.floor(tr0.children[0].getBoundingClientRect().width) - 1;
+        if (w > 0) t.style.setProperty('--dib-left2', w + 'px');
+      }
+      if (!t.classList.contains('sticky-' + n)) t.classList.add('sticky-' + n);
     });
   }
   [0, 250, 700, 1500, 3000].forEach(function (ms) { setTimeout(aplicar, ms); });
-  try {
-    var obs = new win.MutationObserver(function () { aplicar(); });
-    obs.observe(doc.body, {childList: true, subtree: true});
-    setTimeout(function () { obs.disconnect(); }, 20000);
-  } catch (e) {}
+  setInterval(aplicar, 800);
 })();
 </script>"""
 
