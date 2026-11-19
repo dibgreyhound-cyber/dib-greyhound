@@ -283,7 +283,7 @@ def calc_prob(V, D, rank, ctx):
     diff += t_bias.get(V["trap"], 0.0) - t_bias.get(D["trap"], 0.0)
     try: prob = 100.0 / (1.0 + math.exp(-0.015 * diff))
     except OverflowError: prob = 100.0 if diff > 0 else 0.0
-    return max(25.0, min(75.0, prob))
+    return prob
 
 def montar_avbs(rank, ctx):
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 20.0]
