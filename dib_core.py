@@ -128,23 +128,37 @@ def count_traf(rem):
 # =====================================================================
 # TADJ CIRÚRGICO
 # =====================================================================
+GRAVES_PATTERNS = (
+    r"\bbaulk(?:ed|s|ing)?\b",
+    r"\bfell\b",
+    r"\bko\b|\bknocked\s+out\b",
+    r"\bmsdbrk\b|\bmissed\s+break\b",
+)
+
+MODERADOS_PATTERNS = (
+    r"\bbmp\b|\bbumped(?:\s+first)?\b",
+    r"\bcrd\b|\bcrowded(?:\s+quarter)?\b",
+    r"\bfcd\b|\bchecked\b",
+    r"\bcrmp\b|\bcramped\b",
+)
+
 def traffic_penalty(rem, peso=31.0):
     s = str(rem or "").lower()
     pen = 0.0
-    
-    graves = sum(s.count(k) for k in ("baulk", "fell", "ko", "msdbrk"))
+
+    graves = sum(len(re.findall(p, s)) for p in GRAVES_PATTERNS)
     if graves > 0: pen += graves * 0.30
-    
-    moderados = sum(s.count(k) for k in ("bmp", "crd", "fcd", "crmp"))
+
+    moderados = sum(len(re.findall(p, s)) for p in MODERADOS_PATTERNS)
     if moderados > 0: pen += moderados * 0.15
-    
+
     pen = min(pen, 0.50)
     if pen == 0: return 0.0
-    
+
     if peso > 30.0: fator = 0.8
     elif peso < 28.0: fator = 1.2
     else: fator = 1.0
-    
+
     return pen * fator
 
 def not_free(rem):
