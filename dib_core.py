@@ -31,7 +31,7 @@ DICIONARIO_REMARKS = {
 }
 
 # =====================================================================
-# CONFIGURAÇÃO GLOBAL (DIB 6.2 - Calibrado com Z-Score e Tráfego Real)
+# CONFIGURAÇÃO GLOBAL (DIB 6.2 - Calibrado com Z-Score e Histórico Expandido)
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
@@ -294,7 +294,7 @@ def extrair_dados_racingpost(url):
 
 def oficial(r, ctx):
     g = str(r["grade"] or "").strip().upper()
-    if not g or g.startswith("HP"):
+    if g.startswith("HP"):
         return False
     return (r["dist"] is not None
             and abs(r["dist"] - ctx["dist"]) < 1
@@ -329,14 +329,12 @@ def analisar_galgo(dog, ctx):
     valid_grades = [grade_num(r["grade"]) for r in R if grade_num(r["grade"]) is not None]
     avg_grade_n = sum(valid_grades) / len(valid_grades) if valid_grades else (today_n or 0)
     
-    # Ajuste de Categoria Suavizada
     base = 13.0 - (avg_grade_n * 0.6)
     d["cat_mod"], d["cat"] = mod, base + mod
 
     d["peso"] = dog.get("peso_atual") or R[0]["weight"]
     d["split"], d["time"] = R[0]["split"], R[0]["caltm"]
 
-    # CORREÇÃO CRÍTICA: Filtro de valores 0.0 ou None nas médias
     valid_splits = [r["split"] for r in R if r["split"] is not None and r["split"] > 0]
     has_split = len(valid_splits) > 0
     
@@ -456,14 +454,8 @@ def calc_prob(V, D, rank, ctx):
         z = (val - mean) / std
         return -z if invert else z
 
-    # Pesos relativos (o que mais importa no confronto direto)
     pesos = {
-        "tadj": 2.5,      # Tempo Ajustado (Rei da análise)
-        "mtime": 1.5,     # Tempo Bruto
-        "split": 2.0,     # Largada
-        "rec": 1.0,       # Recuperação
-        "overall": 1.5,   # Força total
-        "cat": 0.8,       # Categoria
+        "tadj": 2.5, "mtime": 1.5, "split": 2.0, "rec": 1.0, "overall": 1.5, "cat": 0.8,
     }
 
     soma_ponderada = 0.0
@@ -476,7 +468,6 @@ def calc_prob(V, D, rank, ctx):
 
     diff = soma_ponderada / total_pesos if total_pesos > 0 else 0.0
 
-    # Bônus de Pace e Post Pick (ajustes finos de contexto)
     v_is_top = V["name"] in ctx.get("top3_ms", set())
     d_is_top = D["name"] in ctx.get("top3_ms", set())
     if v_is_top and not d_is_top: diff += 0.3
@@ -497,7 +488,6 @@ def montar_avbs(rank, ctx):
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 20.0]
     if len(elig) < 2: return []
 
-    # --- CALCULAR ESTATÍSTICAS DO GRUPO (Média e Desvio Padrão) ---
     def get_stats(key, invert=False, min_std=0.001):
         vals = [d.get(key) for d in elig if d.get(key) is not None]
         if len(vals) < 2: return None
@@ -638,7 +628,7 @@ def tabela_avb(lista, titulo):
 
         prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#12873a'>{prob:.1f}%</span></td>"
 
-        # ESTRELA DOURADA, MAIOR E COM ESPAÇO
+        # ESTRELA DOURADA
         star = "<span style='color:#FFD700; font-size:16px; margin-right:6px;'>★</span>" if is_premium else ""
 
         rows.append([
