@@ -604,27 +604,25 @@ def tbl(headers, rows, sticky_cols=0):
     if sticky_cols >= 1:
         sticky_css += """
         .dib-table th:nth-child(1), .dib-table td:nth-child(1) {
-            position: sticky; left: 0; z-index: 5;
-            background-color: transparent;
-            max-width: 190px; overflow: hidden; text-overflow: ellipsis;
+            position: sticky; left: 0; z-index: 3;
+            background-color: var(--secondary-background-color, rgba(240, 242, 246, 0.96));
         }
-        .dib-table thead th:nth-child(1) { z-index: 6; background-color: transparent; }
+        .dib-table thead th:nth-child(1) { z-index: 4; }
         """
     if sticky_cols >= 2:
         sticky_css += """
         .dib-table th:nth-child(2), .dib-table td:nth-child(2) {
-            position: sticky; left: 56px; z-index: 5;
-            background-color: transparent;
+            position: sticky; left: 56px; z-index: 3;
+            background-color: var(--secondary-background-color, rgba(240, 242, 246, 0.96));
         }
-        .dib-table thead th:nth-child(2) { z-index: 6; background-color: transparent; }
+        .dib-table thead th:nth-child(2) { z-index: 4; }
         """
 
     css = f"""<style>
-    .dib-container{{overflow-x:auto;width:100%;margin-bottom:20px;position:relative}}
-    .dib-table{{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto}}
-    .dib-table th,.dib-table td{{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3;background-color:transparent}}
-    .dib-table th{{background-color:rgba(128,128,128,0.1);font-weight:600}}
-    .dib-table td:nth-child(n+2), .dib-table th:nth-child(n+2){{position:relative;z-index:1}}
+    .dib-container{{overflow-x:auto;width:100%;margin-bottom:20px}}
+    .dib-table{{width:100%;border-collapse:separate;border-spacing:0;text-align:center;font-size:15px;table-layout:auto}}
+    .dib-table th,.dib-table td{{padding:8px 10px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}}
+    .dib-table th{{background-color:rgba(128,128,128,0.12);font-weight:600}}
     .dib-table td.sep{{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}}
     .dib-table td.sep-avb{{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}}
     {sticky_css}
