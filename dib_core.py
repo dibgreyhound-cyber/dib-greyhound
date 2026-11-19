@@ -34,19 +34,17 @@ DICIONARIO_REMARKS = {
 # CONFIGURAÇÃO GLOBAL (DIB 8.0 - Calibrado por Backtest)
 # =====================================================================
 CFG = {
-    "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 1.5, # [AJUSTE BACKTEST] Reduzido de 2.0 para 1.5
+    "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 1.5,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
-    "PERFIL_PTS": {"Limpo": 10.0, "Irregular": 5.0, "Trombador": 0.0}, # [AJUSTE BACKTEST] Aumentado para valorizar cão limpo
-    "TRAP_VAZIA": 6.0, # [AJUSTE BACKTEST] Reduzido de 12.0 para 6.0
-    "TRAFEGO_SEVERO": -4.0, # [AJUSTE BACKTEST] REDUZIDO BRUSCAMENTE de -12.0 para -4.0 (evita crucificar cães)
+    "PERFIL_PTS": {"Limpo": 10.0, "Irregular": 5.0, "Trombador": 0.0},
+    "TRAP_VAZIA": 6.0, 
+    "TRAFEGO_SEVERO": -4.0, 
     "CONF_MIN_VENCEDOR": 40.0,
 
-    # [AJUSTE BACKTEST] Velocidade reescalada (Total ~80 em vez de 140)
     "VEL_PTS": {"tadj": 25, "mtime": 20, "msplit": 25, "ritmo": 10},
     "CONSIST_PTS": 10, "PICO_PTS": 10, "RECUP_PTS": 10,
 }
 
-# [AJUSTE BACKTEST] Trap Bias mais justo. A 6 não é mais o fim do mundo e a 4 tem valor.
 TRAP_BIAS = {1: 4.0, 2: 2.0, 3: 2.0, 4: 2.0, 5: 0.0, 6: 0.0}
 
 FIELD_MAP = {
@@ -129,24 +127,14 @@ def parts_of(rem):
 def count_traf(rem):
     return sum(1 for p in parts_of(rem) if RE_TRAF.search(p))
 
-# =====================================================================
-# TADJ CIRÚRGICO
-# =====================================================================
 def traffic_penalty(rem, peso=31.0):
     s = str(rem or "").lower()
     pen = 0.0
-    
     graves = sum(s.count(k) for k in ("baulk", "fell", "ko", "msdbrk"))
     if graves > 0: pen += graves * 0.30
-    
     moderados = sum(s.count(k) for k in ("bmp", "crd", "fcd", "crmp"))
     if moderados > 0: pen += moderados * 0.15
-    
-    pen = min(pen, 0.50)
-    if pen == 0: return 0.0
-    
-    # [AJUSTE BACKTEST] Removido o fator por peso, pois não tem justificativa física.
-    return pen
+    return min(pen, 0.50)
 
 def not_free(rem):
     return bool(RE_NOFREE.search(str(rem or "").lower()))
@@ -398,11 +386,11 @@ def finalizar(ds, ctx):
         vals = [x[key] for x in ok if x.get(key) is not None]
         if d.get(key) is None or not vals: return 0.0
         lo, hi = min(vals), max(vals)
-        if hi == lo: return float(maxp / 2.0) # [AJUSTE BACKTEST] Corrigido o bug do hi==lo
+        if hi == lo: return float(maxp / 2.0) 
         return maxp * (hi - d[key]) / (hi - lo) if invert else maxp * (d[key] - lo) / (hi - lo)
 
     for d in ok:
-        pts_cat = d["cat"] * 2.0 # [AJUSTE BACKTEST] Reduzido de 4.0 para 2.0
+        pts_cat = d["cat"] * 2.0 
         pts_perfil = CFG["PERFIL_PTS"][d["perfil"]]
         pts_trap = TRAP_BIAS.get(d["trap"], 0.0)
         
@@ -414,11 +402,10 @@ def finalizar(ds, ctx):
                pts_prop("ritmo", CFG["VEL_PTS"]["ritmo"], d))
 
         f = []
-        # [AJUSTE BACKTEST] Cap (teto) nos bônus de largada
         if d["early_cnt"] > 0 and d["perfil"] == "Limpo":
-            f.append(("Ritmo Acelerado", min(d["early_cnt"], 2) * 4.0)) # Teto de 8.0
+            f.append(("Ritmo Acelerado", min(d["early_cnt"], 2) * 4.0)) 
         if d["saw_cnt"] > 0:
-            f.append(("Largada Lenta", min(d["saw_cnt"], 2) * -4.0)) # Teto de -8.0
+            f.append(("Largada Lenta", min(d["saw_cnt"], 2) * -4.0)) 
         if d["fbt_cnt"] > 0:
             f.append(("Tráfego 1ª Curva", min(d["fbt_cnt"], 2) * -3.0))
         if any(abs(d["trap"] - v) == 1 for v in vac):
@@ -426,10 +413,10 @@ def finalizar(ds, ctx):
             
         if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
             if not (d.get("msplit_pos") and d["msplit_pos"] <= 2):
-                if d.get("rec", 0) < -25.0: # [AJUSTE BACKTEST] Exige rec horrível para o castigo severo
+                if d.get("rec", 0) < -25.0:
                     f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"]))
 
-        if len(top3_ms) >= 3 and d["saw_cnt"] > 0 and d.get("rec", 0) > 10.0: # [AJUSTE BACKTEST] Exige rec > 10
+        if len(top3_ms) >= 3 and d["saw_cnt"] > 0 and d.get("rec", 0) > 10.0:
             f.append(("Conflito Pace (Favorável)", 5.0)) 
 
         d["fatores"] = f
@@ -440,7 +427,6 @@ def finalizar(ds, ctx):
         d["pos"] = i
         d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"]
         
-        # [AJUSTE BACKTEST] Alvo menos agressivo (rec < -30)
         top2_safe = (i <= 2) and (d.get("rec", -100) >= -10.0)
         d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d.get("rec", 0) < -30.0) and not top2_safe
         
@@ -472,7 +458,7 @@ def montar_avbs(rank, ctx):
     if len(elig) < 2: return []
 
     s1 = []
-    perdedores_usados = set() # [AJUSTE BACKTEST] Evita repetir o mesmo perdedor
+    perdedores_usados = set() 
 
     for i in range(len(elig)):
         for j in range(i+1, len(elig)):
@@ -488,11 +474,10 @@ def montar_avbs(rank, ctx):
             else:
                 V, D, prob = B, A, 100.0 - prob_A
 
-            # [AJUSTE BACKTEST] Se o perdedor já foi usado, pula.
             if D["name"] in perdedores_usados:
                 continue
 
-            if prob >= 58.0: # Mantido o seu limite original
+            if prob >= 58.0:
                 c1 = (V["name"] in ctx.get("top3_ms", set())) and (D["name"] not in ctx.get("top3_ms", set()))
                 c2 = V.get("cat", 0) >= D.get("cat", 0)
                 c3 = (V.get("split") is not None and D.get("split") is not None and V["split"] < D["split"])
@@ -502,6 +487,22 @@ def montar_avbs(rank, ctx):
                 is_premium = sum([c1, c2, c3, c4, c5]) >= 3
                 
                 s1.append((V, D, prob, is_premium))
-                perdedores_usados.add(D["name"]) # Marca como usado
+                perdedores_usados.add(D["name"]) 
 
-    return sorted(s1, key=lambda x: -x[
+    return sorted(s1, key=lambda x: -x[2])
+
+def get_rank_html(val, rank, max_rank):
+    if val is None or rank is None: return "-"
+    sup = {1: "¹", 2: "²", 3: "³", 4: "⁴", 5: "⁵", 6: "⁶"}.get(rank, "")
+    color = "color:#12873a;font-weight:bold" if rank == 1 else ("color:#ff4b4b" if rank == max_rank and max_rank > 1 else "")
+    return f"<span style='{color}'>{val:.2f}{sup}</span>"
+
+def tbl(headers, rows):
+    css = """<style>.dib-container{overflow-x:auto;width:100%;margin-bottom:20px}.dib-table{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto}.dib-table th,.dib-table td{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}.dib-table th{background-color:rgba(128,128,128,0.1);font-weight:600}.dib-table td.sep{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}.dib-table td.sep-avb{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}</style>"""
+    out = []
+    for row in rows:
+        if len(row) == 1 and "<hr" in str(row[0]): out.append(f"<tr><td class='sep' colspan='{len(headers)}'></td></tr>"); continue
+        if len(row) == 1 and "sep-avb" in str(row[0]): out.append(f"<tr><td class='sep-avb' colspan='{len(headers)}'></td></tr>"); continue
+        cells = [c if isinstance(c, str) and c.strip().startswith("<td") else f"<td>{c}</td>" for c in row]
+        out.append("<tr>" + "".join(cells) + "</tr>")
+    return f"{css}<div class='dib-container'><table class='dib
