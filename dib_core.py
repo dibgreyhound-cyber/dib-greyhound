@@ -599,11 +599,11 @@ def montar_avbs(rank, ctx):
             V, D, prob = (A, B, prob_A) if prob_A >= 50.0 else (B, A, 100.0 - prob_A)
 
             modo, score_crit = _classificar_confronto_avb(V, D, prob, ctx)
-            if modo is not None:
+            if modo is not None and prob >= 60.0:
                 s1.append((V, D, prob, modo, score_crit))
 
     prioridade_modo = {"FORTE": 3, "VALOR": 2, "TOP": 1}
-    s1.sort(key=lambda x: (-prioridade_modo.get(x[3], 0), -x[2], -x[4]))
+    s1.sort(key=lambda x: (-x[2], -prioridade_modo.get(x[3], 0), -x[4]))  # maior probabilidade primeiro
     out = []
     for V, D, prob, modo, score_crit in s1:
         AVB_META[(V["name"], D["name"])] = (modo, score_crit)
