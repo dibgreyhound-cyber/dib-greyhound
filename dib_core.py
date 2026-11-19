@@ -37,7 +37,7 @@ CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
-    "TRAP_VAZIA": 5.0, 
+    "TRAP_VAZIA": 5.0,
     "TRAFEGO_SEVERO": -12.0,
     "CONF_MIN_VENCEDOR": 40.0,
 
@@ -342,7 +342,7 @@ def analisar_galgo(dog, ctx):
 
     valid_grades = [grade_num(r["grade"]) for r in R if grade_num(r["grade"]) is not None]
     avg_grade_n = sum(valid_grades) / len(valid_grades) if valid_grades else (today_n or 0)
-    
+
     base = 13.0 - (avg_grade_n * 0.6)
     d["cat_mod"], d["cat"] = mod, base + mod
 
@@ -351,7 +351,7 @@ def analisar_galgo(dog, ctx):
 
     valid_splits = [r["split"] for r in R if r["split"] is not None and r["split"] > 0]
     has_split = len(valid_splits) > 0
-    
+
     if has_split:
         d["msplit"] = float(np.mean(valid_splits))
         d["msplit_pos"] = None
@@ -445,18 +445,28 @@ def finalizar(ds, ctx):
     for i, d in enumerate(ok, 1):
         d["pos"] = i
         d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"]
-        
+
         top2_safe = (i <= 2) and (d.get("rec", -100) >= -10.0)
         d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d["rec"] < -10.0) and not top2_safe
-        
+
         d["elegivel"] = not d["bloqueado"]
     return ok, top3_ms
 
 # =====================================================================
-# MATEMÁTICA DE CONFRONTO DIRETO (Z-SCORE HOLÍSTICO)
+# MATEMÁTICA DE CONFRONTO DIRETO (Z-SCORE + 3 MODOS: FORTE, VALOR, TOP)
 # =====================================================================
+def _largada_score(d):
+    if d.get("msplit") is not None:
+        return -float(d["msplit"])
+    if d.get("msplit_pos") is not None:
+        return -float(d["msplit_pos"])
+    if d.get("split") is not None:
+        return -float(d["split"])
+    return None
+
 def calc_prob(V, D, rank, ctx):
-    if V.get("overall") is None or D.get("overall") is None: return 50.0
+    if V.get("tadj") is None and V.get("mtime") is None:
+        return 50.0
 
     stats = ctx.get("_stats", {})
 
@@ -468,8 +478,15 @@ def calc_prob(V, D, rank, ctx):
         z = (val - mean) / std
         return -z if invert else z
 
+    # Sem dupla contagem de 'overall': foca em velocidade ajustada, tempo médio,
+    # largada/split, ritmo pós-largada, recuperação e categoria.
     pesos = {
-        "tadj": 2.5, "mtime": 1.5, "split": 2.0, "rec": 1.0, "overall": 1.5, "cat": 0.8,
+        "tadj": 2.6,
+        "mtime": 1.6,
+        "msplit": 1.8,
+        "ritmo": 1.5,
+        "rec": 1.0,
+        "cat": 0.8,
     }
 
     soma_ponderada = 0.0
@@ -484,19 +501,69 @@ def calc_prob(V, D, rank, ctx):
 
     v_is_top = V["name"] in ctx.get("top3_ms", set())
     d_is_top = D["name"] in ctx.get("top3_ms", set())
-    if v_is_top and not d_is_top: diff += 0.3
-    elif not v_is_top and d_is_top: diff -= 0.3
+    if v_is_top and not d_is_top: diff += 0.20
+    elif not v_is_top and d_is_top: diff -= 0.20
 
     pp = str(ctx.get("post_pick") or "")
-    if pp and str(V["trap"]) in pp: diff += 0.15
-    if pp and str(D["trap"]) in pp: diff -= 0.15
+    if pp and str(V["trap"]) in pp: diff += 0.10
+    if pp and str(D["trap"]) in pp: diff -= 0.10
 
-    try: 
-        prob = 100.0 / (1.0 + math.exp(-1.5 * diff))
-    except OverflowError: 
+    try:
+        prob = 100.0 / (1.0 + math.exp(-1.55 * diff))
+    except OverflowError:
         prob = 100.0 if diff > 0 else 0.0
 
     return prob
+
+def _classificar_confronto_avb(V, D, prob, ctx):
+    c_tadj = (V.get("tadj") is not None and D.get("tadj") is not None and V["tadj"] < D["tadj"])
+    c_mtime = (V.get("mtime") is not None and D.get("mtime") is not None and V["mtime"] < D["mtime"])
+    c_ritmo = (V.get("ritmo") is not None and D.get("ritmo") is not None and V["ritmo"] < D["ritmo"])
+    c_cat = (V.get("cat", 0) >= D.get("cat", 0))
+    c_rec = (V.get("rec", -100) >= -10.0) and (V.get("rec", -100) >= D.get("rec", -100))
+
+    larg_v, larg_d = _largada_score(V), _largada_score(D)
+    c_larg = (larg_v is not None and larg_d is not None and larg_v > larg_d) or (
+        (V["name"] in ctx.get("top3_ms", set())) and (D["name"] not in ctx.get("top3_ms", set()))
+    )
+
+    criterios_ok = sum([c_tadj, c_mtime, c_ritmo, c_cat, c_rec])
+
+    # 1. Algoritmo Forte (alta taxa de acerto)
+    is_forte = (
+        prob >= 65.0
+        and V.get("conf", 0) >= 60.0
+        and D.get("conf", 0) >= 40.0
+        and c_tadj
+        and c_mtime
+        and c_rec
+        and criterios_ok >= 4
+    )
+
+    # 2. Confronto Equilibrado com Valor (edge em duelo parelho / ritmo real)
+    is_valor = (
+        54.0 <= prob < 65.0
+        and V.get("conf", 0) >= 40.0
+        and c_tadj
+        and c_ritmo
+        and c_rec
+    )
+
+    # 3. Linha de Colocação / Top (largada, posição na curva e recuperação)
+    is_top = (
+        prob >= 55.0
+        and c_larg
+        and c_rec
+        and V.get("perfil") != "Trombador"
+    )
+
+    if is_forte:
+        return "FORTE", criterios_ok
+    if is_valor:
+        return "VALOR", criterios_ok
+    if is_top:
+        return "TOP", criterios_ok
+    return None, criterios_ok
 
 def montar_avbs(rank, ctx):
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 20.0]
@@ -513,9 +580,9 @@ def montar_avbs(rank, ctx):
     ctx["_stats"] = {
         "tadj": get_stats("tadj", invert=True, min_std=0.02),
         "mtime": get_stats("mtime", invert=True, min_std=0.02),
-        "split": get_stats("split", invert=True, min_std=0.02),
+        "msplit": get_stats("msplit", invert=True, min_std=0.02),
+        "ritmo": get_stats("ritmo", invert=True, min_std=0.02),
         "rec": get_stats("rec", invert=False, min_std=1.0),
-        "overall": get_stats("overall", invert=False, min_std=2.0),
         "cat": get_stats("cat", invert=False, min_std=0.3),
     }
 
@@ -526,18 +593,13 @@ def montar_avbs(rank, ctx):
             if A.get("bloqueado") or A.get("alvo") or B.get("bloqueado") or B.get("alvo"): continue
             prob_A = calc_prob(A, B, rank, ctx)
             V, D, prob = (A, B, prob_A) if prob_A >= 50.0 else (B, A, 100.0 - prob_A)
-            
-            if prob >= 60.0:
-                c1 = (V["name"] in ctx.get("top3_ms", set())) and (D["name"] not in ctx.get("top3_ms", set()))
-                c2 = V.get("cat", 0) >= D.get("cat", 0)
-                c3 = (V.get("split") is not None and D.get("split") is not None and V["split"] < D["split"])
-                c4 = (V.get("mtime") is not None and D.get("mtime") is not None and V["mtime"] < D["mtime"])
-                c5 = (V.get("rec") is not None and D.get("rec") is not None and V["rec"] >= -10.0 and V["rec"] > D["rec"])
-                
-                is_premium = c1 and c2 and c3 and c4 and c5
-                s1.append((V, D, prob, is_premium))
-                
-    return sorted(s1, key=lambda x: -x[2])
+
+            modo, score_crit = _classificar_confronto_avb(V, D, prob, ctx)
+            if modo is not None:
+                s1.append((V, D, prob, modo, score_crit))
+
+    prioridade_modo = {"FORTE": 3, "VALOR": 2, "TOP": 1}
+    return sorted(s1, key=lambda x: (-prioridade_modo.get(x[3], 0), -x[2], -x[4]))
 
 def get_rank_html(val, rank, max_rank):
     if val is None or rank is None: return "-"
@@ -602,7 +664,7 @@ def tabela_projecao(ds):
 
 def tabela_avb(lista, titulo):
     st.markdown(f"#### {titulo}")
-    if not lista: st.info("Nenhum confronto com vantagem superior a 60% nesta corrida."); return
+    if not lista: st.info("Nenhum confronto aprovado nos critérios FORTE, VALOR ou TOP nesta corrida."); return
 
     def fmt_pair(val_v, val_d, is_time=False, precision=2, is_pct=False):
         if val_v is None or val_d is None: return "-", "-"
@@ -619,8 +681,18 @@ def tabela_avb(lista, titulo):
             elif val_v < val_d: v_str, d_str = f"<span style='color:#ff4b4b'>{v_str}</span>", f"<span style='color:#12873a;font-weight:bold'>{d_str}</span>"
         return v_str, d_str
 
+    badges = {
+        "FORTE": "<span style='color:#FFD700;font-weight:bold;margin-right:6px;'>★ FORTE</span>",
+        "VALOR": "<span style='color:#38bdf8;font-weight:bold;margin-right:6px;'>💎 VALOR</span>",
+        "TOP": "<span style='color:#a78bfa;font-weight:bold;margin-right:6px;'>🏁 TOP</span>",
+    }
+
     rows = []
-    for i, (V, D, prob, is_premium) in enumerate(lista):
+    for i, item in enumerate(lista):
+        V, D, prob = item[0], item[1], item[2]
+        modo = item[3] if len(item) > 3 else "FORTE"
+        score_crit = item[4] if len(item) > 4 else 0
+
         if i > 0: rows.append(["<hr>"])
 
         ov_v, ov_d = fmt_pair(V['overall'], D['overall'], False, 1)
@@ -640,13 +712,16 @@ def tabela_avb(lista, titulo):
         r_v, r_d = fmt_pair(V['ritmo'], D['ritmo'], True, 2)
         rec_v, rec_d = fmt_pair(V['rec'], D['rec'], False, 1, True)
 
-        prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#12873a'>{prob:.1f}%</span></td>"
+        prob_cell = (
+            f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'>"
+            f"<span style='color:#12873a'>{prob:.1f}%</span><br>"
+            f"<small style='color:#aaa;font-weight:normal'>{score_crit}/5 crit.</small></td>"
+        )
 
-        # ESTRELA DOURADA
-        star = "<span style='color:#FFD700; font-size:16px; margin-right:6px;'>★</span>" if is_premium else ""
+        badge = badges.get(modo, "")
 
         rows.append([
-            f"{star}{trap_label(V)} - {nome_marcado(V)}",
+            f"{badge}{trap_label(V)} - {nome_marcado(V)}",
             ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]),
             f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, r_v, rec_v, f"{V['conf']:.0f}%",
             prob_cell
@@ -669,13 +744,13 @@ def gerar_observacoes(rank, avbs, ctx):
     elegiveis = [d for d in rank if not d.get("bloqueado")]
     bloqueados = [d for d in rank if d.get("bloqueado")]
 
-    if not elegiveis: 
+    if not elegiveis:
         st.warning("Todos os cães estão bloqueados ou sem dados suficientes para esta corrida.")
         return
 
     fav_app = elegiveis[0]
     insights = []
-    
+
     pp_str = str(ctx.get("post_pick") or "")
     pp_traps = [int(c) for c in pp_str if c.isdigit()]
     pp_fav_trap = pp_traps[0] if pp_traps else None
@@ -690,13 +765,13 @@ def gerar_observacoes(rank, avbs, ctx):
     if len(trombadores_internos) >= 2:
         nomes_tromb = " e ".join([f"{TRAP_EMOJI.get(d['trap'])} {d['name']}" for d in trombadores_internos])
         clean_candidates = [d for d in elegiveis if d["perfil"] != "Trombador"]
-        
+
         if clean_candidates:
             c_clean = clean_candidates[0]
             if c_clean["trap"] >= 5: local = "por fora"
             elif c_clean["trap"] == 4: local = "pelo meio"
             else: local = "no trilho (por dentro)"
-                
+
             insights.append(f"**💥 Risco de Colisão:** O {nomes_tromb} são Trombadores e correm nas traps internas. Se eles se chocarem na 1ª curva, o {TRAP_EMOJI.get(c_clean['trap'])} {c_clean['name']}, que corre {local} e está limpo, pode herdar a pista livre.")
         else:
             insights.append(f"**💥 Risco de Colisão:** O {nomes_tromb} são Trombadores e correm nas traps internas. A briga pelo trilho será intensa.")
