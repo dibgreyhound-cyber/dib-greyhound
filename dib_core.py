@@ -453,7 +453,7 @@ def finalizar(ds, ctx):
     return ok, top3_ms
 
 # =====================================================================
-# MATEMÁTICA DE CONFRONTO DIRETO (Z-SCORE + 3 MODOS: ★, 💎, 🏁)
+# MATEMÁTICA DE CONFRONTO DIRETO (Z-SCORE + 3 MODOS: FORTE, VALOR, TOP)
 # =====================================================================
 def _largada_score(d):
     if d.get("msplit") is not None:
@@ -478,6 +478,8 @@ def calc_prob(V, D, rank, ctx):
         z = (val - mean) / std
         return -z if invert else z
 
+    # Sem dupla contagem de 'overall': foca em velocidade ajustada, tempo médio,
+    # largada/split, ritmo pós-largada, recuperação e categoria.
     pesos = {
         "tadj": 2.6,
         "mtime": 1.6,
@@ -527,7 +529,8 @@ def _classificar_confronto_avb(V, D, prob, ctx):
 
     criterios_ok = sum([c_tadj, c_mtime, c_ritmo, c_cat, c_rec])
 
-    if (
+    # 1. Algoritmo Forte (alta taxa de acerto)
+    is_forte = (
         prob >= 65.0
         and V.get("conf", 0) >= 60.0
         and D.get("conf", 0) >= 40.0
@@ -535,27 +538,35 @@ def _classificar_confronto_avb(V, D, prob, ctx):
         and c_mtime
         and c_rec
         and criterios_ok >= 4
-    ):
-        return "★", criterios_ok
+    )
 
-    if (
+    # 2. Confronto Equilibrado com Valor (edge em duelo parelho / ritmo real)
+    is_valor = (
         54.0 <= prob < 65.0
         and V.get("conf", 0) >= 40.0
         and c_tadj
         and c_ritmo
         and c_rec
-    ):
-        return "💎", criterios_ok
+    )
 
-    if (
+    # 3. Linha de Colocação / Top (largada, posição na curva e recuperação)
+    is_top = (
         prob >= 55.0
         and c_larg
         and c_rec
         and V.get("perfil") != "Trombador"
-    ):
-        return "🏁", criterios_ok
+    )
 
+    if is_forte:
+        return "FORTE", criterios_ok
+    if is_valor:
+        return "VALOR", criterios_ok
+    if is_top:
+        return "TOP", criterios_ok
     return None, criterios_ok
+
+# (nome_V, nome_D) -> (modo, nº de critérios). Fica fora da tupla para não quebrar o app.py.
+AVB_META = {}
 
 def montar_avbs(rank, ctx):
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 20.0]
@@ -579,6 +590,7 @@ def montar_avbs(rank, ctx):
     }
 
     s1 = []
+    AVB_META.clear()
     for i in range(len(elig)):
         for j in range(i+1, len(elig)):
             A, B = elig[i], elig[j]
@@ -586,12 +598,18 @@ def montar_avbs(rank, ctx):
             prob_A = calc_prob(A, B, rank, ctx)
             V, D, prob = (A, B, prob_A) if prob_A >= 50.0 else (B, A, 100.0 - prob_A)
 
-            emoji_modo, _ = _classificar_confronto_avb(V, D, prob, ctx)
-            if emoji_modo is not None:
-                s1.append((V, D, prob, emoji_modo))
+            modo, score_crit = _classificar_confronto_avb(V, D, prob, ctx)
+            if modo is not None:
+                s1.append((V, D, prob, modo, score_crit))
 
-    prioridade_emoji = {"★": 3, "💎": 2, "🏁": 1}
-    return sorted(s1, key=lambda x: (-prioridade_emoji.get(x[3], 0), -x[2]))
+    prioridade_modo = {"FORTE": 3, "VALOR": 2, "TOP": 1}
+    s1.sort(key=lambda x: (-prioridade_modo.get(x[3], 0), -x[2], -x[4]))
+    out = []
+    for V, D, prob, modo, score_crit in s1:
+        AVB_META[(V["name"], D["name"])] = (modo, score_crit)
+        # Formato antigo (V, D, prob, star): app.py continua desempacotando 4 itens.
+        out.append((V, D, prob, modo == "FORTE"))
+    return out
 
 def get_rank_html(val, rank, max_rank):
     if val is None or rank is None: return "-"
@@ -599,42 +617,38 @@ def get_rank_html(val, rank, max_rank):
     color = "color:#12873a;font-weight:bold" if rank == 1 else ("color:#ff4b4b" if rank == max_rank and max_rank > 1 else "")
     return f"<span style='{color}'>{val:.2f}{sup}</span>"
 
-def tbl(headers, rows, sticky_cols=0):
-    sticky_css = ""
-    if sticky_cols >= 1:
-        sticky_css += """
-        .dib-table th:nth-child(1), .dib-table td:nth-child(1) {
-            position: sticky; left: 0; z-index: 3;
-            background-color: var(--secondary-background-color, rgba(240, 242, 246, 0.96));
-        }
-        .dib-table thead th:nth-child(1) { z-index: 4; }
-        """
-    if sticky_cols >= 2:
-        sticky_css += """
-        .dib-table th:nth-child(2), .dib-table td:nth-child(2) {
-            position: sticky; left: 56px; z-index: 3;
-            background-color: var(--secondary-background-color, rgba(240, 242, 246, 0.96));
-        }
-        .dib-table thead th:nth-child(2) { z-index: 4; }
-        """
-
-    css = f"""<style>
-    .dib-container{{overflow-x:auto;width:100%;margin-bottom:20px}}
-    .dib-table{{width:100%;border-collapse:separate;border-spacing:0;text-align:center;font-size:15px;table-layout:auto}}
-    .dib-table th,.dib-table td{{padding:8px 10px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}}
-    .dib-table th{{background-color:rgba(128,128,128,0.12);font-weight:600}}
-    .dib-table td.sep{{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}}
-    .dib-table td.sep-avb{{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}}
-    {sticky_css}
-    </style>"""
-
+def tbl(headers, rows, sticky=1, w1=None):
+    css = """<style>.dib-container{overflow-x:auto;width:100%;margin-bottom:20px}.dib-table{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto}.dib-table th,.dib-table td{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}.dib-table th{background-color:rgba(128,128,128,0.1);font-weight:600}.dib-table td.sep{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}.dib-table td.sep-avb{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}"""
+    css += (".dib-table th.stk,.dib-table td.stk{position:sticky;z-index:2;background-color:#ffffff;background-clip:padding-box}"
+            ".dib-table th.stk{background-color:#f0f2f6;z-index:3}"
+            ".dib-table .stk1{left:0}"
+            ".dib-table .stk-last{box-shadow:2px 0 3px -1px rgba(128,128,128,0.45)}"
+            "@media (prefers-color-scheme: dark){.dib-table th.stk,.dib-table td.stk{background-color:#0e1117}.dib-table th.stk{background-color:#262730}}")
+    if w1:
+        css += (f".dib-table .stk1{{min-width:{w1}px;max-width:{w1}px;width:{w1}px;box-sizing:border-box}}"
+                f".dib-table .stk2{{left:{w1}px}}")
+    css += "</style>"
     out = []
     for row in rows:
         if len(row) == 1 and "<hr" in str(row[0]): out.append(f"<tr><td class='sep' colspan='{len(headers)}'></td></tr>"); continue
         if len(row) == 1 and "sep-avb" in str(row[0]): out.append(f"<tr><td class='sep-avb' colspan='{len(headers)}'></td></tr>"); continue
-        cells = [c if isinstance(c, str) and c.strip().startswith("<td") else f"<td>{c}</td>" for c in row]
+        cells = []
+        for ci, c in enumerate(row):
+            cls = ""
+            if ci < sticky:
+                cls = f"stk stk{ci+1}" + (" stk-last" if ci == sticky - 1 else "")
+            if isinstance(c, str) and c.strip().startswith("<td"):
+                if cls: c = c.replace("<td", f"<td class='{cls}'", 1)
+                cells.append(c)
+            else:
+                cells.append(f"<td class='{cls}'>{c}</td>" if cls else f"<td>{c}</td>")
         out.append("<tr>" + "".join(cells) + "</tr>")
-    return f"{css}<div class='dib-container'><table class='dib-table'><thead><tr>{''.join(f'<th>{x}</th>' for x in headers)}</tr></thead><tbody>{''.join(out)}</tbody></table></div>"
+    def _th(i, x):
+        if i < sticky:
+            return f"<th class='stk stk{i+1}{' stk-last' if i == sticky - 1 else ''}'>{x}</th>"
+        return f"<th>{x}</th>"
+    thead = "".join(_th(i, x) for i, x in enumerate(headers))
+    return f"{css}<div class='dib-container'><table class='dib-table'><thead><tr>{thead}</tr></thead><tbody>{''.join(out)}</tbody></table></div>"
 
 def nome_marcado(d):
     n = html.escape(d["name"])
@@ -679,11 +693,11 @@ def tabela_projecao(ds):
             get_rank_html(d["tadj"], rk["tadj"][i], max_rk["tadj"]), get_rank_html(d["ritmo"], rk["ritmo"][i], max_rk["ritmo"]),
             get_rank_html(d["rec"], rk["rec"][i], max_rk["rec"]) + f"<br><small>{d['rec_txt'].split()[1]}</small>", f"{d['conf']:.0f}%"
         ])
-    return tbl(["Trap", "Galgo", "Overall", "Cat", "Fatores", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Ritmo", "Recup. Média", "Conf."], rows, sticky_cols=2)
+    return tbl(["Trap", "Galgo", "Overall", "Cat", "Fatores", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Ritmo", "Recup. Média", "Conf."], rows, sticky=2, w1=64)
 
 def tabela_avb(lista, titulo):
     st.markdown(f"#### {titulo}")
-    if not lista: st.info("Nenhum confronto aprovado nesta corrida."); return
+    if not lista: st.info("Nenhum confronto aprovado nos critérios FORTE, VALOR ou TOP nesta corrida."); return
 
     def fmt_pair(val_v, val_d, is_time=False, precision=2, is_pct=False):
         if val_v is None or val_d is None: return "-", "-"
@@ -698,19 +712,20 @@ def tabela_avb(lista, titulo):
         else:
             if val_v > val_d: v_str, d_str = f"<span style='color:#12873a;font-weight:bold'>{v_str}</span>", f"<span style='color:#ff4b4b'>{d_str}</span>"
             elif val_v < val_d: v_str, d_str = f"<span style='color:#ff4b4b'>{v_str}</span>", f"<span style='color:#12873a;font-weight:bold'>{d_str}</span>"
-            else: v_str, d_str = f"<span style='font-weight:bold'>{v_str}</span>", f"<span>{d_str}</span>"
         return v_str, d_str
 
-    emoji_cores = {
-        "★": "#FFD700",
-        "💎": "#38bdf8",
-        "🏁": "#a78bfa",
+    badges = {
+        "FORTE": "<span style='color:#FFD700;font-weight:bold;margin-right:6px;' title='Forte'>★</span>",
+        "VALOR": "<span style='margin-right:6px;' title='Valor'>💎</span>",
+        "TOP": "<span style='margin-right:6px;' title='Top'>🏁</span>",
     }
 
     rows = []
     for i, item in enumerate(lista):
         V, D, prob = item[0], item[1], item[2]
-        emoji_modo = item[3] if len(item) > 3 and item[3] else ""
+        meta = AVB_META.get((V["name"], D["name"]))
+        if meta: modo, score_crit = meta
+        else: modo, score_crit = ("FORTE" if (len(item) > 3 and item[3]) else ""), 0
 
         if i > 0: rows.append(["<hr>"])
 
@@ -731,10 +746,13 @@ def tabela_avb(lista, titulo):
         r_v, r_d = fmt_pair(V['ritmo'], D['ritmo'], True, 2)
         rec_v, rec_d = fmt_pair(V['rec'], D['rec'], False, 1, True)
 
-        prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#12873a'>{prob:.1f}%</span></td>"
+        prob_cell = (
+            f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'>"
+            f"<span style='color:#12873a'>{prob:.1f}%</span><br>"
+            f"<small style='color:#aaa;font-weight:normal'>{score_crit}/5 crit.</small></td>"
+        )
 
-        cor = emoji_cores.get(emoji_modo, "#FFD700")
-        badge = f"<span style='color:{cor};font-size:16px;margin-right:6px;'>{emoji_modo}</span>" if emoji_modo else ""
+        badge = badges.get(modo, "")
 
         rows.append([
             f"{badge}{trap_label(V)} - {nome_marcado(V)}",
@@ -750,7 +768,7 @@ def tabela_avb(lista, titulo):
         ])
 
     heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Ritmo", "Recup.", "Conf.", "Probabilidade"]
-    st.markdown(tbl(heads, rows, sticky_cols=1), unsafe_allow_html=True)
+    st.markdown(tbl(heads, rows), unsafe_allow_html=True)
 
 def gerar_observacoes(rank, avbs, ctx):
     if not rank: return
