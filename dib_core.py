@@ -288,21 +288,20 @@ def calc_prob(V, D, rank, ctx):
 def montar_avbs(rank, ctx):
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 20.0]
     if len(elig) < 2: return []
-    s1, perdedores_usados = [], set()
+    s1 = []
     for i in range(len(elig)):
         for j in range(i+1, len(elig)):
             A, B = elig[i], elig[j]
             if A.get("bloqueado") or A.get("alvo") or B.get("bloqueado") or B.get("alvo"): continue
             prob_A = calc_prob(A, B, rank, ctx)
             V, D, prob = (A, B, prob_A) if prob_A >= 50.0 else (B, A, 100.0 - prob_A)
-            if D["name"] in perdedores_usados or prob < 58.0: continue
-            c1 = (V["name"] in ctx.get("top3_ms", set())) and (D["name"] not in ctx.get("top3_ms", set()))
-            c2 = V.get("cat", 0) >= D.get("cat", 0)
-            c3 = (V.get("split") is not None and D.get("split") is not None and V["split"] < D["split"])
-            c4 = (V.get("mtime") is not None and D.get("mtime") is not None and V["mtime"] < D["mtime"])
-            c5 = (V.get("rec") is not None and D.get("rec") is not None and V["rec"] >= -10.0 and V["rec"] > D["rec"])
-            s1.append((V, D, prob, sum([c1, c2, c3, c4, c5]) >= 3))
-            perdedores_usados.add(D["name"])
+            if prob >= 50.0:
+                c1 = (V["name"] in ctx.get("top3_ms", set())) and (D["name"] not in ctx.get("top3_ms", set()))
+                c2 = V.get("cat", 0) >= D.get("cat", 0)
+                c3 = (V.get("split") is not None and D.get("split") is not None and V["split"] < D["split"])
+                c4 = (V.get("mtime") is not None and D.get("mtime") is not None and V["mtime"] < D["mtime"])
+                c5 = (V.get("rec") is not None and D.get("rec") is not None and V["rec"] >= -10.0 and V["rec"] > D["rec"])
+                s1.append((V, D, prob, sum([c1, c2, c3, c4, c5]) >= 3))
     return sorted(s1, key=lambda x: -x[2])
 
 def get_rank_html(val, rank, max_rank):
@@ -354,7 +353,7 @@ def tabela_projecao(ds):
 
 def tabela_avb(lista, titulo):
     st.markdown(f"#### {titulo}")
-    if not lista: st.info("Nenhum confronto com vantagem superior a 58% nesta corrida."); return
+    if not lista: st.info("Nenhum AVB possível para esta corrida (poucos dados ou cães bloqueados)."); return
     def fmt_pair(v, d, is_time=False, prec=2, is_pct=False):
         if v is None or d is None: return "-", "-"
         p, s = f".{prec}f", "%" if is_pct else ""
@@ -370,8 +369,8 @@ def tabela_avb(lista, titulo):
             elif v < d: vs, ds = f"<span style='color:#ff4b4b'>{vs}</span>", f"<span style='color:#12873a;font-weight:bold'>{ds}</span>"
         return vs, ds
     rows = []
-    for i, (V, D, prob, is_premium) in enumerate(lista):
-        if i > 0: rows.append(["<hr>"])
+    for i, (V, D, prob, is_premium) in enumerate(lista, 1):
+        if i > 1: rows.append(["<hr>"])
         ov_v, ov_d = fmt_pair(V['overall'], D['overall'], False, 1)
         cat_v, cat_d = fmt_pair(V['cat'], D['cat'], False, 1)
         sp_v, sp_d = fmt_pair(V['split'], D['split'], True, 2)
@@ -383,7 +382,7 @@ def tabela_avb(lista, titulo):
         ta_v, ta_d = fmt_pair(V['tadj'], D['tadj'], True, 2)
         r_v, r_d = fmt_pair(V['ritmo'], D['ritmo'], True, 2)
         rec_v, rec_d = fmt_pair(V['rec'], D['rec'], False, 1, True)
-        prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'><span style='color:#12873a'>{prob:.1f}%</span></td>"
+        prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:15px;'><span style='color:#12873a'>{prob:.1f}%</span><br><span style='font-size:12px;color:#888;'>#{i} Ranking</span></td>"
         star = "<span style='color:#FFD700; font-size:16px; margin-right:6px;'>★</span>" if is_premium else ""
         rows.append([f"{star}{trap_label(V)} - {nome_marcado(V)}", ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]), f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, r_v, rec_v, f"{V['conf']:.0f}%", prob_cell])
         rows.append([f"{trap_label(D)} - {nome_marcado(D)}", ov_d, cat_d, D['perfil'], "-".join((r["grade"] or "?") for r in D["runs"]), f"{D['peso']:.1f}", f"{D['dias']}", sp_d, t_d, ms_d, mt_d, ta_d, r_d, rec_d, f"{D['conf']:.0f}%"])
