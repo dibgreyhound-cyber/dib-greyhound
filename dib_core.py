@@ -15,12 +15,9 @@ DICIONARIO_REMARKS = {
 }
 
 CFG = {
-    "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 1.5,
-    # Penalidade de tempo (segundos) por tipo de tráfego
-    "TRAFFIC_PEN": {"heavy": 0.30, "medium": 0.15, "light": 0.10}, "TRAFFIC_PEN_MAX": 0.50,
+    "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 1.5, "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 10.0, "Irregular": 5.0, "Trombador": 0.0}, "TRAP_VAZIA": 6.0, "TRAFEGO_SEVERO": -4.0, "CONF_MIN_VENCEDOR": 40.0,
     "VEL_PTS": {"tadj": 25, "mtime": 20, "msplit": 25, "ritmo": 10}, "CONSIST_PTS": 10, "PICO_PTS": 10, "RECUP_PTS": 10,
-    "PACE_SPREAD": 0.05,  # diferença máx. (s) entre os 3 melhores splits para considerar conflito de pace
 }
 TRAP_BIAS = {1: 4.0, 2: 2.0, 3: 2.0, 4: 2.0, 5: 0.0, 6: 0.0}
 FIELD_MAP = {
@@ -33,19 +30,8 @@ FIELD_MAP = {
 TRAP_EMOJI = {1: "🟥", 2: "🟦", 3: "⬜", 4: "⬛", 5: "🟧", 6: "🔳"}
 MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36", "Accept": "application/json, text/plain, */*", "X-Requested-With": "XMLHttpRequest", "Referer": "https://greyhoundbet.racingpost.com/"}
-
-# [AJUSTE 10] Tráfego de verdade: removidos saw, vsaw, msdbrk e lame (largada/lesão não são tráfego).
-# Agora casa pelo INÍCIO do token (evita falsos positivos por substring).
-RE_TRAF = re.compile(r"^(awk|blk|bmp|crmp|evch|fcd|fell|ko|stmb|struck|crd|imp|baulk)")
+RE_TRAF = re.compile(r"(awk|blk|bmp|crmp|evch|fcd|fell|ko|msdbrk|saw|stmb|struck|vsaw|crd|imp|lame)")
 RE_NOFREE = re.compile(r"(awk|blk|bmp|crmp|evch|fcd|fell|ko|msdbrk|saw|stmb|struck|vsaw|crd|imp|lame|baulk)")
-# [AJUSTE: fell/ko] corridas com queda/derrubada não entram nas médias de tempo/split
-RE_FELL = re.compile(r"^(fell|ko)")
-# Penalidades por classe de tráfego (início do token)
-RE_PEN_HEAVY = re.compile(r"^(baulk|fell|ko)")
-RE_PEN_MED = re.compile(r"^(bmp|crd|fcd|crmp|blk|awk|stmb|struck)")
-RE_PEN_LIGHT = re.compile(r"^(evch|imp)")
-RE_EARLY = re.compile(r"^(ep|ald|snled|snld|ld)")  # [AJUSTE 5] snled (nome real do código)
-RE_SAW = re.compile(r"^(saw|vsaw)")
 
 def pick(d, keys, default=None):
     for k in keys:
@@ -58,11 +44,6 @@ def to_float(x):
         s = re.sub(r"[^\d.\-+]", "", str(x).strip().replace(",", "."))
         return float(s) if s not in ("", "+", "-", ".") else None
     except Exception: return None
-
-# [AJUSTE 1/split] split 0.00 ou negativo = dado ausente
-def split_valido(x):
-    v = to_float(x)
-    return v if v is not None and v > 0 else None
 
 def fin_num(x):
     m = re.search(r"\d+", str(x or "")); return int(m.group()) if m else None
@@ -88,33 +69,23 @@ def parse_date(s):
         try: return datetime.strptime(s, fmt)
         except Exception: pass
     return None
-
-# [AJUSTE 6] Tokenização única para TODO o código (vírgula, espaço e hífen)
 def parts_of(rem):
     for tok in re.split(r"[,\s]+", str(rem or "").lower()):
         if tok:
             for p in tok.split("-"):
                 if p: yield p
+def count_traf(rem): return sum(1 for p in parts_of(rem) if RE_TRAF.search(p))
 
-def count_traf(rem): return sum(1 for p in parts_of(rem) if RE_TRAF.match(p))
-def has_fell(rem): return any(RE_FELL.match(p) for p in parts_of(rem))
-def has_early(rem): return any(RE_EARLY.match(p) for p in parts_of(rem))
-def has_saw(rem): return any(RE_SAW.match(p) for p in parts_of(rem))
-
-# [AJUSTE: TRAFFIC_ADJ] agora usa CFG e cobre blk/awk/stmb/struck/evch/imp
 def traffic_penalty(rem, peso=31.0):
-    pen = 0.0
-    for p in parts_of(rem):
-        if RE_PEN_HEAVY.match(p): pen += CFG["TRAFFIC_PEN"]["heavy"]
-        elif RE_PEN_MED.match(p): pen += CFG["TRAFFIC_PEN"]["medium"]
-        elif RE_PEN_LIGHT.match(p): pen += CFG["TRAFFIC_PEN"]["light"]
-    return min(pen, CFG["TRAFFIC_PEN_MAX"])
+    s = str(rem or "").lower()
+    pen = sum(s.count(k) for k in ("baulk", "fell", "ko", "msdbrk")) * 0.30 + sum(s.count(k) for k in ("bmp", "crd", "fcd", "crmp")) * 0.15
+    return min(pen, 0.50)
 
 def not_free(rem): return bool(RE_NOFREE.search(str(rem or "").lower()))
 def first_bend_traffic(rem):
     s = str(rem or "").lower()
     if "baulk" in s: return True
-    return any(RE_TRAF.match(p) and p.endswith("1") for p in parts_of(s))
+    return bool(re.search(rf"{RE_TRAF.pattern}\s*[,/\-]?\s*1\b", s))
 
 HINTS = {"dist": (("dist", "metre", "meter"), ("btn", "beat", "by")), "grade": (("class", "grade"), ()), "by": (("btn", "beaten"), ()), "wntm": (("win", "time"), ())}
 def pick_fb(f, k):
@@ -130,7 +101,7 @@ def pick_fb(f, k):
 def norm_run(f):
     g = lambda k: pick_fb(f, k)
     return {"date": parse_date(g("date")), "date_str": str(g("date") or "")[:10], "track": str(g("track") or ""), "dist": to_float(g("dist")),
-            "grade": str(g("grade") or "").strip().upper(), "trap": fin_num(g("trap")), "split": split_valido(g("split")), "bends": str(g("bends") or ""),
+            "grade": str(g("grade") or "").strip().upper(), "trap": fin_num(g("trap")), "split": to_float(g("split")), "bends": str(g("bends") or ""),
             "fin": fin_num(g("fin")), "by": parse_lengths(g("by")), "wntm": to_float(g("wntm")), "gng": g("gng"), "weight": to_float(g("weight")),
             "remarks": str(g("remarks") or ""), "caltm": to_float(g("caltm"))}
 
@@ -216,11 +187,9 @@ def extrair_dados_racingpost(url):
     except Exception as e:
         st.error(f"Erro na extração: {e}"); return None, None, None
 
-# Só entram nas médias corridas da MESMA distância, com tempo calculado válido,
-# classe preenchida e que não sejam HP nem trial (T/T2...)  [AJUSTE 7]
 def oficial(r, ctx):
     g = str(r["grade"] or "").strip().upper()
-    if not g or g.startswith("HP") or is_trial_grade(g): return False
+    if not g or g.startswith("HP"): return False
     return (r["dist"] is not None and abs(r["dist"] - ctx["dist"]) < 1 and r["caltm"] is not None and r["caltm"] > 0)
 
 def analisar_galgo(dog, ctx):
@@ -239,104 +208,62 @@ def analisar_galgo(dog, ctx):
     avg_grade_n = sum(valid_grades) / len(valid_grades) if valid_grades else (today_n or 0)
     d["cat_mod"], d["cat"] = mod, (13.0 - (avg_grade_n * 0.6)) + mod
     d["peso"] = dog.get("peso_atual") or R[0]["weight"]
-    d["time"] = R[0]["caltm"]
-
-    # Corridas para médias de tempo/split: exclui quedas/derrubadas (fell/ko).
-    # Se todas tiverem queda, usa R mesmo assim.
-    RT = [r for r in R if not has_fell(r["remarks"])] or R
-
-    # [AJUSTE split] só splits reais (>0) da distância de hoje
-    splits = [r["split"] for r in RT if r["split"] is not None and r["split"] > 0]
-    has_split = bool(splits)
-    d["split"] = next((r["split"] for r in R if r["split"] is not None and r["split"] > 0), None)  # último split válido
+    d["split"], d["time"] = R[0]["split"], R[0]["caltm"]
+    has_split = any(r["split"] for r in R)
     if has_split:
-        d["msplit"] = float(np.mean(splits)); d["msplit_pos"] = None
+        d["msplit"] = float(np.mean([r["split"] for r in R if r["split"] is not None])); d["msplit_pos"] = None
     else:
-        pos_curve = [bends_digits(r["bends"])[0] for r in RT if bends_digits(r["bends"])]
+        pos_curve = [bends_digits(r["bends"])[0] for r in R if bends_digits(r["bends"])]
         d["msplit"] = None; d["msplit_pos"] = float(np.mean(pos_curve)) if pos_curve else None
-
-    cals = [r["caltm"] for r in RT if r["caltm"] is not None]
-    d["mtime"] = float(np.mean(cals)) if cals else None
-
-    # [AJUSTE 2] ritmo calculado corrida a corrida (caltm - split), só onde há os dois
-    ritmos = [r["caltm"] - r["split"] for r in RT if r["caltm"] is not None and r["split"] is not None]
-    d["ritmo"] = float(np.mean(ritmos)) if ritmos else None
-
+    d["mtime"] = float(np.mean([r["caltm"] for r in R if r["caltm"] is not None])) if any(r["caltm"] for r in R) else None
+    d["ritmo"] = d["mtime"] - d["msplit"] if (has_split and d["mtime"] and d["msplit"]) else None
     peso_atual = d["peso"] or 31.0
-    adj_times = [r["caltm"] - traffic_penalty(r["remarks"], peso_atual) for r in RT if r["caltm"] is not None]
+    adj_times = [r["caltm"] - traffic_penalty(r["remarks"], peso_atual) for r in R]
     d["tadj"] = float(np.mean(adj_times)) if adj_times else None
-
-    # [AJUSTE 1] consistência só existe com 2+ corridas; com 1 = None (não ganha nota máxima)
-    d["sd"] = float(np.std(cals)) if len(cals) > 1 else None
-    d["pico"] = min(cals) if cals else None
-
+    cal = [r["caltm"] for r in R]
+    d["sd"] = float(np.std(cal)) if len(cal) > 1 else 0.0
+    d["pico"] = min(cal) if cal else None
     recs = [(bends_digits(r["bends"])[0] - r["fin"]) / CFG["N_CORREDORES"] * 100.0 for r in R if bends_digits(r["bends"]) and r["fin"]]
     d["rec"] = float(np.mean(recs)) if recs else 0.0
     d["rec_txt"] = f"{d['rec']:+.2f}% ({'Ganhou' if d['rec'] > 0.005 else ('Perdeu' if d['rec'] < -0.005 else 'Manteve')})"
-
-    # [AJUSTE 9] perfil por TAXA de tráfego por corrida (não total absoluto)
     n_traf = sum(count_traf(r["remarks"]) for r in R)
-    taxa_traf = n_traf / len(R)
-    d["taxa_traf"] = taxa_traf
-    d["perfil"] = "Limpo" if taxa_traf <= 0.25 else ("Irregular" if taxa_traf <= 0.5 else "Trombador")
-
-    # [AJUSTE 5/6] contagens com a mesma tokenização
-    d["early_cnt"] = sum(1 for r in R if has_early(r["remarks"]))
-    d["saw_cnt"] = sum(1 for r in R if has_saw(r["remarks"]))
+    d["perfil"] = "Limpo" if n_traf <= 1 else ("Irregular" if n_traf == 2 else "Trombador")
+    d["early_cnt"] = sum(1 for r in R if any(re.match(r"^(ep|ald|snld|ld)", t) for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
+    d["saw_cnt"] = sum(1 for r in R if any(t.startswith("saw") or t.startswith("vsaw") for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
     d["fbt_cnt"] = sum(1 for r in R if first_bend_traffic(r["remarks"]))
-    d["remarks_translated"] = [DICIONARIO_REMARKS[t] for r in R for t in parts_of(r["remarks"]) if t in DICIONARIO_REMARKS]
+    d["remarks_translated"] = [DICIONARIO_REMARKS[t] for r in R for t in re.split(r"[,\s]+", str(r["remarks"]).lower()) if t in DICIONARIO_REMARKS]
     return d
 
 def finalizar(ds, ctx):
     ok = [d for d in ds if not d["nd"]]
     vac = [t for t in range(1, 7) if t not in {d["trap"] for d in ds if d["name"] != "vacant"}]
-
-    # [AJUSTE 8] bloqueados definidos antes e fora da escala min-max
-    for d in ok: d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"]
-    pool = [d for d in ok if not d["bloqueado"]] or ok
-
     ms_rank = sorted([d for d in ok if d.get("msplit") is not None], key=lambda x: x["msplit"]) or sorted([d for d in ok if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"])
     top3_ms, top_split_name = {d["name"] for d in ms_rank[:3]}, (ms_rank[0]["name"] if ms_rank else None)
     ctx["top3_ms"] = top3_ms
-
-    # [AJUSTE 4] conflito de pace real: 3+ cães com velocidade inicial OU top 3 de split colados
-    n_early = sum(1 for d in ok if d.get("early_cnt", 0) > 0)
-    colados = (len(ms_rank) >= 3 and ms_rank[0].get("msplit") is not None and
-               (ms_rank[2]["msplit"] - ms_rank[0]["msplit"]) <= CFG["PACE_SPREAD"])
-    pace_conflict = n_early >= 3 or colados
-    ctx["pace_conflict"] = pace_conflict
-
     def pts_prop(key, maxp, d, invert=True):
-        vals = [x[key] for x in pool if x.get(key) is not None]
+        vals = [x[key] for x in ok if x.get(key) is not None]
         if d.get(key) is None or not vals: return 0.0
         lo, hi = min(vals), max(vals)
-        if hi == lo: return float(maxp / 2.0)
-        v = maxp * (hi - d[key]) / (hi - lo) if invert else maxp * (d[key] - lo) / (hi - lo)
-        return float(min(max(v, 0.0), maxp))  # bloqueados fora da escala não estouram os limites
-
+        return float(maxp / 2.0) if hi == lo else (maxp * (hi - d[key]) / (hi - lo) if invert else maxp * (d[key] - lo) / (hi - lo))
     for d in ok:
         pts_cat, pts_perfil, pts_trap = d["cat"] * 2.0, CFG["PERFIL_PTS"][d["perfil"]], TRAP_BIAS.get(d["trap"], 0.0)
         pts_trial = -25.0 if d.get("n_trials", 0) >= 3 else 0.0
-        if d["msplit"]: pts_ms = pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d)
-        elif d.get("msplit_pos"): pts_ms = CFG["VEL_PTS"]["msplit"] * (1 - (d["msplit_pos"] / 6))
-        else: pts_ms = 0
-        vel = pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) + pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) + pts_ms + pts_prop("ritmo", CFG["VEL_PTS"]["ritmo"], d)
+        vel = pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) + pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) + (pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d) if d["msplit"] else (CFG["VEL_PTS"]["msplit"] * (1 - (d["msplit_pos"] / 6)) if d.get("msplit_pos") else 0)) + pts_prop("ritmo", CFG["VEL_PTS"]["ritmo"], d)
         f = []
         if d["early_cnt"] > 0 and d["perfil"] == "Limpo": f.append(("Ritmo Acelerado", min(d["early_cnt"], 2) * 4.0))
         is_top_pace = d["name"] in top3_ms
-        # [AJUSTE 3] Largada Limpa só se NÃO tem largada lenta no histórico
-        if is_top_pace and d["saw_cnt"] == 0: f.append(("Largada Limpa (Escapa Tráfego)", 5.0))
+        if is_top_pace: f.append(("Largada Limpa (Escapa Tráfego)", 5.0))
         if d["saw_cnt"] > 0: f.append(("Largada Lenta", min(d["saw_cnt"], 2) * -4.0))
         if d["fbt_cnt"] > 0 and not is_top_pace: f.append(("Tráfego 1ª Curva", min(d["fbt_cnt"], 2) * -3.0))
         if any(abs(d["trap"] - v) == 1 for v in vac): f.append(("Trap Vazia", CFG["TRAP_VAZIA"]))
-        if d["perfil"] == "Trombador" and d["trap"] in [1, 2, 3, 4, 5] and d["name"] not in top3_ms:
+        if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
             if not (d.get("msplit_pos") and d["msplit_pos"] <= 2) and d.get("rec", 0) < -25.0: f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"]))
-        if pace_conflict and d["saw_cnt"] > 0 and d.get("rec", 0) > 10.0: f.append(("Conflito Pace (Favorável)", 5.0))
+        if len(top3_ms) >= 3 and d["saw_cnt"] > 0 and d.get("rec", 0) > 10.0: f.append(("Conflito Pace (Favorável)", 5.0))
         d["fatores"] = f
         d["overall"] = vel + pts_cat + pts_perfil + pts_trap + pts_trial + pts_prop("sd", CFG["CONSIST_PTS"], d, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_prop("rec", CFG["RECUP_PTS"], d, False) + sum(v for _, v in f)
     ok.sort(key=lambda x: -x["overall"])
     for i, d in enumerate(ok, 1):
-        d["pos"] = i
+        d["pos"], d["bloqueado"] = i, d["conf"] < CFG["CONF_MIN_VENCEDOR"]
         top2_safe = (i <= 2) and (d.get("rec", -100) >= -10.0)
         d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d.get("rec", 0) < -30.0) and not top2_safe
         d["elegivel"] = not d["bloqueado"]
@@ -382,9 +309,6 @@ def get_rank_html(val, rank, max_rank):
     sup, color = {1: "¹", 2: "²", 3: "³", 4: "⁴", 5: "⁵", 6: "⁶"}.get(rank, ""), ("color:#12873a;font-weight:bold" if rank == 1 else ("color:#ff4b4b" if rank == max_rank and max_rank > 1 else ""))
     return f"<span style='{color}'>{val:.2f}{sup}</span>"
 
-def fmt_peso(d):
-    return f"{d['peso']:.1f}" if d.get("peso") is not None else "-"
-
 def tbl(headers, rows):
     css = "<style>.dib-container{overflow-x:auto;width:100%;margin-bottom:20px}.dib-table{width:100%;border-collapse:collapse;text-align:center;font-size:15px}.dib-table th,.dib-table td{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}.dib-table th{background-color:rgba(128,128,128,0.1);font-weight:600}.dib-table td.sep{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}.dib-table td.sep-avb{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}</style>"
     out = []
@@ -419,7 +343,7 @@ def tabela_projecao(ds):
         rows.append([
             trap_label(d), nome_marcado(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}",
             f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", fat, f"{ {'Limpo':'✅','Irregular':'⚠️','Trombador':'🔴'}[d['perfil']] } {d['perfil']}",
-            "-".join((r["grade"] or "?") for r in d["runs"]), fmt_peso(d), f"{d['dias']} ⚠️" if d['dias'] > 21 else str(d['dias']),
+            "-".join((r["grade"] or "?") for r in d["runs"]), f"{d['peso']:.1f}", f"{d['dias']} ⚠️" if d['dias'] > 21 else str(d['dias']),
             get_rank_html(d["split"], rk["split"][i], max_rk["split"]), get_rank_html(d["time"], rk["time"][i], max_rk["time"]),
             get_rank_html(d["msplit"], rk["msplit"][i], max_rk["msplit"]) if d.get("msplit") else (f"<span style='color:#ffa500'>Pos: {d.get('msplit_pos', 0):.1f}</span>" if d.get("msplit_pos") else "-"),
             get_rank_html(d["mtime"], rk["mtime"][i], max_rk["mtime"]), get_rank_html(d["tadj"], rk["tadj"][i], max_rk["tadj"]),
@@ -460,8 +384,8 @@ def tabela_avb(lista, titulo):
         rec_v, rec_d = fmt_pair(V['rec'], D['rec'], False, 1, True)
         prob_cell = f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:15px;'><span style='color:#12873a'>{prob:.1f}%</span><br><span style='font-size:12px;color:#888;'>#{i} Ranking</span></td>"
         star = "<span style='color:#FFD700; font-size:16px; margin-right:6px;'>★</span>" if is_premium else ""
-        rows.append([f"{star}{trap_label(V)} - {nome_marcado(V)}", ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]), fmt_peso(V), f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, r_v, rec_v, f"{V['conf']:.0f}%", prob_cell])
-        rows.append([f"{trap_label(D)} - {nome_marcado(D)}", ov_d, cat_d, D['perfil'], "-".join((r["grade"] or "?") for r in D["runs"]), fmt_peso(D), f"{D['dias']}", sp_d, t_d, ms_d, mt_d, ta_d, r_d, rec_d, f"{D['conf']:.0f}%"])
+        rows.append([f"{star}{trap_label(V)} - {nome_marcado(V)}", ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]), f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, r_v, rec_v, f"{V['conf']:.0f}%", prob_cell])
+        rows.append([f"{trap_label(D)} - {nome_marcado(D)}", ov_d, cat_d, D['perfil'], "-".join((r["grade"] or "?") for r in D["runs"]), f"{D['peso']:.1f}", f"{D['dias']}", sp_d, t_d, ms_d, mt_d, ta_d, r_d, rec_d, f"{D['conf']:.0f}%"])
     heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Ritmo", "Recup.", "Conf.", "Probabilidade"]
     st.markdown(tbl(heads, rows), unsafe_allow_html=True)
 
