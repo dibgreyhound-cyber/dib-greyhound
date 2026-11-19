@@ -9,6 +9,9 @@ import pandas as pd
 import requests
 import streamlit as st
 
+# =====================================================================
+# DICIONÁRIO DE REMARKS
+# =====================================================================
 DICIONARIO_REMARKS = {
     "ald": "Liderou Sempre", "awk": "Desajeitado", "blk": "Trombada Forte",
     "bmp": "Trombou na Curva", "chl": "Desafiado na Curva", "clrrn": "Corrida Limpa",
@@ -27,11 +30,17 @@ DICIONARIO_REMARKS = {
     "vw": "Corredor Aberto", "w": "Curva Ampla"
 }
 
+# =====================================================================
+# CONFIGURAÇÃO GLOBAL (DIB 8.0 - Calibrado por Backtest)
+# =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 1.5,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 10.0, "Irregular": 5.0, "Trombador": 0.0},
-    "TRAP_VAZIA": 6.0, "TRAFEGO_SEVERO": -4.0, "CONF_MIN_VENCEDOR": 40.0,
+    "TRAP_VAZIA": 6.0, 
+    "TRAFEGO_SEVERO": -4.0,
+    "CONF_MIN_VENCEDOR": 40.0,
+
     "VEL_PTS": {"tadj": 25, "mtime": 20, "msplit": 25, "ritmo": 10},
     "CONSIST_PTS": 10, "PICO_PTS": 10, "RECUP_PTS": 10,
 }
@@ -118,14 +127,23 @@ def parts_of(rem):
 def count_traf(rem):
     return sum(1 for p in parts_of(rem) if RE_TRAF.search(p))
 
+# =====================================================================
+# TADJ CIRÚRGICO
+# =====================================================================
 def traffic_penalty(rem, peso=31.0):
     s = str(rem or "").lower()
     pen = 0.0
+    
     graves = sum(s.count(k) for k in ("baulk", "fell", "ko", "msdbrk"))
     if graves > 0: pen += graves * 0.30
+    
     moderados = sum(s.count(k) for k in ("bmp", "crd", "fcd", "crmp"))
     if moderados > 0: pen += moderados * 0.15
-    return min(pen, 0.50)
+    
+    pen = min(pen, 0.50)
+    if pen == 0: return 0.0
+    
+    return pen
 
 def not_free(rem):
     return bool(RE_NOFREE.search(str(rem or "").lower()))
@@ -496,7 +514,8 @@ def tbl(headers, rows):
         cells = [c if isinstance(c, str) and c.strip().startswith("<td") else f"<td>{c}</td>" for c in row]
         out.append("<tr>" + "".join(cells) + "</tr>")
     return f"{css}<div class='dib-container'><table class='dib-table'><thead><tr>{''.join(f'<th>{x}</th>' for x in headers)}</tr></thead><tbody>{''.join(out)}</tbody></table></div>"
-    def nome_marcado(d):
+
+def nome_marcado(d):
     n = html.escape(d["name"])
     if d.get("alerta_trial", False): n += " ⚠️"
     if d.get("alvo", False): n += " 🎯"
