@@ -617,16 +617,17 @@ def get_rank_html(val, rank, max_rank):
     color = "color:#12873a;font-weight:bold" if rank == 1 else ("color:#ff4b4b" if rank == max_rank and max_rank > 1 else "")
     return f"<span style='{color}'>{val:.2f}{sup}</span>"
 
-def tbl(headers, rows, sticky=1, w1=None):
+def tbl(headers, rows, sticky=1, w1=None, w2=None):
     css = """<style>.dib-container{overflow-x:auto;width:100%;margin-bottom:20px}.dib-table{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto}.dib-table th,.dib-table td{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}.dib-table th{background-color:rgba(128,128,128,0.1);font-weight:600}.dib-table td.sep{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}.dib-table td.sep-avb{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}"""
-    css += (".dib-table th.stk,.dib-table td.stk{position:sticky;z-index:2;background-color:#ffffff;background-clip:padding-box}"
+    css += (".dib-table th.stk,.dib-table td.stk{position:sticky;z-index:2;background-color:#ffffff;background-clip:padding-box;white-space:normal;overflow-wrap:anywhere;word-break:break-word;text-align:left;box-sizing:border-box}"
             ".dib-table th.stk{background-color:#f0f2f6;z-index:3}"
             ".dib-table .stk1{left:0}"
             ".dib-table .stk-last{box-shadow:2px 0 3px -1px rgba(128,128,128,0.45)}"
             "@media (prefers-color-scheme: dark){.dib-table th.stk,.dib-table td.stk{background-color:#0e1117}.dib-table th.stk{background-color:#262730}}")
     if w1:
-        css += (f".dib-table .stk1{{min-width:{w1}px;max-width:{w1}px;width:{w1}px;box-sizing:border-box}}"
-                f".dib-table .stk2{{left:{w1}px}}")
+        css += f".dib-table .stk1{{min-width:{w1}px;max-width:{w1}px;width:{w1}px}}.dib-table .stk2{{left:{w1}px}}"
+    if w2:
+        css += f".dib-table .stk2{{min-width:{w2}px;max-width:{w2}px;width:{w2}px}}"
     css += "</style>"
     out = []
     for row in rows:
@@ -693,7 +694,7 @@ def tabela_projecao(ds):
             get_rank_html(d["tadj"], rk["tadj"][i], max_rk["tadj"]), get_rank_html(d["ritmo"], rk["ritmo"][i], max_rk["ritmo"]),
             get_rank_html(d["rec"], rk["rec"][i], max_rk["rec"]) + f"<br><small>{d['rec_txt'].split()[1]}</small>", f"{d['conf']:.0f}%"
         ])
-    return tbl(["Trap", "Galgo", "Overall", "Cat", "Fatores", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Ritmo", "Recup. Média", "Conf."], rows, sticky=2, w1=64)
+    return tbl(["Trap", "Galgo", "Overall", "Cat", "Fatores", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Ritmo", "Recup. Média", "Conf."], rows, sticky=2, w1=64, w2=125)
 
 def tabela_avb(lista, titulo):
     st.markdown(f"#### {titulo}")
@@ -768,7 +769,7 @@ def tabela_avb(lista, titulo):
         ])
 
     heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Ritmo", "Recup.", "Conf.", "Probabilidade"]
-    st.markdown(tbl(heads, rows), unsafe_allow_html=True)
+    st.markdown(tbl(heads, rows, sticky=1, w1=190), unsafe_allow_html=True)
 
 def gerar_observacoes(rank, avbs, ctx):
     if not rank: return
