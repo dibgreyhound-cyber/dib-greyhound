@@ -605,22 +605,22 @@ def tbl(headers, rows, sticky_cols=0):
         sticky_css += """
         .dib-table th:nth-child(1), .dib-table td:nth-child(1) {
             position: sticky; left: 0; z-index: 2;
-            background-color: inherit;
+            background-color: #ffffff;
         }
-        .dib-table thead th:nth-child(1) { z-index: 3; }
+        .dib-table thead th:nth-child(1) { z-index: 4; background-color: #f0f2f6; }
         """
     if sticky_cols >= 2:
         sticky_css += """
         .dib-table th:nth-child(2), .dib-table td:nth-child(2) {
             position: sticky; left: 56px; z-index: 2;
-            background-color: inherit;
+            background-color: #ffffff;
         }
-        .dib-table thead th:nth-child(2) { z-index: 3; }
+        .dib-table thead th:nth-child(2) { z-index: 4; background-color: #f0f2f6; }
         """
 
     css = f"""<style>
     .dib-container{{overflow-x:auto;width:100%;margin-bottom:20px}}
-    .dib-table{{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto}}
+    .dib-table{{width:100%;border-collapse:separate;border-spacing:0;text-align:center;font-size:15px;table-layout:auto}}
     .dib-table th,.dib-table td{{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}}
     .dib-table th{{background-color:rgba(128,128,128,0.1);font-weight:600}}
     .dib-table td.sep{{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}}
@@ -698,6 +698,7 @@ def tabela_avb(lista, titulo):
         else:
             if val_v > val_d: v_str, d_str = f"<span style='color:#12873a;font-weight:bold'>{v_str}</span>", f"<span style='color:#ff4b4b'>{d_str}</span>"
             elif val_v < val_d: v_str, d_str = f"<span style='color:#ff4b4b'>{v_str}</span>", f"<span style='color:#12873a;font-weight:bold'>{d_str}</span>"
+            else: v_str, d_str = f"<span style='font-weight:bold'>{v_str}</span>", f"<span>{d_str}</span>"
         return v_str, d_str
 
     emoji_cores = {
