@@ -617,6 +617,8 @@ def get_rank_html(val, rank, max_rank):
     color = "color:#12873a;font-weight:bold" if rank == 1 else ("color:#ff4b4b" if rank == max_rank and max_rank > 1 else "")
     return f"<span style='{color}'>{val:.2f}{sup}</span>"
 
+_TBL_N = 0
+
 def tbl(headers, rows, sticky=1, w1=None, w2=None):
     css = """<style>.dib-container{overflow-x:auto;width:100%;margin-bottom:20px}.dib-table{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto}.dib-table th,.dib-table td{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}.dib-table th{background-color:rgba(128,128,128,0.1);font-weight:600}.dib-table td.sep{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}.dib-table td.sep-avb{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}"""
     css += (".dib-table th.stk,.dib-table td.stk{position:sticky;z-index:2;background-color:#ffffff;background-clip:padding-box;white-space:normal;overflow-wrap:anywhere;word-break:break-word;text-align:left;box-sizing:border-box}"
@@ -624,10 +626,13 @@ def tbl(headers, rows, sticky=1, w1=None, w2=None):
             ".dib-table .stk1{left:0}"
             ".dib-table .stk-last{box-shadow:2px 0 3px -1px rgba(128,128,128,0.45)}"
             "@media (prefers-color-scheme: dark){.dib-table th.stk,.dib-table td.stk{background-color:#0e1117}.dib-table th.stk{background-color:#262730}}")
+    global _TBL_N
+    _TBL_N += 1
+    tid = f"dibt{_TBL_N}"  # id único: as larguras de uma tabela não afetam a outra
     if w1:
-        css += f".dib-table .stk1{{min-width:{w1}px;max-width:{w1}px;width:{w1}px}}.dib-table .stk2{{left:{w1}px}}"
+        css += f"#{tid} .stk1{{min-width:{w1}px;max-width:{w1}px;width:{w1}px}}#{tid} .stk2{{left:{w1}px}}"
     if w2:
-        css += f".dib-table .stk2{{min-width:{w2}px;max-width:{w2}px;width:{w2}px}}"
+        css += f"#{tid} .stk2{{min-width:{w2}px;max-width:{w2}px;width:{w2}px}}"
     css += "</style>"
     out = []
     for row in rows:
@@ -649,7 +654,7 @@ def tbl(headers, rows, sticky=1, w1=None, w2=None):
             return f"<th class='stk stk{i+1}{' stk-last' if i == sticky - 1 else ''}'>{x}</th>"
         return f"<th>{x}</th>"
     thead = "".join(_th(i, x) for i, x in enumerate(headers))
-    return f"{css}<div class='dib-container'><table class='dib-table'><thead><tr>{thead}</tr></thead><tbody>{''.join(out)}</tbody></table></div>"
+    return f"{css}<div class='dib-container' id='{tid}'><table class='dib-table'><thead><tr>{thead}</tr></thead><tbody>{''.join(out)}</tbody></table></div>"
 
 def nome_marcado(d):
     n = html.escape(d["name"])
