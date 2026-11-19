@@ -527,7 +527,6 @@ def _classificar_confronto_avb(V, D, prob, ctx):
 
     criterios_ok = sum([c_tadj, c_mtime, c_ritmo, c_cat, c_rec])
 
-    # 1. Forte (alta taxa de acerto) -> ★
     if (
         prob >= 65.0
         and V.get("conf", 0) >= 60.0
@@ -539,7 +538,6 @@ def _classificar_confronto_avb(V, D, prob, ctx):
     ):
         return "★", criterios_ok
 
-    # 2. Equilibrado com valor -> 💎
     if (
         54.0 <= prob < 65.0
         and V.get("conf", 0) >= 40.0
@@ -549,7 +547,6 @@ def _classificar_confronto_avb(V, D, prob, ctx):
     ):
         return "💎", criterios_ok
 
-    # 3. Colocação / Top -> 🏁
     if (
         prob >= 55.0
         and c_larg
@@ -581,9 +578,6 @@ def montar_avbs(rank, ctx):
         "cat": get_stats("cat", invert=False, min_std=0.3),
     }
 
-    crit_map = ctx.setdefault("_avb_crit", {})
-    crit_map.clear()
-
     s1 = []
     for i in range(len(elig)):
         for j in range(i+1, len(elig)):
@@ -592,10 +586,8 @@ def montar_avbs(rank, ctx):
             prob_A = calc_prob(A, B, rank, ctx)
             V, D, prob = (A, B, prob_A) if prob_A >= 50.0 else (B, A, 100.0 - prob_A)
 
-            emoji_modo, score_crit = _classificar_confronto_avb(V, D, prob, ctx)
+            emoji_modo, _ = _classificar_confronto_avb(V, D, prob, ctx)
             if emoji_modo is not None:
-                key_pair = (V.get("trap"), V.get("name"), D.get("trap"), D.get("name"))
-                crit_map[key_pair] = score_crit
                 s1.append((V, D, prob, emoji_modo))
 
     prioridade_emoji = {"★": 3, "💎": 2, "🏁": 1}
@@ -613,34 +605,76 @@ def tbl(headers, rows, sticky_cols=0):
         sticky_css += """
         .dib-table th:nth-child(1), .dib-table td:nth-child(1) {
             position: sticky; left: 0; z-index: 2;
-            background-color: #14161a;
+            background-color: #ffffff; color: #111111;
         }
-        .dib-table thead th:nth-child(1) { z-index: 3; background-color: #1b1e24; }
+        .dib-table thead th:nth-child(1) { z-index: 4; background-color: #f0f2f6; color: #111111; }
         """
     if sticky_cols >= 2:
         sticky_css += """
         .dib-table th:nth-child(2), .dib-table td:nth-child(2) {
-            position: sticky; left: 64px; z-index: 2;
-            background-color: #14161a;
-            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.45);
+            position: sticky; left: 56px; z-index: 2;
+            background-color: #ffffff; color: #111111;
         }
-        .dib-table thead th:nth-child(2) { z-index: 3; background-color: #1b1e24; }
+        .dib-table thead th:nth-child(2) { z-index: 4; background-color: #f0f2f6; color: #111111; }
         """
-    if sticky_cols == 1:
-        sticky_css += """
-        .dib-table th:nth-child(1), .dib-table td:nth-child(1) {
-            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.45);
+
+    dark_sticky_css = ""
+    if sticky_cols >= 1:
+        dark_sticky_css += """
+        @media (prefers-color-scheme: dark) {
+            .dib-table th:nth-child(1), .dib-table td:nth-child(1) {
+                background-color: #000000 !important; color: #fafafa !important;
+            }
+            .dib-table thead th:nth-child(1) { background-color: #16181d !important; color: #fafafa !important; }
+        }
+        :root[data-theme="dark"] .dib-table th:nth-child(1),
+        :root[data-theme="dark"] .dib-table td:nth-child(1) {
+            background-color: #000000 !important; color: #fafafa !important;
+        }
+        :root[data-theme="dark"] .dib-table thead th:nth-child(1) {
+            background-color: #16181d !important; color: #fafafa !important;
+        }
+        :root[data-theme="light"] .dib-table th:nth-child(1),
+        :root[data-theme="light"] .dib-table td:nth-child(1) {
+            background-color: #ffffff !important; color: #111111 !important;
+        }
+        :root[data-theme="light"] .dib-table thead th:nth-child(1) {
+            background-color: #f0f2f6 !important; color: #111111 !important;
+        }
+        """
+    if sticky_cols >= 2:
+        dark_sticky_css += """
+        @media (prefers-color-scheme: dark) {
+            .dib-table th:nth-child(2), .dib-table td:nth-child(2) {
+                background-color: #000000 !important; color: #fafafa !important;
+            }
+            .dib-table thead th:nth-child(2) { background-color: #16181d !important; color: #fafafa !important; }
+        }
+        :root[data-theme="dark"] .dib-table th:nth-child(2),
+        :root[data-theme="dark"] .dib-table td:nth-child(2) {
+            background-color: #000000 !important; color: #fafafa !important;
+        }
+        :root[data-theme="dark"] .dib-table thead th:nth-child(2) {
+            background-color: #16181d !important; color: #fafafa !important;
+        }
+        :root[data-theme="light"] .dib-table th:nth-child(2),
+        :root[data-theme="light"] .dib-table td:nth-child(2) {
+            background-color: #ffffff !important; color: #111111 !important;
+        }
+        :root[data-theme="light"] .dib-table thead th:nth-child(2) {
+            background-color: #f0f2f6 !important; color: #111111 !important;
         }
         """
 
     css = f"""<style>
-    .dib-container{{overflow-x:auto;width:100%;margin-bottom:20px;background-color:#14161a;border-radius:6px}}
-    .dib-table{{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto;background-color:#14161a;color:#f0f2f6}}
-    .dib-table th,.dib-table td{{padding:8px 6px;border-bottom:1px solid rgba(255,255,255,0.12);white-space:nowrap;line-height:1.3;background-color:#14161a}}
-    .dib-table th{{background-color:#1b1e24;font-weight:600}}
-    .dib-table td.sep{{padding:0;height:2px;background-color:rgba(255,255,255,0.28)}}
-    .dib-table td.sep-avb{{padding:0;height:1px;background-color:rgba(255,255,255,0.15)}}
+    .dib-container{{overflow-x:auto;width:100%;margin-bottom:20px;isolation:isolate}}
+    .dib-table{{width:100%;border-collapse:separate;border-spacing:0;text-align:center;font-size:15px;table-layout:auto}}
+    .dib-table th,.dib-table td{{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}}
+    .dib-table th{{background-color:rgba(128,128,128,0.1);font-weight:600}}
+    .dib-table td.sep{{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}}
+    .dib-table td.sep-avb{{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}}
     {sticky_css}
+    {dark_sticky_css}
     </style>"""
 
     out = []
