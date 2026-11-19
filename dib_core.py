@@ -295,7 +295,7 @@ def montar_avbs(rank, ctx):
             if A.get("bloqueado") or A.get("alvo") or B.get("bloqueado") or B.get("alvo"): continue
             prob_A = calc_prob(A, B, rank, ctx)
             V, D, prob = (A, B, prob_A) if prob_A >= 50.0 else (B, A, 100.0 - prob_A)
-            if prob >= 50.0:
+            if prob >= 60.0:
                 c1 = (V["name"] in ctx.get("top3_ms", set())) and (D["name"] not in ctx.get("top3_ms", set()))
                 c2 = V.get("cat", 0) >= D.get("cat", 0)
                 c3 = (V.get("split") is not None and D.get("split") is not None and V["split"] < D["split"])
@@ -353,7 +353,7 @@ def tabela_projecao(ds):
 
 def tabela_avb(lista, titulo):
     st.markdown(f"#### {titulo}")
-    if not lista: st.info("Nenhum AVB possível para esta corrida (poucos dados ou cães bloqueados)."); return
+    if not lista: st.info("Nenhum confronto com probabilidade igual ou superior a 60% nesta corrida."); return
     def fmt_pair(v, d, is_time=False, prec=2, is_pct=False):
         if v is None or d is None: return "-", "-"
         p, s = f".{prec}f", "%" if is_pct else ""
