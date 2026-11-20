@@ -111,7 +111,7 @@ CFG = {
             "start_bonus": 0.04, "postpick_sec": 0.02,
             "trap_sec": {1: -0.02, 2: -0.01, 3: 0.0, 4: 0.0, 5: 0.01, 6: 0.02}},
     "AVB_FILE": "avb_previsoes.csv",
-    "VERSAO": "avb-segundos-1",
+    "VERSAO": "avb-segundos-2",
 }
 
 FIELD_MAP = {
@@ -264,11 +264,15 @@ _EARLY_KEYS = {"ald", "ep", "snled", "ld", "ldbmp"}
 _SAW_KEYS = {"saw", "vsaw"}
 
 def analisar_remarks(rem):
-    """Classifica os remarks de UMA corrida para o Time Ajust.: exclusão, desconto por interferência e largada lenta."""
+    """Classifica os remarks de UMA corrida para o Time Ajust.: exclusão, desconto por interferência e largada lenta.
+    O mesmo remark repetido na mesma curva (ex.: Bmp1 duas vezes) conta uma vez só."""
     A = CFG["ADJ"]
     excluir, interf, slow = False, 0.0, None
+    vistos = set()
     for it in ler_remarks(rem):
         if not it["key"]: continue
+        if (it["key"], it["num"]) in vistos: continue
+        vistos.add((it["key"], it["num"]))
         adj = REMARKS_INFO[it["key"]][2]
         if adj == "exclui": excluir = True
         elif adj in ("saw", "vsaw"):
@@ -295,11 +299,13 @@ def diagnostico_remarks(dogs):
     return cont, aprox, desc
 
 def tempo_limpo(R):
-    """(tadj, n_excluidas, desconto_medio) — média ponderada por recência dos CalTm ajustados."""
+    """(tadj, n_excluidas, desconto_medio) — média ponderada por recência dos CalTm ajustados.
+    O tempo ajustado nunca fica mais rápido que o melhor tempo real do galgo (- 0,05s)."""
     A = CFG["ADJ"]
     info = [(r, analisar_remarks(r["remarks"])) for r in R if r["caltm"] is not None and r["caltm"] > 0]
     usar = [(r, i) for r, i in info if not i["excluir"]] or info  # se todas excluídas, usa todas
     if not usar: return None, 0, 0.0
+    piso = min(r["caltm"] for r, _ in usar) - 0.05
     limpos = [r["split"] for r, i in usar if i["limpa"] and r["split"] is not None and r["split"] > 0]
     ref_split = float(np.median(limpos)) if limpos else None
     vals, descs = [], []
@@ -311,7 +317,7 @@ def tempo_limpo(R):
             else:
                 loss = A[i["slow"]]
         desc = min(i["interf"] + loss, A["cap_total"])
-        vals.append(r["caltm"] - desc); descs.append(desc)
+        vals.append(max(r["caltm"] - desc, piso)); descs.append(desc)
     w = np.array(CFG["REC_W"][:len(vals)] + [CFG["REC_W"][-1]] * max(0, len(vals) - len(CFG["REC_W"])), dtype=float)
     w = w / w.sum()
     return float(np.dot(w, vals)), len(info) - len(usar) if len(usar) != len(info) else 0, float(np.mean(descs))
@@ -523,8 +529,9 @@ def extrair_brt_txt(dog):
     return f"BRT: {brt:.2f}" + (f" ({dt})" if dt else "")
 
 def oficial(r, ctx):
+    """Corrida válida para as métricas: mesma distância, com CalTm, e fora HP e trials."""
     g = str(r["grade"] or "").strip().upper()
-    if g.startswith("HP"):
+    if g.startswith("HP") or is_trial_grade(g):
         return False
     return (r["dist"] is not None
             and abs(r["dist"] - ctx["dist"]) < 1
@@ -536,10 +543,14 @@ def analisar_galgo(dog, ctx):
                 "conf": 0.0, "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False,
                 "alerta_trial": False, "n_trials": 0}
 
-    runs = sorted(dog["runs"], key=lambda r: r["date"] or datetime.min, reverse=True)[:CFG["N_RUNS"]]
-    R = [r for r in runs if oficial(r, ctx)]
-
+    todas = sorted(dog["runs"], key=lambda r: r["date"] or datetime.min, reverse=True)
+    runs = todas[:CFG["N_RUNS"]]  # usado só para Dias, trials e calibração
     n_trials = sum(1 for r in runs if is_trial_grade(r["grade"]))
+
+    # Filtro único: oficiais (distância de hoje, sem trial/HP) -> sem quedas/manca -> 5 mais recentes
+    oficiais = [r for r in todas if oficial(r, ctx)][:CFG["N_RUNS"]]
+    validas = [r for r in oficiais if not analisar_remarks(r["remarks"])["excluir"]]
+    R = validas or oficiais
 
     d = {"name": dog["name"], "trap": dog["trap"], "runs": runs, "val": R, "nd": not R,
          "conf": min(100.0, len(R) * 20.0), "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False,
@@ -547,19 +558,20 @@ def analisar_galgo(dog, ctx):
 
     d["brt_raw"] = dog.get("brt")  # BRT como aparece no card (mostrado sob o nome)
     d["brt_txt"] = dog.get("brt_txt")
-    ultima_any = runs[0] if runs else None
+    ultima_any = todas[0] if todas else None
     d["dias"] = (ctx["today"] - ultima_any["date"]).days if ultima_any and ultima_any["date"] else 0
+    if d["dias"] > 21: d["conf"] *= 0.8  # parado há muito tempo = menos confiável
 
     if not R: return d
 
+    # --- Categoria: classe de hoje vs. classe média das corridas válidas ---
     today_n = ctx.get("classe_n")
-    last_n = grade_num(R[0]["grade"])
-    mod = 0.0
-    if today_n and last_n:
-        mod = CFG["CAT_BONUS"] if today_n > last_n else (-CFG["CAT_BONUS"] if today_n < last_n else 0.0)
-
     valid_grades = [grade_num(r["grade"]) for r in R if grade_num(r["grade"]) is not None]
     avg_grade_n = sum(valid_grades) / len(valid_grades) if valid_grades else (today_n or 0)
+    if today_n and valid_grades:
+        mod = max(-CFG["CAT_BONUS"], min(CFG["CAT_BONUS"], today_n - avg_grade_n))
+    else:
+        mod = 0.0
 
     base = 13.0 - (avg_grade_n * 0.6)
     d["cat_mod"], d["cat"] = mod, base + mod
@@ -581,18 +593,19 @@ def analisar_galgo(dog, ctx):
     valid_caltm = [r["caltm"] for r in R if r["caltm"] is not None and r["caltm"] > 0]
     d["mtime"] = float(np.mean(valid_caltm)) if valid_caltm else None
 
-    # M. Split = melhor split e M. Time = melhor CalTm entre as últimas 5 corridas oficiais
+    # M. Split = melhor split e M. Time = melhor CalTm entre as últimas 5 corridas válidas
     d["split"] = min(valid_splits) if valid_splits else None
     d["time"] = min(valid_caltm) if valid_caltm else None
-    # BRT só vale se estiver a até ~3s do tempo médio (senão é de outra distância)
-    brt = dog.get("brt")
-    if brt and d["mtime"] and abs(brt - d["mtime"]) <= 3.0:
-        d["brt"] = brt
 
-    if has_split:
-        d["ritmo"] = d["mtime"] - d["msplit"] if d["mtime"] and d["msplit"] else None
-    else:
-        d["ritmo"] = d["mtime"]
+    # BRT: mesmo validador do AvB (recente e de classe próxima) + sanidade de 3s contra o tempo médio
+    d["brt"] = dog.get("brt")
+    d["brt"] = _brt_valido(d, ctx)
+    if d["brt"] and d["mtime"] and abs(d["brt"] - d["mtime"]) > 3.0:
+        d["brt"] = None
+
+    # Ritmo: média de (CalTm - split) POR CORRIDA; sem split = sem dado
+    pares = [r["caltm"] - r["split"] for r in R if r["split"] and r["split"] > 0 and r["caltm"] and r["caltm"] > 0]
+    d["ritmo"] = float(np.mean(pares)) if pares else None
 
     d["tadj"], d["tadj_excl"], d["tadj_desc"] = tempo_limpo(R)
 
@@ -600,15 +613,22 @@ def analisar_galgo(dog, ctx):
     if d.get("brt") and d["tadj"] is not None and d["mtime"] is not None:
         d["metrica"] = (d["brt"] + d["tadj"] + d["mtime"]) / 3.0
 
-    cal = [r["caltm"] for r in R if r["caltm"] is not None and r["caltm"] > 0]
-    d["sd"] = float(np.std(cal)) if len(cal) > 1 else 0.0
+    cal = valid_caltm
+    d["sd"] = float(np.std(cal)) if len(cal) > 1 else None  # 1 corrida = sem dado (antes ganhava nota máxima)
     d["pico"] = min(cal) if cal else None
 
-    recs = [(bends_digits(r["bends"])[0] - r["fin"]) / CFG["N_CORREDORES"] * 100.0 for r in R if bends_digits(r["bends"]) and r["fin"] and not not_free(r["remarks"])]
-    d["rec"] = float(np.mean(recs)) if recs else 0.0
+    # Recuperação: só corridas sem interferência
+    recs = []
+    for r in R:
+        b = bends_digits(r["bends"])
+        if b and r["fin"] and analisar_remarks(r["remarks"])["interf"] == 0:
+            recs.append((b[0] - r["fin"]) / CFG["N_CORREDORES"] * 100.0)
+    d["rec_ok"] = bool(recs)
+    d["rec"] = float(np.mean(recs)) if recs else 0.0  # 0.0 só mantém a lógica; a tabela mostra "-" se rec_ok = False
     d["rec_txt"] = f"{d['rec']:+.2f}% ({'Ganhou' if d['rec'] > 0.005 else ('Perdeu' if d['rec'] < -0.005 else 'Manteve')})"
 
-    n_traf = sum(count_traf(r["remarks"]) for r in R)
+    # Perfil: nº de CORRIDAS com interferência (mesma regra do tadj)
+    n_traf = sum(1 for r in R if analisar_remarks(r["remarks"])["interf"] > 0)
     d["perfil"] = "Limpo" if n_traf <= 1 else ("Irregular" if n_traf == 2 else "Trombador")
 
     d["early_cnt"] = sum(1 for r in R if any(it["key"] in _EARLY_KEYS for it in ler_remarks(r["remarks"])))
@@ -690,9 +710,10 @@ def finalizar(ds, ctx):
     top3_ritmo = {d["name"] for d in ritmo_rank[:3]}
     ctx["top3_ritmo"] = top3_ritmo
 
-    def pts_prop(key, maxp, d, invert=True):
+    def pts_prop(key, maxp, d, invert=True, neutro=False):
         vals = [x[key] for x in ok if x.get(key) is not None]
-        if d.get(key) is None or not vals: return 0.0
+        if d.get(key) is None or not vals:
+            return maxp * 0.5 if neutro else 0.0  # sem dado = nota neutra (quando neutro=True)
         lo, hi = min(vals), max(vals)
         if hi == lo: return float(maxp)
         return maxp * (hi - d[key]) / (hi - lo) if invert else maxp * (d[key] - lo) / (hi - lo)
@@ -704,7 +725,7 @@ def finalizar(ds, ctx):
         vel = (pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) +
                pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) +
                (pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d) if d["msplit"] else (CFG["VEL_PTS"]["msplit"] * (1 - (d["msplit_pos"] / 6)) if d.get("msplit_pos") else 0)) +
-               pts_prop("ritmo", CFG["VEL_PTS"]["ritmo"], d))
+               pts_prop("ritmo", CFG["VEL_PTS"]["ritmo"], d, True, True))
 
         f = []
         if d["early_cnt"] > 0 and d["perfil"] == "Limpo":
@@ -719,7 +740,7 @@ def finalizar(ds, ctx):
             f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"]))
 
         d["fatores"] = f
-        d["overall"] = vel + pts_cat + pts_perfil + pts_prop("sd", CFG["CONSIST_PTS"], d, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_prop("rec", CFG["RECUP_PTS"], d, False) + sum(v for _, v in f)
+        d["overall"] = vel + pts_cat + pts_perfil + pts_prop("sd", CFG["CONSIST_PTS"], d, True, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_prop("rec", CFG["RECUP_PTS"], d, False) + sum(v for _, v in f)
 
     ok.sort(key=lambda x: -x["overall"])
     for i, d in enumerate(ok, 1):
@@ -783,6 +804,21 @@ def projetar_tempo(d, ctx):
     var = var + var / n  # incerteza sobre a média com poucas corridas
     d["t_proj"] = t
     return t, var
+
+def prob_vitoria(ds, ctx, n_sim=20000):
+    """Probabilidade REAL de vitória de cada galgo (Monte Carlo sobre o tempo projetado em segundos).
+    Use no Predictor no lugar de overall/max. Retorna {nome: probabilidade de 0 a 1}."""
+    rng = np.random.default_rng(7)
+    L = []
+    for d in ds:
+        if d.get("nd") or d.get("name") == "vacant": continue
+        t, var = projetar_tempo(d, ctx)
+        if t is not None: L.append((d["name"], t, math.sqrt(var)))
+    if not L: return {}
+    mu = np.array([x[1] for x in L]); sd = np.array([x[2] for x in L])
+    sims = rng.normal(mu, sd, size=(n_sim, len(L)))
+    wins = np.bincount(sims.argmin(axis=1), minlength=len(L)) / n_sim
+    return {n: float(p) for (n, _, _), p in zip(L, wins)}
 
 def _dif_proj(V, D, ctx):
     tV, vV = projetar_tempo(V, ctx); tD, vD = projetar_tempo(D, ctx)
@@ -1035,12 +1071,19 @@ def brt_html(d):
 
 def trap_label(d): return f"{TRAP_EMOJI.get(d['trap'], '')} {d['trap']}"
 
+def peso_txt(d):
+    return f"{d['peso']:.1f}" if d.get("peso") else "-"
+
+def grades_txt(d):
+    return "-".join((r["grade"] or "?") for r in d.get("val", []))
+
 def tabela_projecao(ds):
     cols = ["split", "time", "tadj", "metrica", "msplit", "mtime", "ritmo", "rec"]
     rk = {c: [None]*len(ds) for c in cols}
     max_rk = {}
     for c in cols:
-        vals = [(i, d[c]) for i, d in enumerate(ds) if d.get(c) is not None]
+        vals = [(i, d[c]) for i, d in enumerate(ds)
+                if d.get(c) is not None and (c != "rec" or d.get("rec_ok", True))]
         max_rk[c] = len(vals)
         vals.sort(key=lambda x: x[1], reverse=(c == "rec"))
         for rank, (i, _) in enumerate(vals, 1): rk[c][i] = rank
@@ -1060,14 +1103,19 @@ def tabela_projecao(ds):
         split_display = get_rank_html(d["split"], rk["split"][i], max_rk["split"])
         msplit_display = get_rank_html(d["msplit"], rk["msplit"][i], max_rk["msplit"]) if d.get("msplit") else (f"<span style='color:#ffa500'>Pos: {d.get('msplit_pos', 0):.1f}</span>" if d.get("msplit_pos") else "-")
 
+        if d.get("rec_ok", True):
+            rec_cell = get_rank_html(d["rec"], rk["rec"][i], max_rk["rec"]) + f"<br><small>{d['rec_txt'].split()[1]}</small>"
+        else:
+            rec_cell = "-"
+
         rows.append([
             trap_label(d), nome_marcado(d) + brt_html(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}",
             f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", fat, f"{perfil_e} {d['perfil']}",
-            "-".join((r["grade"] or "?") for r in d["runs"]), f"{d['peso']:.1f}", dias_txt,
+            grades_txt(d), peso_txt(d), dias_txt,
             split_display, get_rank_html(d["time"], rk["time"][i], max_rk["time"]),
             msplit_display, get_rank_html(d["mtime"], rk["mtime"][i], max_rk["mtime"]),
             get_rank_html(d["tadj"], rk["tadj"][i], max_rk["tadj"]), get_rank_html(d.get("metrica"), rk["metrica"][i], max_rk["metrica"]), get_rank_html(d["ritmo"], rk["ritmo"][i], max_rk["ritmo"]),
-            get_rank_html(d["rec"], rk["rec"][i], max_rk["rec"]) + f"<br><small>{d['rec_txt'].split()[1]}</small>", f"{d['conf']:.0f}%"
+            rec_cell, f"{d['conf']:.0f}%"
         ])
     return tbl(["Trap", "Galgo", "Overall", "Cat", "Fatores", "Perfil", "Grades", "Peso", "Dias", "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica", "Ritmo", "Recup. Média", "Conf."], rows, sticky=2, w1=64, w2=125)
 
@@ -1120,8 +1168,9 @@ def tabela_avb(lista, titulo):
         mt_v, mt_d = fmt_pair(V['mtime'], D['mtime'], True, 2)
         ta_v, ta_d = fmt_pair(V['tadj'], D['tadj'], True, 2)
         me_v, me_d = fmt_pair(V.get('metrica'), D.get('metrica'), True, 2)
-        r_v, r_d = fmt_pair(V['ritmo'], D['ritmo'], True, 2)
-        rec_v, rec_d = fmt_pair(V['rec'], D['rec'], False, 1, True)
+        r_v, r_d = fmt_pair(V.get('ritmo'), D.get('ritmo'), True, 2)
+        rec_v, rec_d = fmt_pair(V['rec'] if V.get("rec_ok", True) else None,
+                                D['rec'] if D.get("rec_ok", True) else None, False, 1, True)
 
         prob_cell = (
             f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'>"
@@ -1133,15 +1182,15 @@ def tabela_avb(lista, titulo):
 
         rows.append([
             f"{badge}{trap_label(V)} - {nome_marcado(V)}{brt_html(V)}",
-            ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]),
-            f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, me_v, r_v, rec_v, f"{V['conf']:.0f}%",
+            ov_v, cat_v, V['perfil'], grades_txt(V),
+            peso_txt(V), f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, me_v, r_v, rec_v, f"{V['conf']:.0f}%",
             prob_cell
         ])
 
         rows.append([
             f"{trap_label(D)} - {nome_marcado(D)}{brt_html(D)}",
-            ov_d, cat_d, D['perfil'], "-".join((r["grade"] or "?") for r in D["runs"]),
-            f"{D['peso']:.1f}", f"{D['dias']}", sp_d, t_d, ms_d, mt_d, ta_d, me_d, r_d, rec_d, f"{D['conf']:.0f}%"
+            ov_d, cat_d, D['perfil'], grades_txt(D),
+            peso_txt(D), f"{D['dias']}", sp_d, t_d, ms_d, mt_d, ta_d, me_d, r_d, rec_d, f"{D['conf']:.0f}%"
         ])
 
     heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica", "Ritmo", "Recup.", "Conf.", "Probabilidade"]
