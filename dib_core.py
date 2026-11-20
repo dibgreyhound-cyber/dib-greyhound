@@ -293,7 +293,7 @@ def extrair_dados_racingpost(url):
             runs = [norm_run(f) for f in dog.get("forms", [])]
             out.append({
                 "name": dog.get("dogName", "Desconhecido"),
-                "trap": trap or 0, "peso_atual": to_float(dog.get("weight")), "runs": runs,
+                "trap": trap or 0, "peso_atual": to_float(dog.get("weight")), "runs": runs, "brt": extrair_brt(dog),
             })
         existing_traps = {d["trap"] for d in out}
         for t in range(1, 7):
@@ -305,6 +305,24 @@ def extrair_dados_racingpost(url):
     except Exception as e:
         st.error(f"Erro ao extrair dados: {e}")
         return None, None, None
+
+_BRT_KEYS = ("brt", "bestTime", "bestRTime", "bestTm", "bestTimeS", "bestRaceTime", "bestCalTime", "bestRaceTm")
+
+def extrair_brt(dog):
+    """Melhor tempo registrado (BRT) que aparece abaixo do nome do galgo no card."""
+    def _num(v):
+        m = re.search(r"\b(\d{2}\.\d{2})\b", str(v))
+        return float(m.group(1)) if m else None
+    for k in _BRT_KEYS:
+        if k in dog and dog[k] not in (None, ""):
+            n = _num(dog[k])
+            if n: return n
+    for k, v in dog.items():
+        kl = str(k).lower()
+        if ("brt" in kl or "best" in kl) and isinstance(v, (str, int, float)):
+            n = _num(v)
+            if n: return n
+    return None
 
 def oficial(r, ctx):
     g = str(r["grade"] or "").strip().upper()
@@ -347,7 +365,7 @@ def analisar_galgo(dog, ctx):
     d["cat_mod"], d["cat"] = mod, base + mod
 
     d["peso"] = dog.get("peso_atual") or R[0]["weight"]
-    d["split"], d["time"] = R[0]["split"], R[0]["caltm"]
+    d["split"], d["time"], d["brt"], d["metrica"] = None, None, None, None
 
     valid_splits = [r["split"] for r in R if r["split"] is not None and r["split"] > 0]
     has_split = len(valid_splits) > 0
@@ -362,6 +380,15 @@ def analisar_galgo(dog, ctx):
 
     valid_caltm = [r["caltm"] for r in R if r["caltm"] is not None and r["caltm"] > 0]
     d["mtime"] = float(np.mean(valid_caltm)) if valid_caltm else None
+
+    # M. Split = melhor split e M. Time = melhor CalTm entre as últimas 5 corridas oficiais
+    d["split"] = min(valid_splits) if valid_splits else None
+    d["time"] = min(valid_caltm) if valid_caltm else None
+    # Métrica = (BRT do card + melhor CalTm oficial) / 2. BRT fora de ~3s do melhor tempo = distância diferente, ignora.
+    brt = dog.get("brt")
+    if brt and d["time"] and abs(brt - d["time"]) <= 3.0:
+        d["brt"] = brt
+        d["metrica"] = (brt + d["time"]) / 2.0
 
     if has_split:
         d["ritmo"] = d["mtime"] - d["msplit"] if d["mtime"] and d["msplit"] else None
@@ -666,7 +693,7 @@ def nome_marcado(d):
 def trap_label(d): return f"{TRAP_EMOJI.get(d['trap'], '')} {d['trap']}"
 
 def tabela_projecao(ds):
-    cols = ["split", "time", "tadj", "msplit", "mtime", "ritmo", "rec"]
+    cols = ["split", "time", "tadj", "metrica", "msplit", "mtime", "ritmo", "rec"]
     rk = {c: [None]*len(ds) for c in cols}
     max_rk = {}
     for c in cols:
@@ -678,7 +705,7 @@ def tabela_projecao(ds):
     rows = []
     for i, d in enumerate(ds):
         if d["nd"]:
-            rows.append([trap_label(d), nome_marcado(d)] + ["-"] * 15); continue
+            rows.append([trap_label(d), nome_marcado(d)] + ["-"] * 16); continue
         fat = "<br>".join(f"{k} ({v:+.1f})" for k, v in d["fatores"]) or "-"
         if d.get("remarks_translated"):
             rem_txt = ", ".join(set(d["remarks_translated"]))
@@ -696,10 +723,10 @@ def tabela_projecao(ds):
             "-".join((r["grade"] or "?") for r in d["runs"]), f"{d['peso']:.1f}", dias_txt,
             split_display, get_rank_html(d["time"], rk["time"][i], max_rk["time"]),
             msplit_display, get_rank_html(d["mtime"], rk["mtime"][i], max_rk["mtime"]),
-            get_rank_html(d["tadj"], rk["tadj"][i], max_rk["tadj"]), get_rank_html(d["ritmo"], rk["ritmo"][i], max_rk["ritmo"]),
+            get_rank_html(d["tadj"], rk["tadj"][i], max_rk["tadj"]), get_rank_html(d.get("metrica"), rk["metrica"][i], max_rk["metrica"]), get_rank_html(d["ritmo"], rk["ritmo"][i], max_rk["ritmo"]),
             get_rank_html(d["rec"], rk["rec"][i], max_rk["rec"]) + f"<br><small>{d['rec_txt'].split()[1]}</small>", f"{d['conf']:.0f}%"
         ])
-    return tbl(["Trap", "Galgo", "Overall", "Cat", "Fatores", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Ritmo", "Recup. Média", "Conf."], rows, sticky=2, w1=64, w2=125)
+    return tbl(["Trap", "Galgo", "Overall", "Cat", "Fatores", "Perfil", "Grades", "Peso", "Dias", "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica", "Ritmo", "Recup. Média", "Conf."], rows, sticky=2, w1=64, w2=125)
 
 def tabela_avb(lista, titulo):
     st.markdown(f"#### {titulo}")
@@ -749,6 +776,7 @@ def tabela_avb(lista, titulo):
 
         mt_v, mt_d = fmt_pair(V['mtime'], D['mtime'], True, 2)
         ta_v, ta_d = fmt_pair(V['tadj'], D['tadj'], True, 2)
+        me_v, me_d = fmt_pair(V.get('metrica'), D.get('metrica'), True, 2)
         r_v, r_d = fmt_pair(V['ritmo'], D['ritmo'], True, 2)
         rec_v, rec_d = fmt_pair(V['rec'], D['rec'], False, 1, True)
 
@@ -763,17 +791,17 @@ def tabela_avb(lista, titulo):
         rows.append([
             f"{badge}{trap_label(V)} - {nome_marcado(V)}",
             ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]),
-            f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, r_v, rec_v, f"{V['conf']:.0f}%",
+            f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, me_v, r_v, rec_v, f"{V['conf']:.0f}%",
             prob_cell
         ])
 
         rows.append([
             f"{trap_label(D)} - {nome_marcado(D)}",
             ov_d, cat_d, D['perfil'], "-".join((r["grade"] or "?") for r in D["runs"]),
-            f"{D['peso']:.1f}", f"{D['dias']}", sp_d, t_d, ms_d, mt_d, ta_d, r_d, rec_d, f"{D['conf']:.0f}%"
+            f"{D['peso']:.1f}", f"{D['dias']}", sp_d, t_d, ms_d, mt_d, ta_d, me_d, r_d, rec_d, f"{D['conf']:.0f}%"
         ])
 
-    heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Split", "Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Ritmo", "Recup.", "Conf.", "Probabilidade"]
+    heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica", "Ritmo", "Recup.", "Conf.", "Probabilidade"]
     st.markdown(tbl(heads, rows, sticky=1, w1=190), unsafe_allow_html=True)
 
 def gerar_observacoes(rank, avbs, ctx):
