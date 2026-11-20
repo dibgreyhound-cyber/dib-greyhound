@@ -14,6 +14,8 @@ import streamlit as st
 
 # =====================================================================
 # DICIONÁRIO DE REMARKS (TABELA DO MARKO)
+# chave -> (significado, tipo, ajuste de tempo)
+# ajuste: light/medium/heavy = interferência | saw/vsaw = largada lenta | exclui = fora da média | None = não mexe
 # =====================================================================
 REMARKS_INFO = {
     "ald": ("Liderou Sempre", "pos", None),
@@ -79,38 +81,44 @@ REMARKS_ALIASES = {
 }
 _ORD = {"first": "1", "second": "2", "third": "3", "fourth": "4"}
 
+# =====================================================================
+# CONFIGURAÇÃO GLOBAL
+# =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
+    # Perfil = nº de corridas (das últimas válidas) com interferência: <= limpo_max Limpo, <= irregular_max Irregular, acima Trombador
+    "PERFIL_LIM": {"limpo_max": 0, "irregular_max": 1},
     "TRAP_VAZIA": 12.0,
     "TRAFEGO_SEVERO": -12.0,
     "CONF_MIN_VENCEDOR": 40.0,
 
     "VEL_PTS": {"tadj": 100, "mtime": 80, "msplit": 100, "ritmo": 80},
     "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 10,
-    
-    # [NOVO] Ajuste de tempo por condição da pista
-    "GOING_ADJ": {
-        "FAST": -0.10, "F": -0.10,
-        "NORMAL": 0.0, "N": 0.0,
-        "SLOW": 0.20, "S": 0.20,
-        "HEAVY": 0.40, "H": 0.40,
-    },
-    # [NOVO] Penalidade por ganho de peso (s por kg acima da média)
-    "PESO_PENALTY_KG": 0.05,
+
+    # Penalidade por variação de peso (s por kg acima/abaixo da média das corridas). CALIBRAR com o CSV.
+    "PESO_PENALTY_KG": 0.05, "PESO_ADJ_MAX": 0.15,
 
     "ADJ": {"light": 0.05, "medium": 0.15, "heavy": 0.30, "saw": 0.08, "vsaw": 0.15,
             "first_bend_mult": 1.5, "cap_total": 0.60, "split_loss_cap": 0.35},
     "REC_W": [0.30, 0.25, 0.20, 0.15, 0.10],
     "CALIB_FILE": "calibracao_corridas.csv",
+
     "AVB": {"w_tadj": 0.45, "w_mtime": 0.35, "w_brt": 0.20, "risk_k": 0.5,
             "brt_max_dias": 90, "brt_grade_gap": 2,
             "sigma0": 0.25, "sigma_k": 2.0, "sigma_min": 0.15, "prob_scale": 1.0,
             "start_bonus": 0.04, "postpick_sec": 0.02,
-            "trap_sec": {1: -0.02, 2: -0.01, 3: 0.0, 4: 0.0, 5: 0.01, 6: 0.02}},
+            "trap_sec": {1: -0.02, 2: -0.01, 3: 0.0, 4: 0.0, 5: 0.01, 6: 0.02},
+            # ---- Regra ÚNICA de aprovação do AvB ----
+            "prob_min": 62.0,        # probabilidade mínima (calibrada quando houver calibração)
+            "conf_min_v": 60.0,      # confiança mínima do galgo escolhido (V)
+            "conf_min_d": 40.0,      # confiança mínima do adversário (D)
+            "apoio_min": 2,          # mínimo de critérios de apoio (ritmo, categoria, largada) de 3
+            # ---- Calibração logística (ativa só com amostra suficiente) ----
+            "calib_min_n": 150, "calib_lambda": 5.0},
     "AVB_FILE": "avb_previsoes.csv",
-    "VERSAO": "avb-segundos-pro",
+    "VERSAO": "avb-unico-1",
 }
 
 FIELD_MAP = {
@@ -135,6 +143,7 @@ HEADERS = {
     "Referer": "https://greyhoundbet.racingpost.com/",
 }
 
+# --- Compatibilidade (podem ser importados pelo app.py) ---
 RE_TRAF = re.compile(r"(awk|blk|bmp|crmp|evch|fcd|fell|ko|msdbrk|saw|stmb|struck|vsaw|crd|imp|lame)")
 RE_NOFREE = re.compile(r"(awk|blk|bmp|crmp|evch|fcd|fell|ko|msdbrk|saw|stmb|struck|vsaw|crd|imp|lame|baulk)")
 
@@ -199,7 +208,6 @@ GRAVES_PATTERNS = (
     r"\bko\d*\b|\bknocked\s+out\b",
     r"\bmsdbrk\d*\b|\bmissed\s+break\b",
 )
-
 MODERADOS_PATTERNS = (
     r"\bbmp\d*\b|\bbumped(?:\s+first)?\b",
     r"\bcrd\d*\b|\bcrowded(?:\s+quarter)?\b",
@@ -210,22 +218,23 @@ MODERADOS_PATTERNS = (
 def traffic_penalty(rem, peso=31.0):
     s = str(rem or "").lower()
     pen = 0.0
-
     graves = sum(len(re.findall(p, s)) for p in GRAVES_PATTERNS)
     if graves > 0: pen += graves * 0.30
-
     moderados = sum(len(re.findall(p, s)) for p in MODERADOS_PATTERNS)
     if moderados > 0: pen += moderados * 0.15
-
     pen = min(pen, 0.50)
     if pen == 0: return 0.0
-
     if peso > 30.0: fator = 0.8
     elif peso < 28.0: fator = 1.2
     else: fator = 1.0
-
     return pen * fator
 
+def not_free(rem):
+    return bool(RE_NOFREE.search(str(rem or "").lower()))
+
+# =====================================================================
+# LEITURA DOS REMARKS
+# =====================================================================
 def _norm_rem_text(rem):
     s = str(rem or "").lower()
     s = re.sub(r"turned\s*in\s*tr(?:a)?ps", "turnedintrps", s)
@@ -239,6 +248,7 @@ def _norm_rem_text(rem):
     return s
 
 def ler_remarks(rem):
+    """Cada item: tok, key (chave oficial), num (nº da curva), status = exato | alias | aprox | desconhecido."""
     out = []
     for tok in re.split(r"[-,;/\s]+", _norm_rem_text(rem)):
         tok = tok.strip(".()[]'\"")
@@ -259,10 +269,15 @@ _EARLY_KEYS = {"ald", "ep", "snled", "ld", "ldbmp"}
 _SAW_KEYS = {"saw", "vsaw"}
 
 def analisar_remarks(rem):
+    """Classifica os remarks de UMA corrida: exclusão, desconto por interferência e largada lenta.
+    O mesmo remark repetido na mesma curva (ex.: Bmp1 duas vezes) conta uma vez só."""
     A = CFG["ADJ"]
     excluir, interf, slow = False, 0.0, None
+    vistos = set()
     for it in ler_remarks(rem):
         if not it["key"]: continue
+        if (it["key"], it["num"]) in vistos: continue
+        vistos.add((it["key"], it["num"]))
         adj = REMARKS_INFO[it["key"]][2]
         if adj == "exclui": excluir = True
         elif adj in ("saw", "vsaw"):
@@ -288,13 +303,13 @@ def diagnostico_remarks(dogs):
     return cont, aprox, desc
 
 def tempo_limpo(R):
+    """(tadj, n_excluidas, desconto_medio): média ponderada por recência dos CalTm ajustados.
+    Nunca fica mais rápido que o melhor tempo real do galgo - 0,05s."""
     A = CFG["ADJ"]
     info = [(r, analisar_remarks(r["remarks"])) for r in R if r["caltm"] is not None and r["caltm"] > 0]
     usar = [(r, i) for r, i in info if not i["excluir"]] or info
     if not usar: return None, 0, 0.0
-    
-    min_cal = min(r["caltm"] for r, _ in usar)
-    
+    piso = min(r["caltm"] for r, _ in usar) - 0.05
     limpos = [r["split"] for r, i in usar if i["limpa"] and r["split"] is not None and r["split"] > 0]
     ref_split = float(np.median(limpos)) if limpos else None
     vals, descs = [], []
@@ -306,17 +321,10 @@ def tempo_limpo(R):
             else:
                 loss = A[i["slow"]]
         desc = min(i["interf"] + loss, A["cap_total"])
-        vals.append(r["caltm"] - desc); descs.append(desc)
+        vals.append(max(r["caltm"] - desc, piso)); descs.append(desc)
     w = np.array(CFG["REC_W"][:len(vals)] + [CFG["REC_W"][-1]] * max(0, len(vals) - len(CFG["REC_W"])), dtype=float)
     w = w / w.sum()
-    t_adj = float(np.dot(w, vals))
-    
-    t_adj = max(t_adj, min_cal - 0.05)
-    
-    return t_adj, len(info) - len(usar) if len(usar) != len(info) else 0, float(np.mean(descs))
-
-def not_free(rem):
-    return bool(RE_NOFREE.search(str(rem or "").lower()))
+    return float(np.dot(w, vals)), len(info) - len(usar) if len(usar) != len(info) else 0, float(np.mean(descs))
 
 def first_bend_traffic(rem):
     for it in ler_remarks(rem):
@@ -324,6 +332,9 @@ def first_bend_traffic(rem):
             return True
     return False
 
+# =====================================================================
+# EXTRAÇÃO DE DADOS DO RACING POST
+# =====================================================================
 HINTS = {
     "dist": (("dist", "metre", "meter"), ("btn", "beat", "by")),
     "grade": (("class", "grade"), ()), "by": (("btn", "beaten"), ()),
@@ -414,12 +425,9 @@ def extrair_metadados_json(data, info_card, dogs):
                 info["post_pick"] = m.group(1).strip().replace("/", "-").replace(".", "-"); break
             elif re.search(r"[1-6]", str(pp)):
                 info["post_pick"] = str(pp).strip().replace("/", "-").replace(".", "-"); break
-    
-    # [NOVO] Captura do Going (Condição da Pista)
     for src in fontes:
         gng = pick(src, ["going", "goingType", "gng"])
         if gng: info["going"] = str(gng).strip().upper(); break
-
     return info
 
 def extrair_dados_racingpost(url):
@@ -497,6 +505,7 @@ def _fmt_data_brt(v):
     return m.group(0) if m else ""
 
 def extrair_brt_txt(dog):
+    """Texto do BRT como no card: 'BRT: 27.39 A7 (1Aug26)'. Vazio se não achar."""
     def varre(obj, depth=0):
         if isinstance(obj, dict):
             for v in obj.values():
@@ -525,9 +534,13 @@ def extrair_brt_txt(dog):
             if dt: break
     return f"BRT: {brt:.2f}" + (f" ({dt})" if dt else "")
 
+# =====================================================================
+# ANÁLISE DE CADA GALGO
+# =====================================================================
 def oficial(r, ctx):
+    """Corrida válida: mesma distância, com CalTm, fora HP e trials."""
     g = str(r["grade"] or "").strip().upper()
-    if g.startswith("HP"):
+    if g.startswith("HP") or is_trial_grade(g):
         return False
     return (r["dist"] is not None
             and abs(r["dist"] - ctx["dist"]) < 1
@@ -537,83 +550,84 @@ def analisar_galgo(dog, ctx):
     if dog.get("name") == "vacant":
         return {"name": "vacant", "trap": dog["trap"], "runs": [], "val": [], "nd": True,
                 "conf": 0.0, "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False,
-                "alerta_trial": False, "n_trials": 0}
+                "alerta_trial": False, "n_trials": 0, "n_val": 0}
 
-    runs_all = sorted(dog["runs"], key=lambda r: r["date"] or datetime.min, reverse=True)
-    R = [r for r in runs_all if oficial(r, ctx)]
-    
-    runs = runs_all[:CFG["N_RUNS"]]
-    R = R[:CFG["N_RUNS"]]
-
+    todas = sorted(dog["runs"], key=lambda r: r["date"] or datetime.min, reverse=True)
+    runs = todas[:CFG["N_RUNS"]]  # só para Dias, trials e calibração
     n_trials = sum(1 for r in runs if is_trial_grade(r["grade"]))
 
-    d = {"name": dog["name"], "trap": dog["trap"], "runs": runs, "val": R, "nd": not R,
+    # Filtro único: oficiais (distância de hoje, sem trial/HP) -> sem quedas/manca -> 5 mais recentes
+    oficiais = [r for r in todas if oficial(r, ctx)]
+    validas = [r for r in oficiais if not analisar_remarks(r["remarks"])["excluir"]]
+    R = (validas or oficiais)[:CFG["N_RUNS"]]
+
+    d = {"name": dog["name"], "trap": dog["trap"], "runs": runs, "val": R, "nd": not R, "n_val": len(R),
          "conf": min(100.0, len(R) * 20.0), "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False,
          "alerta_trial": n_trials >= 3, "n_trials": n_trials}
 
     d["brt_raw"] = dog.get("brt")
     d["brt_txt"] = dog.get("brt_txt")
-    ultima_any = runs[0] if runs else None
+    ultima_any = todas[0] if todas else None
     d["dias"] = (ctx["today"] - ultima_any["date"]).days if ultima_any and ultima_any["date"] else 0
-    if d["dias"] > 21: d["conf"] *= 0.8
+    if d["dias"] > 21: d["conf"] *= 0.8  # parado há muito tempo = menos confiável
 
     if not R: return d
 
+    # --- Categoria: classe de hoje vs. classe média das corridas válidas (contínuo, limitado a ±CAT_BONUS) ---
     today_n = ctx.get("classe_n")
     valid_grades = [grade_num(r["grade"]) for r in R if grade_num(r["grade"]) is not None]
     avg_grade_n = sum(valid_grades) / len(valid_grades) if valid_grades else (today_n or 0)
-    
-    mod = 0.0
-    if today_n and avg_grade_n:
-        mod = CFG["CAT_BONUS"] if today_n > avg_grade_n else (-CFG["CAT_BONUS"] if today_n < avg_grade_n else 0.0)
-
+    if today_n and valid_grades:
+        mod = max(-CFG["CAT_BONUS"], min(CFG["CAT_BONUS"], today_n - avg_grade_n))
+    else:
+        mod = 0.0
     base = 13.0 - (avg_grade_n * 0.6)
     d["cat_mod"], d["cat"] = mod, base + mod
 
-    d["peso"] = dog.get("peso_atual") or R[0]["weight"] or 31.0
-    
-    R_clean = [r for r in R if not analisar_remarks(r["remarks"])["excluir"]]
-    if not R_clean: R_clean = R
+    d["peso"] = dog.get("peso_atual") or R[0]["weight"]  # None se não houver (a tabela mostra "-")
 
-    valid_splits = [r["split"] for r in R_clean if r["split"] is not None and r["split"] > 0]
+    valid_splits = [r["split"] for r in R if r["split"] is not None and r["split"] > 0]
     has_split = len(valid_splits) > 0
-
     if has_split:
         d["msplit"] = float(np.mean(valid_splits))
         d["msplit_pos"] = None
     else:
-        pos_curve = [bends_digits(r["bends"])[0] for r in R_clean if bends_digits(r["bends"])]
+        pos_curve = [bends_digits(r["bends"])[0] for r in R if bends_digits(r["bends"])]
         d["msplit"] = None
         d["msplit_pos"] = float(np.mean(pos_curve)) if pos_curve else None
 
-    valid_caltm = [r["caltm"] for r in R_clean if r["caltm"] is not None and r["caltm"] > 0]
+    valid_caltm = [r["caltm"] for r in R if r["caltm"] is not None and r["caltm"] > 0]
     d["mtime"] = float(np.mean(valid_caltm)) if valid_caltm else None
 
+    # M. Split = melhor split e M. Time = melhor CalTm entre as corridas válidas
     d["split"] = min(valid_splits) if valid_splits else None
     d["time"] = min(valid_caltm) if valid_caltm else None
-    
-    brt = dog.get("brt")
-    if brt and d["mtime"] and abs(brt - d["mtime"]) <= 3.0:
-        d["brt"] = brt
 
-    ritmos = []
-    for r in R_clean:
-        if r["caltm"] and r["split"]:
-            ritmos.append(r["caltm"] - r["split"])
-    d["ritmo"] = float(np.mean(ritmos)) if ritmos else None
+    # BRT: mesmo validador do AvB (recente e de classe próxima) + sanidade de 3s contra o tempo médio
+    d["brt"] = dog.get("brt")
+    d["brt"] = _brt_valido(d, ctx)
+    if d["brt"] and d["mtime"] and abs(d["brt"] - d["mtime"]) > 3.0:
+        d["brt"] = None
+
+    # Ritmo: média de (CalTm - split) POR CORRIDA; sem split = sem dado
+    pares = [r["caltm"] - r["split"] for r in R if r["split"] and r["split"] > 0 and r["caltm"] and r["caltm"] > 0]
+    d["ritmo"] = float(np.mean(pares)) if pares else None
 
     d["tadj"], d["tadj_excl"], d["tadj_desc"] = tempo_limpo(R)
+    d["tadj_excl"] = len(oficiais) - len(validas)
 
-    if d.get("brt") and d["tadj"] is not None and d["mtime"] is not None:
-        d["metrica"] = (d["brt"] + d["tadj"] + d["mtime"]) / 3.0
-    else:
-        d["metrica"] = None
+    d["metrica"] = ((d["brt"] + d["tadj"] + d["mtime"]) / 3.0
+                    if d.get("brt") and d["tadj"] is not None and d["mtime"] is not None else None)
 
-    cal = [r["caltm"] for r in R_clean if r["caltm"] is not None and r["caltm"] > 0]
-    d["sd"] = float(np.std(cal)) if len(cal) > 1 else 0.0
-    d["pico"] = min(cal) if cal else None
+    d["sd"] = float(np.std(valid_caltm)) if len(valid_caltm) > 1 else None  # 1 corrida = sem dado
+    d["pico"] = min(valid_caltm) if valid_caltm else None
 
-    recs = [(bends_digits(r["bends"])[0] - r["fin"]) / CFG["N_CORREDORES"] * 100.0 for r in R_clean if bends_digits(r["bends"]) and r["fin"]]
+    # Recuperação: só corridas sem interferência
+    recs = []
+    for r in R:
+        b = bends_digits(r["bends"])
+        if b and r["fin"] and analisar_remarks(r["remarks"])["interf"] == 0:
+            recs.append((b[0] - r["fin"]) / CFG["N_CORREDORES"] * 100.0)
     if recs:
         d["rec"] = float(np.mean(recs))
         d["rec_txt"] = f"{d['rec']:+.2f}% ({'Ganhou' if d['rec'] > 0.005 else ('Perdeu' if d['rec'] < -0.005 else 'Manteve')})"
@@ -621,28 +635,32 @@ def analisar_galgo(dog, ctx):
         d["rec"] = None
         d["rec_txt"] = "-"
 
-    n_traf = sum(1 for r in R_clean if analisar_remarks(r["remarks"])["interf"] > 0)
-    d["perfil"] = "Limpo" if n_traf == 0 else ("Irregular" if n_traf == 1 else "Trombador")
+    # Perfil: nº de CORRIDAS com interferência (mesma regra do tadj)
+    n_traf = sum(1 for r in R if analisar_remarks(r["remarks"])["interf"] > 0)
+    L = CFG["PERFIL_LIM"]
+    d["perfil"] = "Limpo" if n_traf <= L["limpo_max"] else ("Irregular" if n_traf <= L["irregular_max"] else "Trombador")
 
-    d["early_cnt"] = sum(1 for r in R_clean if any(it["key"] in _EARLY_KEYS for it in ler_remarks(r["remarks"])))
-    d["saw_cnt"] = sum(1 for r in R_clean if any(it["key"] in _SAW_KEYS for it in ler_remarks(r["remarks"])))
-    d["fbt_cnt"] = sum(1 for r in R_clean if first_bend_traffic(r["remarks"]))
+    d["early_cnt"] = sum(1 for r in R if any(it["key"] in _EARLY_KEYS for it in ler_remarks(r["remarks"])))
+    d["saw_cnt"] = sum(1 for r in R if any(it["key"] in _SAW_KEYS for it in ler_remarks(r["remarks"])))
+    d["fbt_cnt"] = sum(1 for r in R if first_bend_traffic(r["remarks"]))
 
     d["remarks_translated"] = []
-    for r in R_clean:
+    for r in R:
         d["remarks_translated"].extend(traducao_remarks(r["remarks"]))
 
-    # [NOVO] Penalidade por ganho de peso (Weight Adjustment)
-    pesos_hist = [r["weight"] for r in R_clean if r.get("weight") is not None]
+    # Ajuste por variação de peso (limitado a ±PESO_ADJ_MAX segundos)
+    pesos_hist = [r["weight"] for r in R if r.get("weight") is not None]
     if pesos_hist and d["peso"]:
-        peso_medio = np.mean(pesos_hist)
-        delta_peso = d["peso"] - peso_medio
-        d["peso_adj"] = delta_peso * CFG["PESO_PENALTY_KG"] 
+        adj = (d["peso"] - float(np.mean(pesos_hist))) * CFG["PESO_PENALTY_KG"]
+        d["peso_adj"] = float(max(-CFG["PESO_ADJ_MAX"], min(CFG["PESO_ADJ_MAX"], adj)))
     else:
         d["peso_adj"] = 0.0
 
     return d
 
+# =====================================================================
+# CALIBRAÇÃO DOS REMARKS (CSV de corridas)
+# =====================================================================
 _CALIB_COLS = ["registrado_em", "pista", "data", "dist", "galgo", "trap", "grade", "caltm", "split", "bends", "fin", "remarks", "peso", "brt"]
 
 def registrar_calibracao(ds):
@@ -676,6 +694,7 @@ def calibracao_bytes():
     with open(path, "rb") as f: return f.read()
 
 def analisar_calibracao(path=None, min_n=5):
+    """Perda média REAL (s) por remark: CalTm com o remark menos a média das corridas limpas do mesmo galgo/pista/distância."""
     df = pd.read_csv(path or CFG["CALIB_FILE"])
     df = df[(df["caltm"] > 0)].copy()
     df["info"] = df["remarks"].fillna("").map(analisar_remarks)
@@ -693,6 +712,9 @@ def analisar_calibracao(path=None, min_n=5):
     out.columns = ["remark", "n", "perda_media_s"]
     return out[out["n"] >= min_n].sort_values("perda_media_s", ascending=False)
 
+# =====================================================================
+# OVERALL / RANKING
+# =====================================================================
 def finalizar(ds, ctx):
     try: registrar_calibracao(ds)
     except Exception: pass
@@ -707,12 +729,12 @@ def finalizar(ds, ctx):
     ctx["top3_ms"] = top3_ms
 
     ritmo_rank = sorted([d for d in ok if d.get("ritmo")], key=lambda x: x["ritmo"])
-    top3_ritmo = {d["name"] for d in ritmo_rank[:3]}
-    ctx["top3_ritmo"] = top3_ritmo
+    ctx["top3_ritmo"] = {d["name"] for d in ritmo_rank[:3]}
 
-    def pts_prop(key, maxp, d, invert=True):
+    def pts_prop(key, maxp, d, invert=True, neutro=False):
         vals = [x[key] for x in ok if x.get(key) is not None]
-        if d.get(key) is None or not vals: return 0.0
+        if d.get(key) is None or not vals:
+            return maxp * 0.5 if neutro else 0.0  # sem dado = nota neutra (quando neutro=True)
         lo, hi = min(vals), max(vals)
         if hi == lo: return float(maxp)
         return maxp * (hi - d[key]) / (hi - lo) if invert else maxp * (d[key] - lo) / (hi - lo)
@@ -724,7 +746,7 @@ def finalizar(ds, ctx):
         vel = (pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) +
                pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) +
                (pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d) if d["msplit"] else (CFG["VEL_PTS"]["msplit"] * (1 - (d["msplit_pos"] / 6)) if d.get("msplit_pos") else 0)) +
-               pts_prop("ritmo", CFG["VEL_PTS"]["ritmo"], d))
+               pts_prop("ritmo", CFG["VEL_PTS"]["ritmo"], d, True, True))
 
         f = []
         if d["early_cnt"] > 0 and d["perfil"] == "Limpo":
@@ -735,55 +757,38 @@ def finalizar(ds, ctx):
             f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -4.0))
         if any(abs(d["trap"] - v) == 1 for v in vac):
             f.append(("Trap Vazia", CFG["TRAP_VAZIA"]))
-            
-        if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
-            if d.get("msplit_pos") and d["msplit_pos"] <= 2:
-                pass
-            else:
-                f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"]))
-
-        # [NOVO] Matriz de Ritmo Aprimorada (Pace Map)
-        if len(top3_ms) >= 3:
-            if d["name"] in top3_ritmo and d.get("msplit_pos") is not None and d["msplit_pos"] > 3:
-                f.append(("Pace Map (Favorável)", 15.0))
-            elif d["saw_cnt"] > 0 and (d.get("rec") or 0) > 0:
-                f.append(("Conflito Pace (Favorável)", 10.0))
+        if d["perfil"] == "Trombador" and d["trap"] in [1, 2, 3, 4, 5] and d["name"] not in top3_ms:
+            f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"]))
 
         d["fatores"] = f
-        pts_rec = pts_prop("rec", CFG["RECUP_PTS"], d, False) if d.get("rec") is not None else 0.0
-        
-        d["overall"] = vel + pts_cat + pts_perfil + pts_prop("sd", CFG["CONSIST_PTS"], d, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_rec + sum(v for _, v in f)
+        d["overall"] = (vel + pts_cat + pts_perfil
+                        + pts_prop("sd", CFG["CONSIST_PTS"], d, True, True)
+                        + pts_prop("pico", CFG["PICO_PTS"], d, True)
+                        + pts_prop("rec", CFG["RECUP_PTS"], d, False, True)
+                        + sum(v for _, v in f))
 
+    # Reescala de exibição (40-100). É só visual: o Overall é um ranking dentro da corrida, não uma probabilidade.
     if ok:
         max_ov = max(d["overall"] for d in ok)
         min_ov = min(d["overall"] for d in ok)
         for d in ok:
-            if max_ov > min_ov:
-                d["overall"] = 40.0 + (60.0 * (d["overall"] - min_ov) / (max_ov - min_ov))
-            else:
-                d["overall"] = 70.0
+            d["overall"] = 40.0 + (60.0 * (d["overall"] - min_ov) / (max_ov - min_ov)) if max_ov > min_ov else 70.0
 
     ok.sort(key=lambda x: -x["overall"])
     for i, d in enumerate(ok, 1):
         d["pos"] = i
         d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"]
-
-        top2_safe = (i <= 2) and (d.get("rec") is not None and d["rec"] >= -10.0)
-        d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (d.get("rec") is not None and d["rec"] < -10.0) and not top2_safe
-
+        rec = d.get("rec")
+        top2_safe = (i <= 2) and (rec is not None and rec >= -10.0)
+        d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (rec is not None and rec < -10.0) and not top2_safe
         d["elegivel"] = not d["bloqueado"]
     return ok, top3_ms
 
-def _largada_score(d):
-    if d.get("msplit") is not None:
-        return -float(d["msplit"])
-    if d.get("msplit_pos") is not None:
-        return -float(d["msplit_pos"])
-    if d.get("split") is not None:
-        return -float(d["split"])
-    return None
-
+# =====================================================================
+# PROJEÇÃO DE TEMPO E PROBABILIDADE DO AVB
+# =====================================================================
 def _brt_valido(d, ctx):
+    """BRT só entra se for recente e de classe próxima da corrida de hoje."""
     A = CFG["AVB"]
     brt = d.get("brt")
     if not brt: return None
@@ -801,6 +806,7 @@ def _brt_valido(d, ctx):
     return brt
 
 def projetar_tempo(d, ctx):
+    """(tempo projetado em s, variância em s²) ou (None, None)."""
     A = CFG["AVB"]
     partes = []
     if d.get("tadj") is not None: partes.append((A["w_tadj"], d["tadj"] + A["risk_k"] * (d.get("tadj_desc") or 0.0)))
@@ -809,21 +815,16 @@ def projetar_tempo(d, ctx):
     if brt: partes.append((A["w_brt"], brt))
     if not partes: return None, None
     t = sum(w * x for w, x in partes) / sum(w for w, _ in partes)
-    
-    # [NOVO] Ajuste pelo Going (Pista) e Peso
-    going_hoje = str(ctx.get("going", "NORMAL")).upper().strip()
-    t += CFG["GOING_ADJ"].get(going_hoje, 0.0)
     t += d.get("peso_adj", 0.0)
-
     t += A["trap_sec"].get(d["trap"], 0.0)
     if d["name"] in ctx.get("top3_ms", set()): t -= A["start_bonus"]
     pp = str(ctx.get("post_pick") or "")
     if pp and str(d["trap"]) in pp: t -= A["postpick_sec"]
-    n = max(len(d.get("val") or []), 1)
+    n = max(d.get("n_val") or len(d.get("val") or []), 1)
     sd = d.get("sd") or 0.0
-    var = (n * sd ** 2 + A["sigma_k"] * A["sigma0"] ** 2) / (n + A["sigma_k"])
+    var = (n * sd ** 2 + A["sigma_k"] * A["sigma0"] ** 2) / (n + A["sigma_k"])  # encolhe o desvio para o padrão
     var = max(var, A["sigma_min"] ** 2)
-    var = var + var / n
+    var = var + var / n  # incerteza sobre a média com poucas corridas
     d["t_proj"] = t
     return t, var
 
@@ -833,61 +834,109 @@ def _dif_proj(V, D, ctx):
     return tD - tV, math.sqrt(vV + vD), tV, tD
 
 def calc_prob(V, D, rank, ctx):
+    """P(V vencer D) BRUTA (%), pela diferença de tempo projetado (s) dividida pela incerteza combinada."""
     r = _dif_proj(V, D, ctx)
     if r is None: return 50.0
     delta, sd_tot, _, _ = r
     z = CFG["AVB"]["prob_scale"] * delta / sd_tot
     return 100.0 * 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
 
-def _classificar_confronto_avb(V, D, prob, ctx):
+# ---------------------------------------------------------------------
+# Calibração logística: prob_cal = sigmoid(a * logit(prob_bruta) + b), ajustada nos resultados já registrados
+# (só da versão atual do modelo, e só quando houver amostra suficiente)
+# ---------------------------------------------------------------------
+def _df_resolvidos(path=None, versao="atual"):
+    path = path or CFG["AVB_FILE"]
+    if not os.path.exists(path): return None
+    df = pd.read_csv(path)
+    if df.empty or "acertou" not in df.columns: return None
+    df["acertou"] = pd.to_numeric(df["acertou"], errors="coerce")
+    df["prob"] = pd.to_numeric(df["prob"], errors="coerce")
+    df = df[df["acertou"].isin([0, 1]) & df["prob"].notna()].copy()
+    if versao and "versao" in df.columns:
+        df = df[df["versao"] == (CFG["VERSAO"] if versao == "atual" else versao)]
+    return df
+
+def ajustar_calibracao(path=None, min_n=None, versao="atual"):
+    A = CFG["AVB"]
+    min_n = A["calib_min_n"] if min_n is None else min_n
+    df = _df_resolvidos(path, versao)
+    if df is None or len(df) < min_n: return None
+    p = np.clip(df["prob"].astype(float).values / 100.0, 1e-4, 1 - 1e-4)
+    x = np.log(p / (1 - p)); y = df["acertou"].astype(float).values
+    lam = A["calib_lambda"]; a, b = 1.0, 0.0
+    for _ in range(50):
+        q = 1.0 / (1.0 + np.exp(-(a * x + b))); w = q * (1 - q)
+        g = np.array([np.sum((q - y) * x) + lam * (a - 1.0), np.sum(q - y) + lam * b])
+        H = np.array([[np.sum(w * x * x) + lam, np.sum(w * x)], [np.sum(w * x), np.sum(w) + lam]])
+        step = np.linalg.solve(H, g)
+        a -= step[0]; b -= step[1]
+        if np.max(np.abs(step)) < 1e-7: break
+    return {"a": float(min(max(a, 0.3), 2.0)), "b": float(min(max(b, -1.0), 1.0)), "n": int(len(df))}
+
+_CAL_CACHE = {"mtime": None, "params": None}
+
+def _params_calibracao():
+    path = CFG["AVB_FILE"]
+    if not os.path.exists(path): return None
+    mt = os.path.getmtime(path)
+    if _CAL_CACHE["mtime"] == mt: return _CAL_CACHE["params"]
+    try: params = ajustar_calibracao(path)
+    except Exception: params = None
+    _CAL_CACHE["mtime"], _CAL_CACHE["params"] = mt, params
+    return params
+
+def aplicar_calibracao(prob_pct, params):
+    if not params: return prob_pct
+    p = min(max(prob_pct / 100.0, 1e-4), 1 - 1e-4)
+    z = params["a"] * math.log(p / (1 - p)) + params["b"]
+    return 100.0 / (1.0 + math.exp(-z))
+
+# ---------------------------------------------------------------------
+# REGRA ÚNICA DO AVB
+#   Obrigatórios: prob >= prob_min | conf V >= conf_min_v | conf D >= conf_min_d |
+#                 V melhor em Time Ajust. | V melhor em Méd. Time | Recup. sem sinal ruim | V não é Trombador
+#   Apoio (mín. apoio_min de 3): Ritmo, Categoria, Largada
+# ---------------------------------------------------------------------
+def _vantagem_largada(V, D, ctx):
+    top3 = ctx.get("top3_ms", set())
+    if V.get("msplit") is not None and D.get("msplit") is not None:
+        melhor = V["msplit"] < D["msplit"]
+    elif V.get("msplit_pos") is not None and D.get("msplit_pos") is not None:
+        melhor = V["msplit_pos"] < D["msplit_pos"]
+    else:
+        melhor = False  # não compara segundos com posições
+    return bool(melhor or (V["name"] in top3 and D["name"] not in top3))
+
+def _avaliar_confronto(V, D, prob, ctx):
+    A = CFG["AVB"]
     c_tadj = (V.get("tadj") is not None and D.get("tadj") is not None and V["tadj"] < D["tadj"])
     c_mtime = (V.get("mtime") is not None and D.get("mtime") is not None and V["mtime"] < D["mtime"])
     c_ritmo = (V.get("ritmo") is not None and D.get("ritmo") is not None and V["ritmo"] < D["ritmo"])
     c_cat = (V.get("cat", 0) >= D.get("cat", 0))
-    c_rec = (V.get("rec") is not None and D.get("rec") is not None and V["rec"] >= -10.0 and V["rec"] >= D["rec"])
+    rv, rd = V.get("rec"), D.get("rec")
+    c_rec = (rv is None or rv >= -10.0) and (rv is None or rd is None or rv >= rd)  # só reprova sinal ruim conhecido
+    c_larg = _vantagem_largada(V, D, ctx)
+    c_perfil = V.get("perfil") != "Trombador"
 
-    larg_v, larg_d = _largada_score(V), _largada_score(D)
-    c_larg = (larg_v is not None and larg_d is not None and larg_v > larg_d) or (
-        (V["name"] in ctx.get("top3_ms", set())) and (D["name"] not in ctx.get("top3_ms", set()))
-    )
+    apoio = sum([c_ritmo, c_cat, c_larg])
+    obrig = c_tadj and c_mtime and c_rec and c_perfil
+    conf_ok = V.get("conf", 0) >= A["conf_min_v"] and D.get("conf", 0) >= A["conf_min_d"]
+    aprovado = bool(prob >= A["prob_min"] and conf_ok and obrig and apoio >= A["apoio_min"])
+    score = sum([c_tadj, c_mtime, c_rec, c_perfil]) + apoio  # 0..7
+    flags = {"c_tadj": c_tadj, "c_mtime": c_mtime, "c_ritmo": c_ritmo, "c_cat": c_cat,
+             "c_rec": c_rec, "c_larg": c_larg, "c_perfil": c_perfil}
+    return aprovado, score, flags
 
-    criterios_ok = sum([c_tadj, c_mtime, c_ritmo, c_cat, c_rec])
-
-    is_forte = (
-        prob >= 65.0
-        and V.get("conf", 0) >= 60.0
-        and D.get("conf", 0) >= 40.0
-        and c_tadj
-        and c_mtime
-        and c_rec
-        and criterios_ok >= 4
-    )
-
-    is_valor = (
-        54.0 <= prob < 65.0
-        and V.get("conf", 0) >= 40.0
-        and c_tadj
-        and c_ritmo
-        and c_rec
-    )
-
-    is_top = (
-        prob >= 55.0
-        and c_larg
-        and c_rec
-        and V.get("perfil") != "Trombador"
-    )
-
-    if is_forte: return "FORTE", criterios_ok
-    if is_valor: return "VALOR", criterios_ok
-    if is_top: return "TOP", criterios_ok
-    return None, criterios_ok
-
+# (nome_V, nome_D) -> ("AVB", nº de critérios 0-7, calibrada?)
 AVB_META = {}
 
-_AVB_COLS = ["corrida_id", "registrado_em", "data", "pista", "hora", "race", "classe", "dist", "galgo_V", "trap_V", "galgo_D", "trap_D",
-             "prob", "modo", "criterios", "exibido", "tproj_V", "tproj_D", "delta_s", "sd_total", "tadj_V", "tadj_D", "mtime_V", "mtime_D",
-             "brt_V", "brt_D", "pos_V", "pos_D", "acertou", "versao"]
+_FLAGS = ["c_tadj", "c_mtime", "c_ritmo", "c_cat", "c_rec", "c_larg", "c_perfil"]
+_AVB_COLS = (["corrida_id", "registrado_em", "data", "pista", "hora", "race", "classe", "dist",
+              "galgo_V", "trap_V", "galgo_D", "trap_D", "prob", "prob_cal", "aprovado", "criterios"]
+             + _FLAGS +
+             ["exibido", "tproj_V", "tproj_D", "delta_s", "sd_total", "tadj_V", "tadj_D", "mtime_V", "mtime_D",
+              "brt_V", "brt_D", "pos_V", "pos_D", "acertou", "versao"])
 
 def corrida_id(dogs, ctx):
     chave = str(ctx.get("today"))[:10] + "|" + "|".join(sorted(f"{d['trap']}{d['name']}" for d in dogs if d.get("name") != "vacant"))
@@ -903,37 +952,48 @@ def _gravar_avb_csv(path, rows):
         w = csv.DictWriter(f, fieldnames=_AVB_COLS, extrasaction="ignore")
         w.writeheader(); w.writerows(rows)
 
+def _chave_par(cid, a, b):
+    x, y = sorted([str(a), str(b)])
+    return (str(cid), x, y)
+
 def registrar_previsoes(dogs, linhas, ctx):
+    """Um registro por corrida+par (independe da orientação V/D). Previsão com resultado já salvo não é sobrescrita.
+    `prob` guarda SEMPRE a probabilidade bruta (para a calibração não se retroalimentar)."""
     if not linhas: return 0
     path = CFG["AVB_FILE"]
     cid = corrida_id(dogs, ctx)
     rows = _ler_avb_csv(path)
-    idx = {(r["corrida_id"], r["trap_V"], r["trap_D"]): r for r in rows}
+    idx = {_chave_par(r["corrida_id"], r["trap_V"], r["trap_D"]): r for r in rows}
     novos = 0
-    for V, D, prob, modo, crit, exibido in linhas:
+    fmt = lambda x: "" if x in (None, "") else round(float(x), 4)
+    for V, D, prob_raw, prob_cal, aprovado, crit, flags in linhas:
         r = _dif_proj(V, D, ctx)
         delta, sd_tot, tV, tD = r if r else ("", "", "", "")
-        fmt = lambda x: "" if x in (None, "") else round(float(x), 4)
-        chave = (cid, str(V["trap"]), str(D["trap"]))
-        antigo = idx.get(chave)
+        antigo = idx.get(_chave_par(cid, V["trap"], D["trap"]))
         if antigo and antigo.get("acertou") not in (None, ""): continue
         novo = {"corrida_id": cid, "registrado_em": datetime.now().strftime("%Y-%m-%d %H:%M"), "data": str(ctx.get("today"))[:10],
                 "pista": ctx.get("pista", ""), "hora": ctx.get("hora", ""), "race": ctx.get("race", ""), "classe": ctx.get("classe", ""), "dist": ctx.get("dist", ""),
-                "galgo_V": V["name"], "trap_V": V["trap"], "galgo_D": D["name"], "trap_D": D["trap"], "prob": round(prob, 2), "modo": modo or "",
-                "criterios": crit, "exibido": int(exibido), "tproj_V": fmt(tV), "tproj_D": fmt(tD), "delta_s": fmt(delta), "sd_total": fmt(sd_tot),
+                "galgo_V": V["name"], "trap_V": V["trap"], "galgo_D": D["name"], "trap_D": D["trap"],
+                "prob": round(prob_raw, 2), "prob_cal": "" if prob_cal is None else round(prob_cal, 2),
+                "aprovado": int(aprovado), "criterios": crit, "exibido": int(aprovado),
+                "tproj_V": fmt(tV), "tproj_D": fmt(tD), "delta_s": fmt(delta), "sd_total": fmt(sd_tot),
                 "tadj_V": fmt(V.get("tadj")), "tadj_D": fmt(D.get("tadj")), "mtime_V": fmt(V.get("mtime")), "mtime_D": fmt(D.get("mtime")),
                 "brt_V": fmt(V.get("brt")), "brt_D": fmt(D.get("brt")), "pos_V": "", "pos_D": "", "acertou": "", "versao": CFG["VERSAO"]}
+        for k in _FLAGS: novo[k] = int(bool(flags.get(k)))
         if antigo: antigo.update(novo)
-        else: rows.append(novo); idx[chave] = novo; novos += 1
+        else:
+            rows.append(novo); idx[_chave_par(cid, V["trap"], D["trap"])] = novo; novos += 1
     _gravar_avb_csv(path, rows)
     return novos
 
 def registrar_resultado(cid, ordem):
-    traps = [int(c) for c in str(ordem or "") if c in "123456"]
+    """ordem: traps do 1º ao último, ex. '3-1-4-5-2-6' (aceita só o top 3). Quem não aparece fica atrás de quem aparece.
+    Retorna nº de confrontos atualizados, ou -1 se a ordem for inválida (traps repetidas ou fora de 1-6)."""
+    txt = re.sub(r"[^0-9]", "", str(ordem or ""))
+    traps = [int(c) for c in txt]
     if not traps: return 0
-    pos = {}
-    for i, t in enumerate(traps):
-        pos.setdefault(t, i + 1)
+    if len(set(traps)) != len(traps) or any(t < 1 or t > 6 for t in traps): return -1
+    pos = {t: i + 1 for i, t in enumerate(traps)}
     path = CFG["AVB_FILE"]
     rows = _ler_avb_csv(path); n = 0
     for r in rows:
@@ -952,23 +1012,61 @@ def previsoes_bytes():
     if not os.path.exists(path): return None
     with open(path, "rb") as f: return f.read()
 
-def avaliar_previsoes(path=None, so_exibidos=False):
-    df = pd.read_csv(path or CFG["AVB_FILE"])
-    df = df[df["acertou"].isin([0, 1])].copy()
-    if so_exibidos: df = df[df["exibido"] == 1]
+# ---------------------------------------------------------------------
+# VALIDAÇÃO
+# ---------------------------------------------------------------------
+def _wilson(k, n, z=1.96):
+    if n <= 0: return 0.0, 1.0
+    p = k / n; den = 1 + z * z / n
+    centro = (p + z * z / (2 * n)) / den
+    marg = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / den
+    return max(0.0, centro - marg), min(1.0, centro + marg)
+
+def avaliar_previsoes(path=None, so_exibidos=False, versao="atual"):
+    """Faixa de probabilidade x acerto real (com intervalo de 95%), Brier e log-loss.
+    Usa a probabilidade que foi exibida (calibrada, se houve) ou a bruta."""
+    df = _df_resolvidos(path, versao)
+    if df is None or df.empty: return None, {}
+    if so_exibidos:
+        df["exibido"] = pd.to_numeric(df.get("exibido"), errors="coerce")
+        df = df[df["exibido"] == 1]
     if df.empty: return None, {}
-    df["faixa"] = pd.cut(df["prob"], [50, 55, 60, 65, 70, 75, 80, 90, 100.01], right=False)
-    tab = df.groupby("faixa", observed=True).agg(n=("acertou", "size"), prob_media=("prob", "mean"), acerto=("acertou", "mean")).reset_index()
-    p = (df["prob"] / 100.0).clip(0.001, 0.999); y = df["acertou"]
-    met = {"n": int(len(df)), "brier": float(((p - y) ** 2).mean()), "logloss": float(-(y * np.log(p) + (1 - y) * np.log(1 - p)).mean())}
+    pc = pd.to_numeric(df["prob_cal"], errors="coerce") if "prob_cal" in df.columns else pd.Series(np.nan, index=df.index)
+    df["p_usada"] = pc.where(pc.notna(), df["prob"])
+    df["faixa"] = pd.cut(df["p_usada"], [50, 55, 60, 65, 70, 75, 80, 100.01], right=False)
+    linhas = []
+    for faixa, g in df.groupby("faixa", observed=True):
+        n = len(g); k = int(g["acertou"].sum()); lo, hi = _wilson(k, n)
+        linhas.append({"faixa": str(faixa), "n": n, "prob_media": round(g["p_usada"].mean(), 1),
+                       "acerto_%": round(100 * k / n, 1), "ic95_inf_%": round(100 * lo, 1), "ic95_sup_%": round(100 * hi, 1),
+                       "odd_justa": round(n / k, 2) if k else None, "odd_segura": round(1 / lo, 2) if lo > 0 else None})
+    tab = pd.DataFrame(linhas)
+    p = (df["p_usada"] / 100.0).clip(0.001, 0.999); y = df["acertou"]
+    met = {"n": int(len(df)), "corridas": int(df["corrida_id"].nunique()),
+           "acerto": float(y.mean()), "prob_media": float(p.mean()),
+           "brier": float(((p - y) ** 2).mean()), "logloss": float(-(y * np.log(p) + (1 - y) * np.log(1 - p)).mean())}
     return tab, met
 
+def avaliar_criterios(path=None, versao="atual"):
+    """Para cada critério: taxa de acerto do V quando o critério é verdadeiro x falso (todos os pares registrados).
+    Mostra quais critérios realmente separam acerto de erro."""
+    df = _df_resolvidos(path, versao)
+    if df is None or df.empty: return None
+    linhas = []
+    for c in _FLAGS:
+        if c not in df.columns: continue
+        col = pd.to_numeric(df[c], errors="coerce")
+        v, f = df[col == 1], df[col == 0]
+        linhas.append({"critério": c, "n_sim": len(v), "acerto_sim_%": round(100 * v["acertou"].mean(), 1) if len(v) else None,
+                       "n_não": len(f), "acerto_não_%": round(100 * f["acertou"].mean(), 1) if len(f) else None})
+    return pd.DataFrame(linhas)
+
 def calibrar_escala(path=None):
+    """(compatibilidade) escala única do z-score; prefira a calibração logística automática."""
     from statistics import NormalDist
     nd = NormalDist()
-    df = pd.read_csv(path or CFG["AVB_FILE"])
-    df = df[df["acertou"].isin([0, 1])]
-    if len(df) < 30: return None
+    df = _df_resolvidos(path, "atual")
+    if df is None or len(df) < 30: return None
     z = np.array([nd.inv_cdf(min(max(p / 100.0, 0.001), 0.999)) for p in df["prob"]]); y = df["acertou"].values
     melhor = None
     for sc in np.arange(0.3, 2.01, 0.05):
@@ -977,36 +1075,39 @@ def calibrar_escala(path=None):
         if melhor is None or ll < melhor[1]: melhor = (float(sc), ll)
     return melhor
 
+# ---------------------------------------------------------------------
+# MONTAGEM DOS AVBs
+# ---------------------------------------------------------------------
 def montar_avbs(rank, ctx):
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 20.0]
     if len(elig) < 2: return []
 
-    s1 = []
-    linhas_log = []
+    params = _params_calibracao()
+    s1, linhas_log = [], []
     AVB_META.clear()
     for i in range(len(elig)):
-        for j in range(i+1, len(elig)):
+        for j in range(i + 1, len(elig)):
             A, B = elig[i], elig[j]
             if A.get("bloqueado") or A.get("alvo") or B.get("bloqueado") or B.get("alvo"): continue
             prob_A = calc_prob(A, B, rank, ctx)
-            V, D, prob = (A, B, prob_A) if prob_A >= 50.0 else (B, A, 100.0 - prob_A)
+            V, D, prob_raw = (A, B, prob_A) if prob_A >= 50.0 else (B, A, 100.0 - prob_A)
+            prob = aplicar_calibracao(prob_raw, params)
+            aprovado, crit, flags = _avaliar_confronto(V, D, prob, ctx)
+            if aprovado: s1.append((V, D, prob, crit))
+            linhas_log.append((V, D, prob_raw, (prob if params else None), aprovado, crit, flags))
 
-            modo, score_crit = _classificar_confronto_avb(V, D, prob, ctx)
-            exibido = modo is not None and prob >= 60.0
-            if exibido:
-                s1.append((V, D, prob, modo, score_crit))
-            linhas_log.append((V, D, prob, modo, score_crit, exibido))
-
-    prioridade_modo = {"FORTE": 3, "VALOR": 2, "TOP": 1}
-    s1.sort(key=lambda x: (-x[2], -prioridade_modo.get(x[3], 0), -x[4]))
+    s1.sort(key=lambda x: (-x[2], -x[3]))  # maior probabilidade primeiro
     try: registrar_previsoes(rank, linhas_log, ctx)
     except Exception: pass
     out = []
-    for V, D, prob, modo, score_crit in s1:
-        AVB_META[(V["name"], D["name"])] = (modo, score_crit)
-        out.append((V, D, prob, modo == "FORTE"))
+    for V, D, prob, crit in s1:
+        AVB_META[(V["name"], D["name"])] = ("AVB", crit, params is not None)
+        out.append((V, D, prob, True))  # formato (V, D, prob, star): app.py continua desempacotando 4 itens
     return out
 
+# =====================================================================
+# TABELAS (HTML)
+# =====================================================================
 def get_rank_html(val, rank, max_rank):
     if val is None or rank is None: return "-"
     sup = {1: "¹", 2: "²", 3: "³", 4: "⁴", 5: "⁵", 6: "⁶"}.get(rank, "")
@@ -1065,9 +1166,15 @@ def brt_html(d):
 
 def trap_label(d): return f"{TRAP_EMOJI.get(d['trap'], '')} {d['trap']}"
 
+def peso_txt(d):
+    return f"{d['peso']:.1f}" if d.get("peso") else "-"
+
+def grades_txt(d):
+    return "-".join((r["grade"] or "?") for r in d.get("val", []))
+
 def tabela_projecao(ds):
     cols = ["split", "time", "tadj", "metrica", "msplit", "mtime", "ritmo", "rec"]
-    rk = {c: [None]*len(ds) for c in cols}
+    rk = {c: [None] * len(ds) for c in cols}
     max_rk = {}
     for c in cols:
         vals = [(i, d[c]) for i, d in enumerate(ds) if d.get(c) is not None]
@@ -1090,20 +1197,25 @@ def tabela_projecao(ds):
         split_display = get_rank_html(d["split"], rk["split"][i], max_rk["split"])
         msplit_display = get_rank_html(d["msplit"], rk["msplit"][i], max_rk["msplit"]) if d.get("msplit") else (f"<span style='color:#ffa500'>Pos: {d.get('msplit_pos', 0):.1f}</span>" if d.get("msplit_pos") else "-")
 
+        if d.get("rec") is not None:
+            rec_cell = get_rank_html(d["rec"], rk["rec"][i], max_rk["rec"]) + f"<br><small>{d['rec_txt'].split()[1]}</small>"
+        else:
+            rec_cell = "-"
+
         rows.append([
             trap_label(d), nome_marcado(d) + brt_html(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}",
             f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", fat, f"{perfil_e} {d['perfil']}",
-            "-".join((r["grade"] or "?") for r in d["val"]), f"{d['peso']:.1f}", dias_txt,
+            grades_txt(d), peso_txt(d), dias_txt,
             split_display, get_rank_html(d["time"], rk["time"][i], max_rk["time"]),
             msplit_display, get_rank_html(d["mtime"], rk["mtime"][i], max_rk["mtime"]),
             get_rank_html(d["tadj"], rk["tadj"][i], max_rk["tadj"]), get_rank_html(d.get("metrica"), rk["metrica"][i], max_rk["metrica"]), get_rank_html(d["ritmo"], rk["ritmo"][i], max_rk["ritmo"]),
-            (get_rank_html(d["rec"], rk["rec"][i], max_rk["rec"]) + f"<br><small>{d['rec_txt'].split()[1]}</small>") if d.get("rec") is not None else "-", f"{d['conf']:.0f}%"
+            rec_cell, f"{d['conf']:.0f}%"
         ])
     return tbl(["Trap", "Galgo", "Overall", "Cat", "Fatores", "Perfil", "Grades", "Peso", "Dias", "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica", "Ritmo", "Recup. Média", "Conf."], rows, sticky=2, w1=64, w2=125)
 
 def tabela_avb(lista, titulo):
     st.markdown(f"#### {titulo}")
-    if not lista: st.info("Nenhum confronto aprovado nos critérios FORTE, VALOR ou TOP nesta corrida."); return
+    if not lista: st.info("Nenhum confronto aprovado nos critérios do AvB nesta corrida."); return
 
     def fmt_pair(val_v, val_d, is_time=False, precision=2, is_pct=False):
         if val_v is None or val_d is None: return "-", "-"
@@ -1120,18 +1232,14 @@ def tabela_avb(lista, titulo):
             elif val_v < val_d: v_str, d_str = f"<span style='color:#ff4b4b'>{v_str}</span>", f"<span style='color:#12873a;font-weight:bold'>{d_str}</span>"
         return v_str, d_str
 
-    badges = {
-        "FORTE": "<span style='color:#FFD700;font-weight:bold;margin-right:6px;' title='Forte'>★</span>",
-        "VALOR": "<span style='margin-right:6px;' title='Valor'>💎</span>",
-        "TOP": "<span style='margin-right:6px;' title='Top'>🏁</span>",
-    }
+    badge = "<span style='color:#FFD700;font-weight:bold;margin-right:6px;' title='AvB aprovado'>★</span>"
 
     rows = []
     for i, item in enumerate(lista):
         V, D, prob = item[0], item[1], item[2]
         meta = AVB_META.get((V["name"], D["name"]))
-        if meta: modo, score_crit = meta
-        else: modo, score_crit = ("FORTE" if (len(item) > 3 and item[3]) else ""), 0
+        score_crit = meta[1] if meta else 0
+        calibrada = bool(meta[2]) if meta and len(meta) > 2 else False
 
         if i > 0: rows.append(["<hr>"])
 
@@ -1150,32 +1258,65 @@ def tabela_avb(lista, titulo):
         mt_v, mt_d = fmt_pair(V['mtime'], D['mtime'], True, 2)
         ta_v, ta_d = fmt_pair(V['tadj'], D['tadj'], True, 2)
         me_v, me_d = fmt_pair(V.get('metrica'), D.get('metrica'), True, 2)
-        r_v, r_d = fmt_pair(V['ritmo'], D['ritmo'], True, 2)
-        rec_v, rec_d = fmt_pair(V['rec'], D['rec'], False, 1, True)
+        r_v, r_d = fmt_pair(V.get('ritmo'), D.get('ritmo'), True, 2)
+        rec_v, rec_d = fmt_pair(V.get('rec'), D.get('rec'), False, 1, True)
 
         prob_cell = (
             f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'>"
             f"<span style='color:#12873a'>{prob:.1f}%</span><br>"
-            f"<small style='color:#aaa;font-weight:normal'>{score_crit}/5 crit.</small></td>"
+            f"<small style='color:#aaa;font-weight:normal'>{score_crit}/7 crit.</small><br>"
+            f"<small style='color:#aaa;font-weight:normal'>{'calibrada' if calibrada else 'bruta'}</small></td>"
         )
-
-        badge = badges.get(modo, "")
 
         rows.append([
             f"{badge}{trap_label(V)} - {nome_marcado(V)}{brt_html(V)}",
-            ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["val"]),
-            f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, me_v, r_v, rec_v, f"{V['conf']:.0f}%",
+            ov_v, cat_v, V['perfil'], grades_txt(V),
+            peso_txt(V), f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, me_v, r_v, rec_v, f"{V['conf']:.0f}%",
             prob_cell
         ])
 
         rows.append([
             f"{trap_label(D)} - {nome_marcado(D)}{brt_html(D)}",
-            ov_d, cat_d, D['perfil'], "-".join((r["grade"] or "?") for r in D["val"]),
-            f"{D['peso']:.1f}", f"{D['dias']}", sp_d, t_d, ms_d, mt_d, ta_d, me_d, r_d, rec_d, f"{D['conf']:.0f}%"
+            ov_d, cat_d, D['perfil'], grades_txt(D),
+            peso_txt(D), f"{D['dias']}", sp_d, t_d, ms_d, mt_d, ta_d, me_d, r_d, rec_d, f"{D['conf']:.0f}%"
         ])
 
     heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica", "Ritmo", "Recup.", "Conf.", "Probabilidade"]
     st.markdown(tbl(heads, rows, sticky=1, w1=190), unsafe_allow_html=True)
+
+# =====================================================================
+# PAINEL DE VALIDAÇÃO + OBSERVAÇÕES
+# =====================================================================
+def painel_validacao():
+    with st.expander("📊 Validação dos AvBs (acerto real × probabilidade)"):
+        try:
+            tab, met = avaliar_previsoes(so_exibidos=True)
+            df_all = _df_resolvidos()
+        except Exception as e:
+            st.info(f"Não foi possível ler as previsões: {e}")
+            return
+        if tab is None or tab.empty:
+            st.info("Ainda não há AvBs exibidos com resultado registrado nesta versão do modelo "
+                    f"(`{CFG['VERSAO']}`). Registre a ordem de chegada de cada corrida.")
+        else:
+            st.markdown(f"**{met['n']} AvBs exibidos resolvidos em {met['corridas']} corridas** · "
+                        f"acerto real **{100*met['acerto']:.1f}%** vs. prob. média {100*met['prob_media']:.1f}% · "
+                        f"Brier {met['brier']:.3f} · log-loss {met['logloss']:.3f}")
+            if met["n"] < 150:
+                st.warning("Amostra pequena: com menos de ~150 confrontos a taxa de acerto tem margem de erro grande "
+                           "(veja ic95_inf/sup). Mantenha stakes baixos até a taxa se sustentar.")
+            st.markdown("Compare **acerto_%** com **prob_media**. A **odd_segura** usa o limite inferior do intervalo: só vale pagar abaixo dela se você aceitar o pior cenário.")
+            st.dataframe(tab, hide_index=True)
+        n_res = 0 if df_all is None else len(df_all)
+        params = _params_calibracao()
+        if params:
+            st.markdown(f"Calibração **ativa** (n={params['n']}): prob_cal = sigmoid({params['a']:.2f}·logit(prob_bruta) + {params['b']:+.2f})")
+        else:
+            st.markdown(f"Calibração **inativa**: {n_res} de {CFG['AVB']['calib_min_n']} confrontos resolvidos (todos os pares registrados).")
+        crit = avaliar_criterios()
+        if crit is not None and not crit.empty:
+            st.markdown("**Quais critérios realmente separam acerto de erro** (todos os pares registrados):")
+            st.dataframe(crit, hide_index=True)
 
 _DL_N = 0
 
@@ -1198,10 +1339,12 @@ def gerar_observacoes(rank, avbs, ctx):
         ordem = st.text_input("Ordem de chegada (traps do 1º ao 6º, ex.: 3-1-4-5-2-6)", key=f"res_{cid}")
         if st.button("Salvar resultado", key=f"btn_res_{cid}"):
             n = registrar_resultado(cid, ordem)
-            if n: st.success(f"Resultado salvo em {n} confrontos.")
+            if n > 0: st.success(f"Resultado salvo em {n} confrontos.")
+            elif n == -1: st.error("Ordem inválida: use traps de 1 a 6 sem repetir (ex.: 3-1-4-5-2-6).")
             else: st.warning("Nenhum confronto atualizado. Confira a ordem digitada.")
         _pv = previsoes_bytes()
         if _pv: st.download_button("Baixar avb_previsoes.csv", _pv, file_name="avb_previsoes.csv", mime="text/csv", key=f"dl_avb_{cid}")
+    painel_validacao()
     st.markdown("#### 🏁 Leitura Tática da Corrida")
 
     elegiveis = [d for d in rank if not d.get("bloqueado")]
@@ -1234,7 +1377,6 @@ def gerar_observacoes(rank, avbs, ctx):
             if c_clean["trap"] >= 5: local = "por fora"
             elif c_clean["trap"] == 4: local = "pelo meio"
             else: local = "no trilho (por dentro)"
-
             insights.append(f"**💥 Risco de Colisão:** O {nomes_tromb} são Trombadores e correm nas traps internas. Se eles se chocarem na 1ª curva, o {TRAP_EMOJI.get(c_clean['trap'])} {c_clean['name']}, que corre {local} e está limpo, pode herdar a pista livre.")
         else:
             insights.append(f"**💥 Risco de Colisão:** O {nomes_tromb} são Trombadores e correm nas traps internas. A briga pelo trilho será intensa.")
