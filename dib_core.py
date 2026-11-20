@@ -5,6 +5,7 @@ import math
 import json
 import os
 import csv
+import hashlib
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -103,6 +104,14 @@ CFG = {
             "first_bend_mult": 1.5, "cap_total": 0.60, "split_loss_cap": 0.35},
     "REC_W": [0.30, 0.25, 0.20, 0.15, 0.10],  # pesos por recência (mais recente primeiro)
     "CALIB_FILE": "calibracao_corridas.csv",
+    # AvB em segundos: tempo projetado de cada galgo + incerteza -> probabilidade. Valores iniciais a calibrar.
+    "AVB": {"w_tadj": 0.45, "w_mtime": 0.35, "w_brt": 0.20, "risk_k": 0.5,
+            "brt_max_dias": 90, "brt_grade_gap": 2,
+            "sigma0": 0.25, "sigma_k": 2.0, "sigma_min": 0.15, "prob_scale": 1.0,
+            "start_bonus": 0.04, "postpick_sec": 0.02,
+            "trap_sec": {1: -0.02, 2: -0.01, 3: 0.0, 4: 0.0, 5: 0.01, 6: 0.02}},
+    "AVB_FILE": "avb_previsoes.csv",
+    "VERSAO": "avb-segundos-1",
 }
 
 FIELD_MAP = {
@@ -735,56 +744,58 @@ def _largada_score(d):
         return -float(d["split"])
     return None
 
-def calc_prob(V, D, rank, ctx):
-    if V.get("tadj") is None and V.get("mtime") is None:
-        return 50.0
+def _brt_valido(d, ctx):
+    """BRT só entra se for recente e de classe próxima da corrida de hoje."""
+    A = CFG["AVB"]
+    brt = d.get("brt")
+    if not brt: return None
+    txt = str(d.get("brt_txt") or "")
+    m = re.search(r"\((\d{1,2}[A-Za-z]{3}\d{2})\)", txt)
+    hoje = ctx.get("today")
+    if m and hoje:
+        try:
+            dt = datetime.strptime(m.group(1), "%d%b%y")
+            if (hoje - dt).days > A["brt_max_dias"]: return None
+        except Exception: pass
+    g = re.search(r"BRT:\s*\d+\.\d+\s*([A-Za-z]\d+)", txt)
+    gn, cn = (grade_num(g.group(1).upper()) if g else None), ctx.get("classe_n")
+    if gn and cn and abs(gn - cn) > A["brt_grade_gap"]: return None
+    return brt
 
-    stats = ctx.get("_stats", {})
-
-    def zscore(d, key, stats_item):
-        if stats_item is None: return 0.0
-        val = d.get(key)
-        if val is None: return 0.0
-        mean, std, invert = stats_item
-        z = (val - mean) / std
-        return -z if invert else z
-
-    # Sem dupla contagem de 'overall': foca em velocidade ajustada, tempo médio,
-    # largada/split, ritmo pós-largada, recuperação e categoria.
-    pesos = {
-        "tadj": 2.6,
-        "mtime": 1.6,
-        "msplit": 1.8,
-        "ritmo": 1.5,
-        "rec": 1.0,
-        "cat": 0.8,
-    }
-
-    soma_ponderada = 0.0
-    total_pesos = 0.0
-    for key, peso in pesos.items():
-        z_v = zscore(V, key, stats.get(key))
-        z_d = zscore(D, key, stats.get(key))
-        soma_ponderada += (z_v - z_d) * peso
-        total_pesos += peso
-
-    diff = soma_ponderada / total_pesos if total_pesos > 0 else 0.0
-
-    v_is_top = V["name"] in ctx.get("top3_ms", set())
-    d_is_top = D["name"] in ctx.get("top3_ms", set())
-    if v_is_top and not d_is_top: diff += 0.20
-    elif not v_is_top and d_is_top: diff -= 0.20
-
+def projetar_tempo(d, ctx):
+    """(tempo projetado em s, variância em s²) ou (None, None)."""
+    A = CFG["AVB"]
+    partes = []
+    if d.get("tadj") is not None: partes.append((A["w_tadj"], d["tadj"] + A["risk_k"] * (d.get("tadj_desc") or 0.0)))
+    if d.get("mtime") is not None: partes.append((A["w_mtime"], d["mtime"]))
+    brt = _brt_valido(d, ctx)
+    if brt: partes.append((A["w_brt"], brt))
+    if not partes: return None, None
+    t = sum(w * x for w, x in partes) / sum(w for w, _ in partes)
+    t += A["trap_sec"].get(d["trap"], 0.0)
+    if d["name"] in ctx.get("top3_ms", set()): t -= A["start_bonus"]
     pp = str(ctx.get("post_pick") or "")
-    if pp and str(V["trap"]) in pp: diff += 0.10
-    if pp and str(D["trap"]) in pp: diff -= 0.10
+    if pp and str(d["trap"]) in pp: t -= A["postpick_sec"]
+    n = max(len(d.get("val") or []), 1)
+    sd = d.get("sd") or 0.0
+    var = (n * sd ** 2 + A["sigma_k"] * A["sigma0"] ** 2) / (n + A["sigma_k"])  # encolhe o desvio do galgo para o padrão
+    var = max(var, A["sigma_min"] ** 2)
+    var = var + var / n  # incerteza sobre a média com poucas corridas
+    d["t_proj"] = t
+    return t, var
 
-    try:
-        prob = 100.0 / (1.0 + math.exp(-1.55 * diff))
-    except OverflowError:
-        prob = 100.0 if diff > 0 else 0.0
+def _dif_proj(V, D, ctx):
+    tV, vV = projetar_tempo(V, ctx); tD, vD = projetar_tempo(D, ctx)
+    if tV is None or tD is None: return None
+    return tD - tV, math.sqrt(vV + vD), tV, tD
 
-    return prob
+def calc_prob(V, D, rank, ctx):
+    """P(V vencer D) pela diferença de tempo projetado (s) dividida pela incerteza combinada."""
+    r = _dif_proj(V, D, ctx)
+    if r is None: return 50.0
+    delta, sd_tot, _, _ = r
+    z = CFG["AVB"]["prob_scale"] * delta / sd_tot
+    return 100.0 * 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
 
 def _classificar_confronto_avb(V, D, prob, ctx):
     c_tadj = (V.get("tadj") is not None and D.get("tadj") is not None and V["tadj"] < D["tadj"])
@@ -839,28 +850,108 @@ def _classificar_confronto_avb(V, D, prob, ctx):
 # (nome_V, nome_D) -> (modo, nº de critérios). Fica fora da tupla para não quebrar o app.py.
 AVB_META = {}
 
+_AVB_COLS = ["corrida_id", "registrado_em", "data", "pista", "hora", "race", "classe", "dist", "galgo_V", "trap_V", "galgo_D", "trap_D",
+             "prob", "modo", "criterios", "exibido", "tproj_V", "tproj_D", "delta_s", "sd_total", "tadj_V", "tadj_D", "mtime_V", "mtime_D",
+             "brt_V", "brt_D", "pos_V", "pos_D", "acertou", "versao"]
+
+def corrida_id(dogs, ctx):
+    chave = str(ctx.get("today"))[:10] + "|" + "|".join(sorted(f"{d['trap']}{d['name']}" for d in dogs if d.get("name") != "vacant"))
+    return hashlib.md5(chave.encode("utf-8")).hexdigest()[:10]
+
+def _ler_avb_csv(path):
+    if not os.path.exists(path): return []
+    with open(path, newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+def _gravar_avb_csv(path, rows):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=_AVB_COLS, extrasaction="ignore")
+        w.writeheader(); w.writerows(rows)
+
+def registrar_previsoes(dogs, linhas, ctx):
+    """Grava/atualiza cada confronto previsto (um registro por corrida+par). Previsão com resultado já salvo não é sobrescrita."""
+    if not linhas: return 0
+    path = CFG["AVB_FILE"]
+    cid = corrida_id(dogs, ctx)
+    rows = _ler_avb_csv(path)
+    idx = {(r["corrida_id"], r["trap_V"], r["trap_D"]): r for r in rows}
+    novos = 0
+    for V, D, prob, modo, crit, exibido in linhas:
+        r = _dif_proj(V, D, ctx)
+        delta, sd_tot, tV, tD = r if r else ("", "", "", "")
+        fmt = lambda x: "" if x in (None, "") else round(float(x), 4)
+        chave = (cid, str(V["trap"]), str(D["trap"]))
+        antigo = idx.get(chave)
+        if antigo and antigo.get("acertou") not in (None, ""): continue
+        novo = {"corrida_id": cid, "registrado_em": datetime.now().strftime("%Y-%m-%d %H:%M"), "data": str(ctx.get("today"))[:10],
+                "pista": ctx.get("pista", ""), "hora": ctx.get("hora", ""), "race": ctx.get("race", ""), "classe": ctx.get("classe", ""), "dist": ctx.get("dist", ""),
+                "galgo_V": V["name"], "trap_V": V["trap"], "galgo_D": D["name"], "trap_D": D["trap"], "prob": round(prob, 2), "modo": modo or "",
+                "criterios": crit, "exibido": int(exibido), "tproj_V": fmt(tV), "tproj_D": fmt(tD), "delta_s": fmt(delta), "sd_total": fmt(sd_tot),
+                "tadj_V": fmt(V.get("tadj")), "tadj_D": fmt(D.get("tadj")), "mtime_V": fmt(V.get("mtime")), "mtime_D": fmt(D.get("mtime")),
+                "brt_V": fmt(V.get("brt")), "brt_D": fmt(D.get("brt")), "pos_V": "", "pos_D": "", "acertou": "", "versao": CFG["VERSAO"]}
+        if antigo: antigo.update(novo)
+        else: rows.append(novo); idx[chave] = novo; novos += 1
+    _gravar_avb_csv(path, rows)
+    return novos
+
+def registrar_resultado(cid, ordem):
+    """ordem: traps do 1º ao último, ex. '3-1-4-5-2-6'. Quem não aparece na lista (ex.: só o top 3) fica atrás de quem aparece."""
+    traps = [int(c) for c in str(ordem or "") if c in "123456"]
+    if not traps: return 0
+    pos = {}
+    for i, t in enumerate(traps):
+        pos.setdefault(t, i + 1)
+    path = CFG["AVB_FILE"]
+    rows = _ler_avb_csv(path); n = 0
+    for r in rows:
+        if r["corrida_id"] != cid: continue
+        v, d = int(r["trap_V"]), int(r["trap_D"])
+        pv, pd_ = pos.get(v), pos.get(d)
+        if pv is None and pd_ is None: continue
+        ac = 1 if (pv is not None and (pd_ is None or pv < pd_)) else 0
+        r["pos_V"], r["pos_D"], r["acertou"] = (pv or ""), (pd_ or ""), ac
+        n += 1
+    if n: _gravar_avb_csv(path, rows)
+    return n
+
+def previsoes_bytes():
+    path = CFG["AVB_FILE"]
+    if not os.path.exists(path): return None
+    with open(path, "rb") as f: return f.read()
+
+def avaliar_previsoes(path=None, so_exibidos=False):
+    """Calibração: faixa de probabilidade x taxa real de acerto, mais Brier e log-loss."""
+    df = pd.read_csv(path or CFG["AVB_FILE"])
+    df = df[df["acertou"].isin([0, 1])].copy()
+    if so_exibidos: df = df[df["exibido"] == 1]
+    if df.empty: return None, {}
+    df["faixa"] = pd.cut(df["prob"], [50, 55, 60, 65, 70, 75, 80, 90, 100.01], right=False)
+    tab = df.groupby("faixa", observed=True).agg(n=("acertou", "size"), prob_media=("prob", "mean"), acerto=("acertou", "mean")).reset_index()
+    p = (df["prob"] / 100.0).clip(0.001, 0.999); y = df["acertou"]
+    met = {"n": int(len(df)), "brier": float(((p - y) ** 2).mean()), "logloss": float(-(y * np.log(p) + (1 - y) * np.log(1 - p)).mean())}
+    return tab, met
+
+def calibrar_escala(path=None):
+    """Acha o AVB.prob_scale (>1 = mais confiante, <1 = menos) que minimiza o log-loss nos resultados já registrados."""
+    from statistics import NormalDist
+    nd = NormalDist()
+    df = pd.read_csv(path or CFG["AVB_FILE"])
+    df = df[df["acertou"].isin([0, 1])]
+    if len(df) < 30: return None
+    z = np.array([nd.inv_cdf(min(max(p / 100.0, 0.001), 0.999)) for p in df["prob"]]); y = df["acertou"].values
+    melhor = None
+    for sc in np.arange(0.3, 2.01, 0.05):
+        pp = np.array([nd.cdf(sc * x) for x in z]).clip(0.001, 0.999)
+        ll = float(-(y * np.log(pp) + (1 - y) * np.log(1 - pp)).mean())
+        if melhor is None or ll < melhor[1]: melhor = (float(sc), ll)
+    return melhor
+
 def montar_avbs(rank, ctx):
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 20.0]
     if len(elig) < 2: return []
 
-    def get_stats(key, invert=False, min_std=0.001):
-        vals = [d.get(key) for d in elig if d.get(key) is not None]
-        if len(vals) < 2: return None
-        mean = float(np.mean(vals))
-        std = float(np.std(vals))
-        std = max(std, min_std)
-        return (mean, std, invert)
-
-    ctx["_stats"] = {
-        "tadj": get_stats("tadj", invert=True, min_std=0.02),
-        "mtime": get_stats("mtime", invert=True, min_std=0.02),
-        "msplit": get_stats("msplit", invert=True, min_std=0.02),
-        "ritmo": get_stats("ritmo", invert=True, min_std=0.02),
-        "rec": get_stats("rec", invert=False, min_std=1.0),
-        "cat": get_stats("cat", invert=False, min_std=0.3),
-    }
-
     s1 = []
+    linhas_log = []
     AVB_META.clear()
     for i in range(len(elig)):
         for j in range(i+1, len(elig)):
@@ -870,11 +961,15 @@ def montar_avbs(rank, ctx):
             V, D, prob = (A, B, prob_A) if prob_A >= 50.0 else (B, A, 100.0 - prob_A)
 
             modo, score_crit = _classificar_confronto_avb(V, D, prob, ctx)
-            if modo is not None and prob >= 60.0:
+            exibido = modo is not None and prob >= 60.0
+            if exibido:
                 s1.append((V, D, prob, modo, score_crit))
+            linhas_log.append((V, D, prob, modo, score_crit, exibido))
 
     prioridade_modo = {"FORTE": 3, "VALOR": 2, "TOP": 1}
     s1.sort(key=lambda x: (-x[2], -prioridade_modo.get(x[3], 0), -x[4]))  # maior probabilidade primeiro
+    try: registrar_previsoes(rank, linhas_log, ctx)
+    except Exception: pass
     out = []
     for V, D, prob, modo, score_crit in s1:
         AVB_META[(V["name"], D["name"])] = (modo, score_crit)
@@ -1068,6 +1163,15 @@ def gerar_observacoes(rank, avbs, ctx):
         if desc: st.markdown("**Não reconhecidos (não afetam o tempo):** " + ", ".join(f"`{k}` ×{v}" for k, v in sorted(desc.items())))
         if aprox: st.markdown("**Interpretados por aproximação:** " + ", ".join(f"`{k}` → `{v}`" for k, v in sorted(aprox.items())))
         if not desc and not aprox: st.markdown("Todos os remarks foram reconhecidos exatamente.")
+    cid = corrida_id(rank, ctx)
+    with st.expander("📝 Registrar resultado (calibração dos AvBs)"):
+        ordem = st.text_input("Ordem de chegada (traps do 1º ao 6º, ex.: 3-1-4-5-2-6)", key=f"res_{cid}")
+        if st.button("Salvar resultado", key=f"btn_res_{cid}"):
+            n = registrar_resultado(cid, ordem)
+            if n: st.success(f"Resultado salvo em {n} confrontos.")
+            else: st.warning("Nenhum confronto atualizado. Confira a ordem digitada.")
+        _pv = previsoes_bytes()
+        if _pv: st.download_button("Baixar avb_previsoes.csv", _pv, file_name="avb_previsoes.csv", mime="text/csv", key=f"dl_avb_{cid}")
     st.markdown("#### 🏁 Leitura Tática da Corrida")
 
     elegiveis = [d for d in rank if not d.get("bloqueado")]
