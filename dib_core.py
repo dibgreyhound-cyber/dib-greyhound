@@ -3,6 +3,8 @@ import re
 import html
 import math
 import json
+import os
+import csv
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -12,23 +14,76 @@ import streamlit as st
 # =====================================================================
 # DICIONÁRIO DE REMARKS (TABELA DO MARKO)
 # =====================================================================
-DICIONARIO_REMARKS = {
-    "ald": "Liderou Sempre", "awk": "Desajeitado", "blk": "Trombada Forte",
-    "bmp": "Trombou na Curva", "chl": "Desafiado na Curva", "clrrn": "Corrida Limpa",
-    "crd": "Truncado na Curva", "crdnrln": "Truncado no Final", "crdrnln": "Truncado na Reta",
-    "crdrnup": "Truncado no Início", "crmp": "Espaço Apertado", "disp": "Disputou",
-    "dsp": "Disputou na Curva", "dis pld": "Liderou com Disputa", "ep": "Ritmo Acelerado",
-    "evch": "Evitou Choque", "fcd": "Forçado a Algo", "fcdck": "Forçado na Curva",
-    "fell": "Caiu", "hldon": "Posição Mantida", "imp": "Impedido", "jmp": "Saltou",
-    "jmplate": "Saltou Atrasado", "ko": "Derrubado", "lame": "Manco", "ld": "Liderou a Curva",
-    "ldnrln": "Liderou na Reta", "in": "Linha de Chegada", "mid": "Corre pelo Meio",
-    "msdbrk": "Passou Reto", "on": "Até o Final", "qaw": "Largada Rápida", "rls": "Corre por Dentro",
-    "rnln": "Reta Linha", "rnon": "Manteve Galope", "rnonwll": "Galope até o Final",
-    "rnup": "Distância Trap 1", "saw": "Largada Lenta", "snled": "Liderou desde o Início",
-    "stmb": "Tropeçou", "strfn": "Chegada Forte", "stt": "Início", "struck": "Atingido",
-    "styd": "Ficou", "turnedin trps": "Ficou na Trap", "vsaw": "Largada Muito Lenta",
-    "vw": "Corredor Aberto", "w": "Curva Ampla"
+# =====================================================================
+# REMARKS (TABELA DO MARKO): chave -> (significado, tipo, ajuste de tempo)
+# tipo: pos (positivo) | neg (negativo) | alerta
+# ajuste: light/medium/heavy = interferência (desconto em s) | saw/vsaw = largada lenta
+#         exclui = corrida fora da média | None = não mexe no tempo
+# =====================================================================
+REMARKS_INFO = {
+    "ald": ("Liderou Sempre", "pos", None),
+    "awk": ("Desajeitado", "neg", "light"),
+    "blk": ("Trombada Forte na Curva", "neg", "heavy"),
+    "bmp": ("Trombou Durante uma Curva", "neg", "medium"),
+    "chl": ("Desafiado na Curva", "alerta", None),
+    "clrrn": ("Corrida Limpa", "pos", None),
+    "crd": ("Truncado na Curva", "alerta", "medium"),
+    "crdnrln": ("Truncado no Final", "alerta", "light"),
+    "crdrnln": ("Truncado na Reta Final", "alerta", "medium"),
+    "crdrnup": ("Truncado desde o Início", "alerta", "medium"),
+    "crmp": ("Correu em Espaço Apertado na Curva", "neg", "medium"),
+    "disp": ("Disputou", "alerta", None),
+    "dsp": ("Disputou na Curva", "alerta", None),
+    "displd": ("Liderou com Muita Disputa", "alerta", None),
+    "ep": ("Ritmo Acelerado", "pos", None),
+    "evch": ("Ganharia se Fosse Bom o Suficiente", "neg", None),
+    "fcd": ("Forçado a Algo", "alerta", "medium"),
+    "fcdck": ("Forçado a Manter-se na Curva", "alerta", "medium"),
+    "fell": ("Caiu na Curva", "neg", "exclui"),
+    "hldon": ("Posição Mantida", "pos", None),
+    "imp": ("Impedido na Curva", "alerta", "medium"),
+    "jmp": ("Saltou", "alerta", None),
+    "jmplate": ("Saltou Atrasado", "neg", "saw"),
+    "ko": ("Derrubado na Curva", "neg", "exclui"),
+    "lame": ("Manco", "neg", "exclui"),
+    "ld": ("Liderou a Curva", "pos", None),
+    "ldbmp": ("Tomou a Liderança com Esbarrão", "pos", None),
+    "ldnrln": ("Tomou a Liderança na Reta Final", "pos", None),
+    "in": ("Linha de Chegada", "alerta", None),
+    "mid": ("Corre pelo Meio", "alerta", None),
+    "msdbrk": ("Passou Reto na Curva", "neg", "vsaw"),
+    "on": ("Até o Final", "alerta", None),
+    "qaw": ("Largada Rápida", "pos", None),
+    "rls": ("Corre por Dentro", "alerta", None),
+    "rnln": ("Linha Reta e Alterou Pouco seu Traçado", "alerta", None),
+    "rnon": ("Manteve um Galope Forte até o Final", "pos", None),
+    "rnonwll": ("Manteve um Galope Forte até o Final", "pos", None),
+    "rnup": ("Distância entre a Trap e a 1ª Curva", "alerta", None),
+    "saw": ("Largada Lenta", "neg", "saw"),
+    "snled": ("Liderou desde o Início", "pos", None),
+    "stmb": ("Tropeçou", "neg", "medium"),
+    "strfn": ("Chegada Forte", "pos", None),
+    "stt": ("Início", "alerta", None),
+    "struck": ("Atingido", "alerta", "medium"),
+    "styd": ("Ficou", "neg", None),
+    "turnedintrps": ("Voltou e/ou Ficou na Trap", "neg", "exclui"),
+    "vsaw": ("Largada Muito Lenta", "neg", "vsaw"),
+    "vw": ("Corredor Mais Aberto", "alerta", None),
+    "w": ("Curva Ampla", "alerta", None),
+    "baulk": ("Bloqueado (Baulk)", "neg", "heavy"),  # fora da tabela, mas aparece no Racing Post
 }
+DICIONARIO_REMARKS = {k: v[0] for k, v in REMARKS_INFO.items()}  # compatibilidade
+
+# Abreviações/variações que o Racing Post pode usar -> chave oficial
+REMARKS_ALIASES = {
+    "crowded": "crd", "crwd": "crd", "crowd": "crd", "bumped": "bmp", "bump": "bmp", "bmpd": "bmp",
+    "baulked": "baulk", "baulking": "baulk", "blocked": "blk", "checked": "fcd", "cramped": "crmp",
+    "stumbled": "stmb", "stumble": "stmb", "snld": "snled", "stayed": "styd", "turnedin": "turnedintrps",
+    "turnedintraps": "turnedintrps", "knockedout": "ko", "knocked": "ko", "missedbreak": "msdbrk",
+    "slowaway": "saw", "slowlyaway": "saw", "veryslowaway": "vsaw", "veryslowlyaway": "vsaw",
+    "quickaway": "qaw", "quicklyaway": "qaw", "awkward": "awk", "impeded": "imp", "disputed": "disp",
+}
+_ORD = {"first": "1", "second": "2", "third": "3", "fourth": "4"}
 
 # =====================================================================
 # CONFIGURAÇÃO GLOBAL (DIB 6.2 - Calibrado com Z-Score e Histórico Expandido)
@@ -43,6 +98,11 @@ CFG = {
 
     "VEL_PTS": {"tadj": 100, "mtime": 80, "msplit": 100, "ritmo": 80},
     "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 10,
+    # Time Ajust. = tempo "limpo": largada boa e sem interferência. Valores iniciais estimados (calibrar com o CSV).
+    "ADJ": {"light": 0.05, "medium": 0.15, "heavy": 0.30, "saw": 0.08, "vsaw": 0.15,
+            "first_bend_mult": 1.5, "cap_total": 0.60, "split_loss_cap": 0.35},
+    "REC_W": [0.30, 0.25, 0.20, 0.15, 0.10],  # pesos por recência (mais recente primeiro)
+    "CALIB_FILE": "calibracao_corridas.csv",
 }
 
 FIELD_MAP = {
@@ -129,17 +189,17 @@ def count_traf(rem):
 # TADJ CIRÚRGICO
 # =====================================================================
 GRAVES_PATTERNS = (
-    r"\bbaulk(?:ed|s|ing)?\b",
-    r"\bfell\b",
-    r"\bko\b|\bknocked\s+out\b",
-    r"\bmsdbrk\b|\bmissed\s+break\b",
+    r"\bbaulk(?:ed|s|ing)?\d*\b",
+    r"\bfell\d*\b",
+    r"\bko\d*\b|\bknocked\s+out\b",
+    r"\bmsdbrk\d*\b|\bmissed\s+break\b",
 )
 
 MODERADOS_PATTERNS = (
-    r"\bbmp\b|\bbumped(?:\s+first)?\b",
-    r"\bcrd\b|\bcrowded(?:\s+quarter)?\b",
-    r"\bfcd\b|\bchecked\b",
-    r"\bcrmp\b|\bcramped\b",
+    r"\bbmp\d*\b|\bbumped(?:\s+first)?\b",
+    r"\bcrd\d*\b|\bcrowded(?:\s+quarter)?\b",
+    r"\bfcd\d*\b|\bchecked\b",
+    r"\bcrmp\d*\b|\bcramped\b",
 )
 
 def traffic_penalty(rem, peso=31.0):
@@ -161,13 +221,100 @@ def traffic_penalty(rem, peso=31.0):
 
     return pen * fator
 
+def _norm_rem_text(rem):
+    s = str(rem or "").lower()
+    s = re.sub(r"turned\s*in\s*tr(?:a)?ps", "turnedintrps", s)
+    s = re.sub(r"dis\s*p\s*ld", "displd", s)
+    s = re.sub(r"knocked\s*out", "ko", s)
+    s = re.sub(r"missed\s*break", "msdbrk", s)
+    s = re.sub(r"very\s*slow(?:ly)?\s*away", "vsaw", s)
+    s = re.sub(r"slow(?:ly)?\s*away", "saw", s)
+    s = re.sub(r"quick(?:ly)?\s*away", "qaw", s)
+    s = re.sub(r"\b([a-z]+)\s+(first|second|third|fourth)\b", lambda m: m.group(1) + _ORD[m.group(2)], s)  # "crowded first" -> "crowded1"
+    return s
+
+def ler_remarks(rem):
+    """Lê os remarks de uma corrida. Cada item: tok, key (chave oficial), num (nº da curva), status = exato | alias | aprox | desconhecido."""
+    out = []
+    for tok in re.split(r"[-,;/\s]+", _norm_rem_text(rem)):
+        tok = tok.strip(".()[]'\"")
+        if not tok: continue
+        m = re.match(r"([a-z]+)(\d*)", tok)
+        if not m: continue
+        w, num = m.group(1), m.group(2)
+        if w in REMARKS_INFO: key, st_ = w, "exato"
+        elif w in REMARKS_ALIASES: key, st_ = REMARKS_ALIASES[w], "alias"
+        else:
+            cands = [k for k in REMARKS_INFO if len(k) >= 3 and w.startswith(k)]
+            if cands: key, st_ = max(cands, key=len), "aprox"
+            else: key, st_ = None, "desconhecido"
+        out.append({"tok": tok, "key": key, "num": num, "status": st_})
+    return out
+
+_EARLY_KEYS = {"ald", "ep", "snled", "ld", "ldbmp"}
+_SAW_KEYS = {"saw", "vsaw"}
+
+def analisar_remarks(rem):
+    """Classifica os remarks de UMA corrida para o Time Ajust.: exclusão, desconto por interferência e largada lenta."""
+    A = CFG["ADJ"]
+    excluir, interf, slow = False, 0.0, None
+    for it in ler_remarks(rem):
+        if not it["key"]: continue
+        adj = REMARKS_INFO[it["key"]][2]
+        if adj == "exclui": excluir = True
+        elif adj in ("saw", "vsaw"):
+            if slow != "vsaw": slow = adj
+        elif adj in ("light", "medium", "heavy"):
+            base = A[adj]
+            if it["num"] == "1" or it["key"] == "crdrnup": base *= A["first_bend_mult"]
+            interf += base
+    return {"excluir": excluir, "interf": interf, "slow": slow, "limpa": (not excluir and interf == 0 and slow is None)}
+
+def traducao_remarks(rem):
+    return [REMARKS_INFO[it["key"]][0] for it in ler_remarks(rem) if it["key"]]
+
+def diagnostico_remarks(dogs):
+    """Resumo do que foi lido: contagem por status, aproximações (token -> chave) e tokens desconhecidos."""
+    cont = {"exato": 0, "alias": 0, "aprox": 0, "desconhecido": 0}
+    aprox, desc = {}, {}
+    for d in dogs:
+        for r in d.get("runs", []):
+            for it in ler_remarks(r.get("remarks")):
+                cont[it["status"]] += 1
+                if it["status"] in ("alias", "aprox"): aprox[it["tok"]] = it["key"]
+                if it["status"] == "desconhecido": desc[it["tok"]] = desc.get(it["tok"], 0) + 1
+    return cont, aprox, desc
+
+def tempo_limpo(R):
+    """(tadj, n_excluidas, desconto_medio) — média ponderada por recência dos CalTm ajustados."""
+    A = CFG["ADJ"]
+    info = [(r, analisar_remarks(r["remarks"])) for r in R if r["caltm"] is not None and r["caltm"] > 0]
+    usar = [(r, i) for r, i in info if not i["excluir"]] or info  # se todas excluídas, usa todas
+    if not usar: return None, 0, 0.0
+    limpos = [r["split"] for r, i in usar if i["limpa"] and r["split"] is not None and r["split"] > 0]
+    ref_split = float(np.median(limpos)) if limpos else None
+    vals, descs = [], []
+    for r, i in usar:
+        loss = 0.0
+        if i["slow"]:
+            if ref_split is not None and r["split"] is not None and r["split"] > 0:
+                loss = min(max(r["split"] - ref_split, 0.0), A["split_loss_cap"])  # perda medida pelo próprio split
+            else:
+                loss = A[i["slow"]]
+        desc = min(i["interf"] + loss, A["cap_total"])
+        vals.append(r["caltm"] - desc); descs.append(desc)
+    w = np.array(CFG["REC_W"][:len(vals)] + [CFG["REC_W"][-1]] * max(0, len(vals) - len(CFG["REC_W"])), dtype=float)
+    w = w / w.sum()
+    return float(np.dot(w, vals)), len(info) - len(usar) if len(usar) != len(info) else 0, float(np.mean(descs))
+
 def not_free(rem):
     return bool(RE_NOFREE.search(str(rem or "").lower()))
 
 def first_bend_traffic(rem):
-    s = str(rem or "").lower()
-    if "baulk" in s: return True
-    return bool(re.search(rf"{RE_TRAF.pattern}\s*[,/\-]?\s*1\b", s))
+    for it in ler_remarks(rem):
+        if it["key"] and REMARKS_INFO[it["key"]][2] in ("light", "medium", "heavy") and (it["num"] == "1" or it["key"] == "crdrnup"):
+            return True
+    return False
 
 HINTS = {
     "dist": (("dist", "metre", "meter"), ("btn", "beat", "by")),
@@ -438,9 +585,7 @@ def analisar_galgo(dog, ctx):
     else:
         d["ritmo"] = d["mtime"]
 
-    peso_atual = d["peso"] or 31.0
-    adj_times = [r["caltm"] - traffic_penalty(r["remarks"], peso_atual) for r in R if r["caltm"] is not None and r["caltm"] > 0]
-    d["tadj"] = float(np.mean(adj_times)) if adj_times else None
+    d["tadj"], d["tadj_excl"], d["tadj_desc"] = tempo_limpo(R)
 
     # Métrica = (BRT + Time Ajustado + Méd. Time) / 3
     if d.get("brt") and d["tadj"] is not None and d["mtime"] is not None:
@@ -457,19 +602,71 @@ def analisar_galgo(dog, ctx):
     n_traf = sum(count_traf(r["remarks"]) for r in R)
     d["perfil"] = "Limpo" if n_traf <= 1 else ("Irregular" if n_traf == 2 else "Trombador")
 
-    d["early_cnt"] = sum(1 for r in R if any(re.match(r"^(ep|ald|snld|ld)", t) for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
-    d["saw_cnt"] = sum(1 for r in R if any(t.startswith("saw") or t.startswith("vsaw") for t in re.split(r"[,\s]+", str(r["remarks"]).lower())))
+    d["early_cnt"] = sum(1 for r in R if any(it["key"] in _EARLY_KEYS for it in ler_remarks(r["remarks"])))
+    d["saw_cnt"] = sum(1 for r in R if any(it["key"] in _SAW_KEYS for it in ler_remarks(r["remarks"])))
     d["fbt_cnt"] = sum(1 for r in R if first_bend_traffic(r["remarks"]))
 
     d["remarks_translated"] = []
     for r in R:
-        for token in re.split(r"[,\s]+", str(r["remarks"]).lower()):
-            if token in DICIONARIO_REMARKS:
-                d["remarks_translated"].append(DICIONARIO_REMARKS[token])
+        d["remarks_translated"].extend(traducao_remarks(r["remarks"]))
 
     return d
 
+_CALIB_COLS = ["registrado_em", "pista", "data", "dist", "galgo", "trap", "grade", "caltm", "split", "bends", "fin", "remarks", "peso", "brt"]
+
+def registrar_calibracao(ds):
+    """Guarda cada corrida do histórico (sem duplicar) para calibrar as penalidades depois."""
+    path = CFG["CALIB_FILE"]
+    vistos = set()
+    if os.path.exists(path):
+        with open(path, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                vistos.add((row["galgo"], row["data"], row["pista"], row["dist"], row["caltm"]))
+    novas = []
+    for d in ds:
+        if d.get("name") in (None, "vacant"): continue
+        for r in d.get("runs", []):
+            if r.get("caltm") is None or r["caltm"] <= 0: continue
+            chave = (d["name"], r["date_str"], r["track"], str(r["dist"]), str(r["caltm"]))
+            if chave in vistos: continue
+            vistos.add(chave)
+            novas.append([datetime.now().strftime("%Y-%m-%d %H:%M"), r["track"], r["date_str"], r["dist"], d["name"], r["trap"], r["grade"],
+                          r["caltm"], r["split"], r["bends"], r["fin"], r["remarks"], r["weight"], d.get("brt_raw")])
+    if not novas: return 0
+    novo_arquivo = not os.path.exists(path)
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        if novo_arquivo: w.writerow(_CALIB_COLS)
+        w.writerows(novas)
+    return len(novas)
+
+def calibracao_bytes():
+    path = CFG["CALIB_FILE"]
+    if not os.path.exists(path): return None
+    with open(path, "rb") as f: return f.read()
+
+def analisar_calibracao(path=None, min_n=5):
+    """Perda média REAL (s) por remark: CalTm da corrida com o remark menos a média das corridas limpas do mesmo galgo/pista/distância."""
+    df = pd.read_csv(path or CFG["CALIB_FILE"])
+    df = df[(df["caltm"] > 0)].copy()
+    df["info"] = df["remarks"].fillna("").map(analisar_remarks)
+    df["limpa"] = df["info"].map(lambda i: i["limpa"])
+    base = df[df["limpa"]].groupby(["galgo", "pista", "dist"])["caltm"].mean().rename("base")
+    df = df.join(base, on=["galgo", "pista", "dist"]).dropna(subset=["base"])
+    df = df[~df["limpa"]]
+    df["delta"] = df["caltm"] - df["base"]
+    linhas = []
+    for _, r in df.iterrows():
+        for key in {it["key"] for it in ler_remarks(r["remarks"]) if it["key"] and REMARKS_INFO[it["key"]][2]}:
+            linhas.append((key, r["delta"]))
+    if not linhas: return pd.DataFrame(columns=["remark", "n", "perda_media_s"])
+    out = pd.DataFrame(linhas, columns=["remark", "delta"]).groupby("remark")["delta"].agg(["count", "mean"]).reset_index()
+    out.columns = ["remark", "n", "perda_media_s"]
+    return out[out["n"] >= min_n].sort_values("perda_media_s", ascending=False)
+
 def finalizar(ds, ctx):
+    try: registrar_calibracao(ds)
+    except Exception: pass
     ok = [d for d in ds if not d["nd"]]
     vac = [t for t in range(1, 7) if t not in {d["trap"] for d in ds if d["name"] != "vacant"}]
 
@@ -855,9 +1052,22 @@ def tabela_avb(lista, titulo):
     heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica", "Ritmo", "Recup.", "Conf.", "Probabilidade"]
     st.markdown(tbl(heads, rows, sticky=1, w1=190), unsafe_allow_html=True)
 
+_DL_N = 0
+
 def gerar_observacoes(rank, avbs, ctx):
     if not rank: return
     st.markdown("---")
+    _dados_cal = calibracao_bytes()
+    if _dados_cal:
+        global _DL_N
+        _DL_N += 1
+        with st.expander("🧪 Dados para calibração (CSV)"):
+            st.download_button("Baixar calibracao_corridas.csv", _dados_cal, file_name="calibracao_corridas.csv", mime="text/csv", key=f"dl_calib_{_DL_N}")
+    cont, aprox, desc = diagnostico_remarks(rank)
+    with st.expander(f"🔎 Leitura dos remarks ({cont['exato'] + cont['alias'] + cont['aprox']} lidos, {cont['desconhecido']} não reconhecidos)"):
+        if desc: st.markdown("**Não reconhecidos (não afetam o tempo):** " + ", ".join(f"`{k}` ×{v}" for k, v in sorted(desc.items())))
+        if aprox: st.markdown("**Interpretados por aproximação:** " + ", ".join(f"`{k}` → `{v}`" for k, v in sorted(aprox.items())))
+        if not desc and not aprox: st.markdown("Todos os remarks foram reconhecidos exatamente.")
     st.markdown("#### 🏁 Leitura Tática da Corrida")
 
     elegiveis = [d for d in rank if not d.get("bloqueado")]
