@@ -428,11 +428,10 @@ def analisar_galgo(dog, ctx):
     # M. Split = melhor split e M. Time = melhor CalTm entre as últimas 5 corridas oficiais
     d["split"] = min(valid_splits) if valid_splits else None
     d["time"] = min(valid_caltm) if valid_caltm else None
-    # Métrica = (BRT do card + melhor CalTm oficial) / 2. BRT fora de ~3s do melhor tempo = distância diferente, ignora.
+    # BRT só vale se estiver a até ~3s do tempo médio (senão é de outra distância)
     brt = dog.get("brt")
-    if brt and d["time"] and abs(brt - d["time"]) <= 3.0:
+    if brt and d["mtime"] and abs(brt - d["mtime"]) <= 3.0:
         d["brt"] = brt
-        d["metrica"] = (brt + d["time"]) / 2.0
 
     if has_split:
         d["ritmo"] = d["mtime"] - d["msplit"] if d["mtime"] and d["msplit"] else None
@@ -442,6 +441,10 @@ def analisar_galgo(dog, ctx):
     peso_atual = d["peso"] or 31.0
     adj_times = [r["caltm"] - traffic_penalty(r["remarks"], peso_atual) for r in R if r["caltm"] is not None and r["caltm"] > 0]
     d["tadj"] = float(np.mean(adj_times)) if adj_times else None
+
+    # Métrica = (BRT + Time Ajustado + Méd. Time) / 3
+    if d.get("brt") and d["tadj"] is not None and d["mtime"] is not None:
+        d["metrica"] = (d["brt"] + d["tadj"] + d["mtime"]) / 3.0
 
     cal = [r["caltm"] for r in R if r["caltm"] is not None and r["caltm"] > 0]
     d["sd"] = float(np.std(cal)) if len(cal) > 1 else 0.0
