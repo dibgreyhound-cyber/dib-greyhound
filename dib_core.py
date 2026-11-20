@@ -89,6 +89,17 @@ CFG = {
 
     "VEL_PTS": {"tadj": 100, "mtime": 80, "msplit": 100, "ritmo": 80},
     "CONSIST_PTS": 30, "PICO_PTS": 20, "RECUP_PTS": 10,
+    
+    # [NOVO] Ajuste de tempo por condição da pista
+    "GOING_ADJ": {
+        "FAST": -0.10, "F": -0.10,
+        "NORMAL": 0.0, "N": 0.0,
+        "SLOW": 0.20, "S": 0.20,
+        "HEAVY": 0.40, "H": 0.40,
+    },
+    # [NOVO] Penalidade por ganho de peso (s por kg acima da média)
+    "PESO_PENALTY_KG": 0.05,
+
     "ADJ": {"light": 0.05, "medium": 0.15, "heavy": 0.30, "saw": 0.08, "vsaw": 0.15,
             "first_bend_mult": 1.5, "cap_total": 0.60, "split_loss_cap": 0.35},
     "REC_W": [0.30, 0.25, 0.20, 0.15, 0.10],
@@ -99,7 +110,7 @@ CFG = {
             "start_bonus": 0.04, "postpick_sec": 0.02,
             "trap_sec": {1: -0.02, 2: -0.01, 3: 0.0, 4: 0.0, 5: 0.01, 6: 0.02}},
     "AVB_FILE": "avb_previsoes.csv",
-    "VERSAO": "avb-segundos-1",
+    "VERSAO": "avb-segundos-pro",
 }
 
 FIELD_MAP = {
@@ -300,7 +311,6 @@ def tempo_limpo(R):
     w = w / w.sum()
     t_adj = float(np.dot(w, vals))
     
-    # Trava: Tadj não pode ser menor que o melhor tempo real - 0.05
     t_adj = max(t_adj, min_cal - 0.05)
     
     return t_adj, len(info) - len(usar) if len(usar) != len(info) else 0, float(np.mean(descs))
@@ -366,7 +376,7 @@ def descobrir_chaves(dogs):
             break
 
 def extrair_metadados_json(data, info_card, dogs):
-    info = {"pista": "", "hora": "", "race": "", "classe": "", "post_pick": ""}
+    info = {"pista": "", "hora": "", "race": "", "classe": "", "post_pick": "", "going": "NORMAL"}
     fontes = [info_card] if isinstance(info_card, dict) else []
     for src in [data]:
         if isinstance(src, dict):
@@ -404,6 +414,12 @@ def extrair_metadados_json(data, info_card, dogs):
                 info["post_pick"] = m.group(1).strip().replace("/", "-").replace(".", "-"); break
             elif re.search(r"[1-6]", str(pp)):
                 info["post_pick"] = str(pp).strip().replace("/", "-").replace(".", "-"); break
+    
+    # [NOVO] Captura do Going (Condição da Pista)
+    for src in fontes:
+        gng = pick(src, ["going", "goingType", "gng"])
+        if gng: info["going"] = str(gng).strip().upper(); break
+
     return info
 
 def extrair_dados_racingpost(url):
@@ -523,11 +539,9 @@ def analisar_galgo(dog, ctx):
                 "conf": 0.0, "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False,
                 "alerta_trial": False, "n_trials": 0}
 
-    # 1. Filtrar primeiro as corridas oficiais (distância e tempo), mantendo Trials e descartando HP
     runs_all = sorted(dog["runs"], key=lambda r: r["date"] or datetime.min, reverse=True)
     R = [r for r in runs_all if oficial(r, ctx)]
     
-    # 2. Separar as top 5 APENAS depois do filtro
     runs = runs_all[:CFG["N_RUNS"]]
     R = R[:CFG["N_RUNS"]]
 
@@ -558,7 +572,6 @@ def analisar_galgo(dog, ctx):
 
     d["peso"] = dog.get("peso_atual") or R[0]["weight"] or 31.0
     
-    # 3. Filtrar corridas "limpas" para todas as métricas de tempo/split (ignora fell/ko)
     R_clean = [r for r in R if not analisar_remarks(r["remarks"])["excluir"]]
     if not R_clean: R_clean = R
 
@@ -583,7 +596,6 @@ def analisar_galgo(dog, ctx):
     if brt and d["mtime"] and abs(brt - d["mtime"]) <= 3.0:
         d["brt"] = brt
 
-    # Ritmo corrigido: CalTm - Split por corrida, só depois média
     ritmos = []
     for r in R_clean:
         if r["caltm"] and r["split"]:
@@ -601,7 +613,6 @@ def analisar_galgo(dog, ctx):
     d["sd"] = float(np.std(cal)) if len(cal) > 1 else 0.0
     d["pico"] = min(cal) if cal else None
 
-    # Recuperação corrigida: Retorna None se não houver dados
     recs = [(bends_digits(r["bends"])[0] - r["fin"]) / CFG["N_CORREDORES"] * 100.0 for r in R_clean if bends_digits(r["bends"]) and r["fin"]]
     if recs:
         d["rec"] = float(np.mean(recs))
@@ -610,7 +621,6 @@ def analisar_galgo(dog, ctx):
         d["rec"] = None
         d["rec_txt"] = "-"
 
-    # Perfil corrigido: Contar apenas corridas com interferência real
     n_traf = sum(1 for r in R_clean if analisar_remarks(r["remarks"])["interf"] > 0)
     d["perfil"] = "Limpo" if n_traf == 0 else ("Irregular" if n_traf == 1 else "Trombador")
 
@@ -621,6 +631,15 @@ def analisar_galgo(dog, ctx):
     d["remarks_translated"] = []
     for r in R_clean:
         d["remarks_translated"].extend(traducao_remarks(r["remarks"]))
+
+    # [NOVO] Penalidade por ganho de peso (Weight Adjustment)
+    pesos_hist = [r["weight"] for r in R_clean if r.get("weight") is not None]
+    if pesos_hist and d["peso"]:
+        peso_medio = np.mean(pesos_hist)
+        delta_peso = d["peso"] - peso_medio
+        d["peso_adj"] = delta_peso * CFG["PESO_PENALTY_KG"] 
+    else:
+        d["peso_adj"] = 0.0
 
     return d
 
@@ -717,23 +736,24 @@ def finalizar(ds, ctx):
         if any(abs(d["trap"] - v) == 1 for v in vac):
             f.append(("Trap Vazia", CFG["TRAP_VAZIA"]))
             
-        # Ajuste tático: Se for Trombador, mas tiver o melhor Early Pace (Top 2), ele não leva o castigo.
         if d["perfil"] == "Trombador" and d["trap"] in [1,2,3,4,5] and d["name"] not in top3_ms:
             if d.get("msplit_pos") and d["msplit_pos"] <= 2:
                 pass
             else:
                 f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"]))
 
-        # Ajuste tático: Conflito de Pace
-        if len(top3_ms) >= 3 and d["saw_cnt"] > 0 and (d.get("rec") or 0) > 0:
-            f.append(("Conflito Pace (Favorável)", 10.0))
+        # [NOVO] Matriz de Ritmo Aprimorada (Pace Map)
+        if len(top3_ms) >= 3:
+            if d["name"] in top3_ritmo and d.get("msplit_pos") is not None and d["msplit_pos"] > 3:
+                f.append(("Pace Map (Favorável)", 15.0))
+            elif d["saw_cnt"] > 0 and (d.get("rec") or 0) > 0:
+                f.append(("Conflito Pace (Favorável)", 10.0))
 
         d["fatores"] = f
         pts_rec = pts_prop("rec", CFG["RECUP_PTS"], d, False) if d.get("rec") is not None else 0.0
         
         d["overall"] = vel + pts_cat + pts_perfil + pts_prop("sd", CFG["CONSIST_PTS"], d, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_rec + sum(v for _, v in f)
 
-    # NORMALIZAÇÃO DO OVERALL (Escala de 40 a 100)
     if ok:
         max_ov = max(d["overall"] for d in ok)
         min_ov = min(d["overall"] for d in ok)
@@ -789,6 +809,12 @@ def projetar_tempo(d, ctx):
     if brt: partes.append((A["w_brt"], brt))
     if not partes: return None, None
     t = sum(w * x for w, x in partes) / sum(w for w, _ in partes)
+    
+    # [NOVO] Ajuste pelo Going (Pista) e Peso
+    going_hoje = str(ctx.get("going", "NORMAL")).upper().strip()
+    t += CFG["GOING_ADJ"].get(going_hoje, 0.0)
+    t += d.get("peso_adj", 0.0)
+
     t += A["trap_sec"].get(d["trap"], 0.0)
     if d["name"] in ctx.get("top3_ms", set()): t -= A["start_bonus"]
     pp = str(ctx.get("post_pick") or "")
