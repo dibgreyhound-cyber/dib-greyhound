@@ -293,7 +293,7 @@ def extrair_dados_racingpost(url):
             runs = [norm_run(f) for f in dog.get("forms", [])]
             out.append({
                 "name": dog.get("dogName", "Desconhecido"),
-                "trap": trap or 0, "peso_atual": to_float(dog.get("weight")), "runs": runs, "brt": extrair_brt(dog),
+                "trap": trap or 0, "peso_atual": to_float(dog.get("weight")), "runs": runs, "brt": extrair_brt(dog), "brt_txt": extrair_brt_txt(dog),
             })
         existing_traps = {d["trap"] for d in out}
         for t in range(1, 7):
@@ -324,6 +324,48 @@ def extrair_brt(dog):
             if n: return n
     return None
 
+_MESES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+_RE_BRT_FULL = re.compile(r"(\d{2}\.\d{2})\s*([A-Za-z]{1,2}\d{0,2})?\s*\(?(\d{1,2}[A-Za-z]{3}\d{2})\)?")
+
+def _fmt_data_brt(v):
+    v = str(v or "").strip()
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", v)
+    if m: return f"{int(m.group(3))}{_MESES[int(m.group(2)) - 1]}{m.group(1)[2:]}"
+    m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", v)
+    if m: return f"{int(m.group(1))}{_MESES[int(m.group(2)) - 1]}{m.group(3)[-2:]}"
+    m = re.search(r"\d{1,2}[A-Za-z]{3}\d{2}", v)
+    return m.group(0) if m else ""
+
+def extrair_brt_txt(dog):
+    """Texto do BRT como no card: 'BRT: 27.39 A7 (1Aug26)'. Vazio se não achar."""
+    def varre(obj, depth=0):
+        if isinstance(obj, dict):
+            for v in obj.values():
+                r = varre(v, depth + 1)
+                if r: return r
+        elif isinstance(obj, (list, tuple)) and depth < 2:
+            for v in obj[:6]:
+                r = varre(v, depth + 1)
+                if r: return r
+        elif isinstance(obj, str):
+            m = _RE_BRT_FULL.search(obj)
+            if m: return m
+        return None
+    dog_sem_forms = {k: v for k, v in dog.items() if k != "forms"}
+    m = varre(dog_sem_forms)
+    if m:
+        t, g, dt = m.group(1), (m.group(2) or "").upper(), m.group(3)
+        return f"BRT: {t}" + (f" {g}" if g else "") + f" ({dt})"
+    brt = extrair_brt(dog)
+    if not brt: return ""
+    dt = ""
+    for k, v in dog.items():
+        kl = str(k).lower()
+        if ("brt" in kl or "best" in kl) and ("date" in kl or kl.endswith("dt")):
+            dt = _fmt_data_brt(v)
+            if dt: break
+    return f"BRT: {brt:.2f}" + (f" ({dt})" if dt else "")
+
 def oficial(r, ctx):
     g = str(r["grade"] or "").strip().upper()
     if g.startswith("HP"):
@@ -347,6 +389,8 @@ def analisar_galgo(dog, ctx):
          "conf": min(100.0, len(R) * 20.0), "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False,
          "alerta_trial": n_trials >= 3, "n_trials": n_trials}
 
+    d["brt_raw"] = dog.get("brt")  # BRT como aparece no card (mostrado sob o nome)
+    d["brt_txt"] = dog.get("brt_txt")
     ultima_any = runs[0] if runs else None
     d["dias"] = (ctx["today"] - ultima_any["date"]).days if ultima_any and ultima_any["date"] else 0
 
@@ -690,6 +734,10 @@ def nome_marcado(d):
     if d.get("bloqueado", False): n += " 🚫"
     return n
 
+def brt_html(d):
+    txt = d.get("brt_txt") or (f"BRT: {d['brt_raw']:.2f}" if d.get("brt_raw") else "")
+    return f"<br><small style='color:#888;font-weight:normal'>{html.escape(txt)}</small>" if txt else ""
+
 def trap_label(d): return f"{TRAP_EMOJI.get(d['trap'], '')} {d['trap']}"
 
 def tabela_projecao(ds):
@@ -705,7 +753,7 @@ def tabela_projecao(ds):
     rows = []
     for i, d in enumerate(ds):
         if d["nd"]:
-            rows.append([trap_label(d), nome_marcado(d)] + ["-"] * 16); continue
+            rows.append([trap_label(d), nome_marcado(d) + brt_html(d)] + ["-"] * 16); continue
         fat = "<br>".join(f"{k} ({v:+.1f})" for k, v in d["fatores"]) or "-"
         if d.get("remarks_translated"):
             rem_txt = ", ".join(set(d["remarks_translated"]))
@@ -718,7 +766,7 @@ def tabela_projecao(ds):
         msplit_display = get_rank_html(d["msplit"], rk["msplit"][i], max_rk["msplit"]) if d.get("msplit") else (f"<span style='color:#ffa500'>Pos: {d.get('msplit_pos', 0):.1f}</span>" if d.get("msplit_pos") else "-")
 
         rows.append([
-            trap_label(d), nome_marcado(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}",
+            trap_label(d), nome_marcado(d) + brt_html(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}",
             f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", fat, f"{perfil_e} {d['perfil']}",
             "-".join((r["grade"] or "?") for r in d["runs"]), f"{d['peso']:.1f}", dias_txt,
             split_display, get_rank_html(d["time"], rk["time"][i], max_rk["time"]),
@@ -789,14 +837,14 @@ def tabela_avb(lista, titulo):
         badge = badges.get(modo, "")
 
         rows.append([
-            f"{badge}{trap_label(V)} - {nome_marcado(V)}",
+            f"{badge}{trap_label(V)} - {nome_marcado(V)}{brt_html(V)}",
             ov_v, cat_v, V['perfil'], "-".join((r["grade"] or "?") for r in V["runs"]),
             f"{V['peso']:.1f}", f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, me_v, r_v, rec_v, f"{V['conf']:.0f}%",
             prob_cell
         ])
 
         rows.append([
-            f"{trap_label(D)} - {nome_marcado(D)}",
+            f"{trap_label(D)} - {nome_marcado(D)}{brt_html(D)}",
             ov_d, cat_d, D['perfil'], "-".join((r["grade"] or "?") for r in D["runs"]),
             f"{D['peso']:.1f}", f"{D['dias']}", sp_d, t_d, ms_d, mt_d, ta_d, me_d, r_d, rec_d, f"{D['conf']:.0f}%"
         ])
