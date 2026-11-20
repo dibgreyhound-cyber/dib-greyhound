@@ -86,6 +86,7 @@ _ORD = {"first": "1", "second": "2", "third": "3", "fourth": "4"}
 # =====================================================================
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
+    "TRIAL_OFICIAL": True,  # True = corridas trial (T, T3...) contam como oficiais nas métricas; HP continua fora
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
     # Perfil = nº de corridas (das últimas válidas) com interferência: <= limpo_max Limpo, <= irregular_max Irregular, acima Trombador
@@ -538,9 +539,11 @@ def extrair_brt_txt(dog):
 # ANÁLISE DE CADA GALGO
 # =====================================================================
 def oficial(r, ctx):
-    """Corrida válida: mesma distância, com CalTm, fora HP e trials."""
+    """Corrida válida: mesma distância, com CalTm e fora HP. Trials contam se CFG["TRIAL_OFICIAL"] = True."""
     g = str(r["grade"] or "").strip().upper()
-    if g.startswith("HP") or is_trial_grade(g):
+    if g.startswith("HP"):
+        return False
+    if is_trial_grade(g) and not CFG["TRIAL_OFICIAL"]:
         return False
     return (r["dist"] is not None
             and abs(r["dist"] - ctx["dist"]) < 1
