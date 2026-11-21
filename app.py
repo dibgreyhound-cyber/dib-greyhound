@@ -893,6 +893,17 @@ def titulo_corrida(c, p=None, prefixo=""):
 
 
 # ---------------------------------------------------------------- exportar texto
+def _ov(x):
+    """Overall formatado como no core (sem sinal quando a referencia e o galgo mais lento)."""
+    f = getattr(dib, "_fmt_ov", None)
+    return f(x) if callable(f) else f"{x:+.1f}"
+
+
+def _ref_txt():
+    f = getattr(dib, "_ref_nome", None)
+    return f() if callable(f) else "o galgo mediano"
+
+
 def gerar_texto_analise(c, p):
     txt = []
     txt.append(titulo_corrida(c, p).replace("### ", ""))
@@ -908,8 +919,7 @@ def gerar_texto_analise(c, p):
             continue
 
         nome = f"{d['name']} {'🚫' if d.get('bloqueado') else ''} {'🎯' if d.get('alvo') else ''}".strip()
-        D_ = p["dist"]
-        grades = "-".join(((r["grade"] or "?") + ("*" if abs(r["dist"] - D_) >= 1 else "")) for r in d["val"])
+        grades = dib.grades_txt(d)
 
         f_split = f"{d['split']:.2f}" if d.get("split") else "-"
         f_time = f"{d['time']:.2f}" if d.get("time") else "-"
@@ -920,10 +930,10 @@ def gerar_texto_analise(c, p):
         f_peso = f"{d['peso']:.1f}" if d.get("peso") else "-"
         f_pv = f"{d['p_vit']:.1f}%" if d.get("p_vit") is not None else "-"
 
-        txt.append(f"| {d['trap']} | {nome} | {d['overall']:+.1f} | {f_pv} | {d['cat']:.1f} | {d['perfil']} | {grades} | {f_peso} | {d['dias']} | {f_split} | {f_time} | {f_msplit} | {f_mtime} | {f_tadj} | {f_rec} | {d['conf']:.0f}% |")
+        txt.append(f"| {d['trap']} | {nome} | {_ov(d['overall'])} | {f_pv} | {d['cat']:.1f} | {d['perfil']} | {grades} | {f_peso} | {d['dias']} | {f_split} | {f_time} | {f_msplit} | {f_mtime} | {f_tadj} | {f_rec} | {d['conf']:.0f}% |")
 
     txt.append("")
-    txt.append("(Overall em corpos sobre o galgo mediano; * = corrida em distância diferente da prova, convertida por velocidade.)")
+    txt.append(f"(Overall em corpos: vantagem sobre {_ref_txt()}. * = corrida de outra distância convertida com fator medido; † = convertida só por proporção, sem fator medido.)")
     txt.append("")
 
     classif = " > ".join(f"{d['pos']}º [T{d['trap']}]" for d in p["rank"])
@@ -960,7 +970,7 @@ def gerar_texto_analise(c, p):
         else:
             f_name = fav['name']
             txt_rec = f" Ele tem recuperação excelente ({rec_fav:+.1f}%)." if (rec_fav is not None and rec_fav > 10) else ""
-            txt.append(f"- 🏆 Favorito Claro: O {f_name} lidera o Overall ({fav['overall']:+.1f} corpos).{txt_rec}")
+            txt.append(f"- 🏆 Favorito Claro: O {f_name} lidera o Overall ({_ov(fav['overall'])}).{txt_rec}")
 
     if bloqueados:
         b = bloqueados[0]
@@ -971,7 +981,7 @@ def gerar_texto_analise(c, p):
                 if (V["trap"] == elegiveis[0]["trap"] and D["trap"] == b["trap"]) or (D["trap"] == elegiveis[0]["trap"] and V["trap"] == b["trap"]):
                     avb_info = f" AVB apertado contra o elegível ({prob:.1f}%)."
                     break
-        txt.append(f"- 🚫 Falso Favorito Bloqueado: O {b_name} tem Overall alto ({b['overall']:+.1f}), mas foi pego pela Trava (Conf. {b['conf']:.0f}%).{avb_info}")
+        txt.append(f"- 🚫 Falso Favorito Bloqueado: O {b_name} tem Overall alto ({_ov(b['overall'])}), mas foi pego pela Trava (Conf. {b['conf']:.0f}%).{avb_info}")
 
     if alvos:
         nomes_alvo = ", ".join([d['name'] for d in alvos])
