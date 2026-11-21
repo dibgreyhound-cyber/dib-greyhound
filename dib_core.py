@@ -53,7 +53,7 @@ _ORD = {"first": "1", "second": "2", "third": "3", "fourth": "4"}
 
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
-    "TRIAL_OFICIAL": True, 
+    "TRIAL_OFICIAL": True,
     "TRAFFIC_ADJ": {"baulk": 0.20, "crd": 0.10, "bmp": 0.10, "fcd": 0.10},
     "PERFIL_PTS": {"Limpo": 5.0, "Irregular": 2.0, "Trombador": 0.0},
     "PERFIL_LIM": {"limpo_max": 0, "irregular_max": 1},
@@ -79,7 +79,7 @@ CFG = {
             "prob_min": 62.0, "conf_min_v": 60.0, "conf_min_d": 40.0, "apoio_min": 1,
             "calib_min_n": 150, "calib_lambda": 5.0},
     "AVB_FILE": "avb_previsoes.csv",
-    "VERSAO": "avb-unico-1",
+    "VERSAO": "avb-unico-2-semfatores",
 }
 
 FIELD_MAP = {
@@ -236,10 +236,10 @@ def tempo_limpo(R, target_dist):
     info = [(r, analisar_remarks(r["remarks"])) for r in R if r["caltm"] is not None and r["caltm"] > 0 and r["dist"] is not None]
     usar = [(r, i) for r, i in info if not i["excluir"]] or info
     if not usar: return None, 0, 0.0
-    
+
     limpos = [r["split"] for r, i in usar if i["limpa"] and r["split"] is not None and r["split"] > 2.0 and abs(r["dist"] - target_dist) < 1]
     ref_split = float(np.median(limpos)) if limpos else None
-    
+
     speeds, descs = [], []
     for r, i in usar:
         loss = 0.0
@@ -249,13 +249,13 @@ def tempo_limpo(R, target_dist):
             else:
                 loss = A[i["slow"]]
         desc = min(i["interf"] + loss, A["cap_total"])
-        
+
         adj_time = r["caltm"] - desc
         if adj_time > 0:
             speed = r["dist"] / adj_time
             speeds.append(speed)
             descs.append(desc)
-            
+
     if not speeds: return None, len(info) - len(usar), 0.0
 
     w = np.array(CFG["REC_W"][:len(speeds)] + [CFG["REC_W"][-1]] * max(0, len(speeds) - len(CFG["REC_W"])), dtype=float)
@@ -445,10 +445,8 @@ def oficial(r, ctx):
     g = str(r["grade"] or "").strip().upper()
     if g.startswith("HP"): return False
     if is_trial_grade(g) and not CFG["TRIAL_OFICIAL"]: return False
-    
-    # [AJUSTE] Aceita uma margem de tolerância de 100 metros
-    return (r["dist"] is not None 
-            and abs(r["dist"] - ctx["dist"]) <= 100 
+    return (r["dist"] is not None
+            and abs(r["dist"] - ctx["dist"]) <= 100
             and r["caltm"] is not None and r["caltm"] > 0)
 
 def analisar_galgo(dog, ctx):
@@ -484,7 +482,7 @@ def analisar_galgo(dog, ctx):
 
     exact_dist_runs = [r for r in R if abs(r["dist"] - ctx["dist"]) < 1]
     valid_splits = [r["split"] for r in exact_dist_runs if r["split"] is not None and r["split"] > 2.0]
-    
+
     if valid_splits:
         d["msplit"] = float(np.mean(valid_splits))
         d["msplit_pos"] = None
@@ -511,9 +509,9 @@ def analisar_galgo(dog, ctx):
 
     valores_metrica = [v for v in [d.get("brt"), d.get("tadj"), d.get("mtime")] if v is not None]
     d["metrica"] = sum(valores_metrica) / len(valores_metrica) if valores_metrica else None
-    
+
     valid_caltm = [r["caltm"] for r in R if r["caltm"] is not None and r["caltm"] > 0]
-    d["sd"] = float(np.std(valid_caltm)) if len(valid_caltm) > 1 else None 
+    d["sd"] = float(np.std(valid_caltm)) if len(valid_caltm) > 1 else None
     d["pico"] = min(valid_caltm) if valid_caltm else None
 
     recs = []
@@ -614,21 +612,23 @@ def finalizar(ds, ctx):
 
     for d in ok:
         pts_cat = d["cat"] * 1.5
-        pts_perfil = CFG["PERFIL_PTS"][d["perfil"]]
+        # [REMOVIDO] pts_perfil — perfil continua calculado (coluna + c_perfil), mas não pontua no Overall
 
         vel = (pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) +
                pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) +
-               (pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d) if d["msplit"] else (CFG["VEL_PTS"]["msplit"] * (1 - (d["msplit_pos"] / 6)) if d.get("msplit_pos") else 0)))
+               (pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d) if d["msplit"]
+                else (CFG["VEL_PTS"]["msplit"] * (1 - (d["msplit_pos"] / 6)) if d.get("msplit_pos") else 0)))
 
-        f = []
-        if d["early_cnt"] > 0 and d["perfil"] == "Limpo": f.append(("Ritmo Acelerado", d["early_cnt"] * 5.0))
-        if d["saw_cnt"] > 0: f.append(("Largada Lenta", d["saw_cnt"] * -6.0))
-        if d["fbt_cnt"] > 0: f.append(("Tráfego 1ª Curva", d["fbt_cnt"] * -4.0))
-        if any(abs(d["trap"] - v) == 1 for v in vac): f.append(("Trap Vazia", CFG["TRAP_VAZIA"]))
-        if d["perfil"] == "Trombador" and d["trap"] in [1, 2, 3, 4, 5] and d["name"] not in top3_ms: f.append(("Tráfego Severo", CFG["TRAFEGO_SEVERO"]))
+        # [REMOVIDO] lista f (Trap Vazia, Tráfego Severo, Ritmo Acelerado, Largada Lenta, Tráfego 1ª Curva)
+        # Os remarks continuam alimentando tadj, perfil, alvo, bloqueado, conf etc.
 
-        d["fatores"] = f
-        d["overall"] = (vel + pts_cat + pts_perfil + pts_prop("sd", CFG["CONSIST_PTS"], d, True, True) + pts_prop("pico", CFG["PICO_PTS"], d, True) + pts_prop("rec", CFG["RECUP_PTS"], d, False, True) + sum(v for _, v in f))
+        d["fatores"] = []  # compatibilidade: chave existe, mas vazia (não é mais lida em lugar nenhum)
+
+        d["overall"] = (vel
+                        + pts_cat
+                        + pts_prop("sd",   CFG["CONSIST_PTS"], d, True,  True)
+                        + pts_prop("pico", CFG["PICO_PTS"],    d, True)
+                        + pts_prop("rec",  CFG["RECUP_PTS"],   d, False, True))
 
     if ok:
         max_ov = max(d["overall"] for d in ok)
@@ -674,7 +674,7 @@ def projetar_tempo(d, ctx):
     t += d.get("peso_adj", 0.0)
     t += A["trap_sec"].get(d["trap"], 0.0)
     if d["name"] in ctx.get("top3_ms", set()): t -= A["start_bonus"]
-    
+
     n = max(d.get("n_val") or len(d.get("val") or []), 1)
     sd = d.get("sd") or 0.0
     var = (n * sd ** 2 + A["sigma_k"] * A["sigma0"] ** 2) / (n + A["sigma_k"])
@@ -746,26 +746,26 @@ def _vantagem_largada(V, D, ctx):
     top3 = ctx.get("top3_ms", set())
     if V.get("msplit") is not None and D.get("msplit") is not None: melhor = V["msplit"] < D["msplit"]
     elif V.get("msplit_pos") is not None and D.get("msplit_pos") is not None: melhor = V["msplit_pos"] < D["msplit_pos"]
-    else: melhor = False 
+    else: melhor = False
     return bool(melhor or (V["name"] in top3 and D["name"] not in top3))
 
 def _avaliar_confronto(V, D, prob, ctx):
     A = CFG["AVB"]
     c_tadj = (V.get("tadj") is not None and D.get("tadj") is not None and V["tadj"] < D["tadj"])
     c_mtime = (V.get("mtime") is not None and D.get("mtime") is not None and V["mtime"] < D["mtime"])
-    
+
     c_cat = (V.get("cat", 0) >= D.get("cat", 0))
     rv, rd = V.get("rec"), D.get("rec")
     c_rec = (rv is None or rv >= -10.0) and (rv is None or rd is None or rv >= rd)
     c_larg = _vantagem_largada(V, D, ctx)
     c_perfil = V.get("perfil") != "Trombador"
 
-    apoio = sum([c_cat, c_larg]) 
+    apoio = sum([c_cat, c_larg])
     obrig = c_tadj and c_mtime and c_rec and c_perfil
     conf_ok = V.get("conf", 0) >= A["conf_min_v"] and D.get("conf", 0) >= A["conf_min_d"]
-    
-    aprovado = bool(prob >= A["prob_min"] and conf_ok and obrig and apoio >= 1) 
-    
+
+    aprovado = bool(prob >= A["prob_min"] and conf_ok and obrig and apoio >= 1)
+
     score = sum([c_tadj, c_mtime, c_rec, c_perfil]) + apoio
     flags = {"c_tadj": c_tadj, "c_mtime": c_mtime, "c_cat": c_cat, "c_rec": c_rec, "c_larg": c_larg, "c_perfil": c_perfil}
     return aprovado, score, flags
@@ -1003,7 +1003,7 @@ def peso_txt(d): return f"{d['peso']:.1f}" if d.get("peso") else "-"
 def grades_txt(d): return "-".join((r["grade"] or "?") for r in d.get("val", []))
 
 def tabela_projecao(ds):
-    cols = ["split", "time", "tadj", "metrica", "msplit", "mtime", "rec"] 
+    cols = ["split", "time", "tadj", "metrica", "msplit", "mtime", "rec"]
     rk = {c: [None] * len(ds) for c in cols}
     max_rk = {}
     for c in cols:
@@ -1014,23 +1014,44 @@ def tabela_projecao(ds):
 
     rows = []
     for i, d in enumerate(ds):
-        if d["nd"]: rows.append([trap_label(d), nome_marcado(d) + brt_html(d)] + ["-"] * 15); continue
-        fat = "<br>".join(f"{k} ({v:+.1f})" for k, v in d["fatores"]) or "-"
-        if d.get("remarks_translated"):
-            rem_txt = ", ".join(set(d["remarks_translated"])); fat += f"<br><small style='color:#aaa'>{rem_txt}</small>"
+        if d["nd"]:
+            rows.append([trap_label(d), nome_marcado(d) + brt_html(d)] + ["-"] * 15)
+            continue
+
+        # [NOVO] Coluna "Remarks": lista traduzida, truncada em 4 itens com tooltip no hover
+        rem_list = sorted(set(d.get("remarks_translated") or []))
+        if not rem_list:
+            rem_cell = "-"
+        elif len(rem_list) > 4:
+            rem_short = ", ".join(rem_list[:4]) + f" (+{len(rem_list) - 4})"
+            rem_cell = (f"<small style='color:#aaa' title='{html.escape(', '.join(rem_list))}'>"
+                        f"{html.escape(rem_short)}</small>")
+        else:
+            rem_full = ", ".join(rem_list)
+            rem_cell = f"<small style='color:#aaa'>{html.escape(rem_full)}</small>"
+
         perfil_e = {"Limpo": "✅", "Irregular": "⚠️", "Trombador": "🔴"}[d["perfil"]]
         dias_txt = f"{d['dias']} ⚠️" if d['dias'] > 21 else str(d['dias'])
         split_display = get_rank_html(d["split"], rk["split"][i], max_rk["split"])
-        msplit_display = get_rank_html(d["msplit"], rk["msplit"][i], max_rk["msplit"]) if d.get("msplit") else (f"<span style='color:#ffa500'>Pos: {d.get('msplit_pos', 0):.1f}</span>" if d.get("msplit_pos") else "-")
-        rec_cell = get_rank_html(d["rec"], rk["rec"][i], max_rk["rec"]) + f"<br><small>{d['rec_txt'].split()[1]}</small>" if d.get("rec") is not None else "-"
+        msplit_display = (get_rank_html(d["msplit"], rk["msplit"][i], max_rk["msplit"]) if d.get("msplit")
+                          else (f"<span style='color:#ffa500'>Pos: {d.get('msplit_pos', 0):.1f}</span>"
+                                if d.get("msplit_pos") else "-"))
+        rec_cell = (get_rank_html(d["rec"], rk["rec"][i], max_rk["rec"]) + f"<br><small>{d['rec_txt'].split()[1]}</small>"
+                    if d.get("rec") is not None else "-")
 
         rows.append([
             trap_label(d), nome_marcado(d) + brt_html(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}",
-            f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", fat, f"{perfil_e} {d['perfil']}", grades_txt(d), peso_txt(d), dias_txt,
-            split_display, get_rank_html(d["time"], rk["time"][i], max_rk["time"]), msplit_display, get_rank_html(d["mtime"], rk["mtime"][i], max_rk["mtime"]),
-            get_rank_html(d["tadj"], rk["tadj"][i], max_rk["tadj"]), get_rank_html(d.get("metrica"), rk["metrica"][i], max_rk["metrica"]), rec_cell, f"{d['conf']:.0f}%"
+            f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", rem_cell, f"{perfil_e} {d['perfil']}", grades_txt(d),
+            peso_txt(d), dias_txt,
+            split_display, get_rank_html(d["time"], rk["time"][i], max_rk["time"]), msplit_display,
+            get_rank_html(d["mtime"], rk["mtime"][i], max_rk["mtime"]),
+            get_rank_html(d["tadj"], rk["tadj"][i], max_rk["tadj"]),
+            get_rank_html(d.get("metrica"), rk["metrica"][i], max_rk["metrica"]),
+            rec_cell, f"{d['conf']:.0f}%"
         ])
-    return tbl(["Trap", "Galgo", "Overall", "Cat", "Fatores", "Perfil", "Grades", "Peso", "Dias", "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica", "Recup. Média", "Conf."], rows, sticky=2, w1=64, w2=125)
+    return tbl(["Trap", "Galgo", "Overall", "Cat", "Remarks", "Perfil", "Grades", "Peso", "Dias",
+                "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica",
+                "Recup. Média", "Conf."], rows, sticky=2, w1=64, w2=125)
 
 def tabela_avb(lista, titulo):
     st.markdown(f"#### {titulo}")
