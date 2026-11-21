@@ -610,30 +610,32 @@ def finalizar(ds, ctx):
         if hi == lo: return float(maxp)
         return maxp * (hi - d[key]) / (hi - lo) if invert else maxp * (d[key] - lo) / (hi - lo)
 
+    # Pesos do novo modelo realista (soma = 100)
+    PESO_VEL = 55.0      # Tadj, mtime, msplit
+    PESO_CONF = 25.0     # Consistência (sd) e Pico
+    PESO_REC = 10.0      # Recuperação
+    PESO_CAT = 10.0      # Categoria
+
     for d in ok:
-        pts_cat = d["cat"] * 1.5
-        # [REMOVIDO] pts_perfil — perfil continua calculado (coluna + c_perfil), mas não pontua no Overall
+        # Velocidade (0 a 100 base)
+        vel_norm = (pts_prop("tadj", 40.0, d) +
+                    pts_prop("mtime", 30.0, d) +
+                    (pts_prop("msplit", 30.0, d) if d["msplit"]
+                     else (30.0 * (1 - (d["msplit_pos"] / 6)) if d.get("msplit_pos") else 0)))
+        
+        # Consistência e Pico
+        conf_norm = pts_prop("sd", 15.0, d, True, True) + pts_prop("pico", 10.0, d, True)
+        
+        # Recuperação e Categoria
+        rec_norm = pts_prop("rec", 10.0, d, False, True)
+        cat_norm = pts_prop("cat", 10.0, d, False) # Maior cat = mais pontos
 
-        vel = (pts_prop("tadj", CFG["VEL_PTS"]["tadj"], d) +
-               pts_prop("mtime", CFG["VEL_PTS"]["mtime"], d) +
-               (pts_prop("msplit", CFG["VEL_PTS"]["msplit"], d) if d["msplit"]
-                else (CFG["VEL_PTS"]["msplit"] * (1 - (d["msplit_pos"] / 6)) if d.get("msplit_pos") else 0)))
-
-        # [REMOVIDO] lista f (Trap Vazia, Tráfego Severo, Ritmo Acelerado, Largada Lenta, Tráfego 1ª Curva)
-        # Os remarks continuam alimentando tadj, perfil, alvo, bloqueado, conf etc.
-
-        d["fatores"] = []  # compatibilidade: chave existe, mas vazia (não é mais lida em lugar nenhum)
-
-        d["overall"] = (vel
-                        + pts_cat
-                        + pts_prop("sd",   CFG["CONSIST_PTS"], d, True,  True)
-                        + pts_prop("pico", CFG["PICO_PTS"],    d, True)
-                        + pts_prop("rec",  CFG["RECUP_PTS"],   d, False, True))
-
-    if ok:
-        max_ov = max(d["overall"] for d in ok)
-        min_ov = min(d["overall"] for d in ok)
-        for d in ok: d["overall"] = 40.0 + (60.0 * (d["overall"] - min_ov) / (max_ov - min_ov)) if max_ov > min_ov else 70.0
+        # Overall final (0 a 100)
+        d["fatores"] = []
+        d["overall"] = vel_norm + conf_norm + rec_norm + cat_norm
+        
+    # Sem teto e sem piso, o Overall fica com o valor bruto.
+    # O ranking é feito pelo maior valor.
 
     ok.sort(key=lambda x: -x["overall"])
     for i, d in enumerate(ok, 1):
