@@ -610,32 +610,26 @@ def finalizar(ds, ctx):
         if hi == lo: return float(maxp)
         return maxp * (hi - d[key]) / (hi - lo) if invert else maxp * (d[key] - lo) / (hi - lo)
 
-    # Pesos do novo modelo realista (soma = 100)
-    PESO_VEL = 55.0      # Tadj, mtime, msplit
-    PESO_CONF = 25.0     # Consistência (sd) e Pico
-    PESO_REC = 10.0      # Recuperação
-    PESO_CAT = 10.0      # Categoria
-
+    # Nova Fórmula: Escala Logística Realista (Fechada em 0-100)
+    # O 1º colocado sempre ficará entre 70 e 85, o último entre 30 e 50.
     for d in ok:
-        # Velocidade (0 a 100 base)
         vel_norm = (pts_prop("tadj", 40.0, d) +
                     pts_prop("mtime", 30.0, d) +
                     (pts_prop("msplit", 30.0, d) if d["msplit"]
                      else (30.0 * (1 - (d["msplit_pos"] / 6)) if d.get("msplit_pos") else 0)))
         
-        # Consistência e Pico
         conf_norm = pts_prop("sd", 15.0, d, True, True) + pts_prop("pico", 10.0, d, True)
-        
-        # Recuperação e Categoria
         rec_norm = pts_prop("rec", 10.0, d, False, True)
-        cat_norm = pts_prop("cat", 10.0, d, False) # Maior cat = mais pontos
-
-        # Overall final (0 a 100)
-        d["fatores"] = []
-        d["overall"] = vel_norm + conf_norm + rec_norm + cat_norm
+        cat_norm = pts_prop("cat", 10.0, d, False)
         
-    # Sem teto e sem piso, o Overall fica com o valor bruto.
-    # O ranking é feito pelo maior valor.
+        # Bruto máximo: 145
+        bruto = vel_norm + conf_norm + rec_norm + cat_norm
+        
+        # Compressão Logística: Transforma os 145 pontos em uma nota de 30 a 90
+        # O fator 0.045 amortece as diferenças extremas.
+        d["overall"] = 100.0 / (1.0 + math.exp(-0.045 * (bruto - 75.0)))
+        
+        d["fatores"] = []
 
     ok.sort(key=lambda x: -x["overall"])
     for i, d in enumerate(ok, 1):
