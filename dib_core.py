@@ -16,7 +16,13 @@ Base: o v4 enviado pelo usuario. Mudancas desta versao (3 pontos):
      Categoria, Recuperacao e Regularidade continuam aparecendo e entram como criterios do AvB / na incerteza.
      Post Pick (palpite de tipster) nao entra mais no tempo (postpick_sec = 0.0), para o modelo ser independente.
 
-  VERSAO = "avb-unico-3" (a validacao separa as amostras por versao).
+  4) (v4.2) ENCOLHIMENTO (shrinkage) do tempo projetado: galgo com historico incerto (poucas corridas, corridas de outra
+     distancia sem fator medido) tem o tempo puxado para o meio do campo. Antes, a incerteza maior INFLAVA a chance de
+     vencer de galgos pouco conhecidos (ex.: 38 % e 30 % para dois galgos marcados com a reguinha).
+  5) (v4.2) OVERALL sem valores negativos: referencia = galgo mais lento do campo (CFG["OVERALL_REF"] = "ultimo").
+     Opcoes: "mediano" (positivo e negativo) ou "lider" (0 = lider, demais negativos).
+
+  VERSAO = "avb-unico-4" (a validacao separa as amostras por versao).
 """
 import re
 import html
@@ -125,8 +131,14 @@ CFG = {
         "recalc_s": 600,          # recalcula no maximo a cada N segundos
     },
 
-    # ---- Overall = tempo projetado em CORPOS sobre o galgo mediano (sem teto e sem piso) ----
+    # ---- Overall = tempo projetado em CORPOS (sem teto artificial) ----
     "CORPO_S": 0.08,          # segundos por corpo (medido nos cards: ~0,08 a 0,09 s). CALIBRAR com overall_previsoes.csv
+    # referencia do Overall: "ultimo" = vantagem sobre o galgo MAIS LENTO do campo (todos >= 0, quanto maior melhor);
+    #                        "mediano" = sobre o galgo mediano (positivo e negativo); "lider" = 0 para o lider, demais negativos
+    "OVERALL_REF": "ultimo",
+
+    # ---- Encolhimento do tempo projetado para o meio do campo (galgo de historico incerto) ----
+    "SHRINK": {"ativo": True, "tau_min": 0.10},   # tau_min: dispersao minima (s) de habilidade real entre os galgos do campo
 
     # ---- Perfil: nº minimo de corridas (de ate 5) para classificar ----
     "PERFIL_MIN": 3,
@@ -157,7 +169,7 @@ CFG = {
             "calib_min_n": 150, "calib_lambda": 5.0},
     "AVB_FILE": "avb_previsoes.csv",
     "OVERALL_FILE": "overall_previsoes.csv",
-    "VERSAO": "avb-unico-3",
+    "VERSAO": "avb-unico-4",
 }
 
 FIELD_MAP = {
@@ -384,7 +396,7 @@ def _slopes_dist(forcar=False):
     mt = os.path.getmtime(path)
     if not forcar:
         if c["mtime"] == mt: return c["val"]
-        if c["mtime"] is not None and (time.time() - c["t"]) < F["recalc_vazio"] if False else (c["mtime"] is not None and (time.time() - c["t"]) < F["recalc_s"]):
+        if c["mtime"] is not None and (time.time() - c["t"]) < F["recalc_s"]:
             return c["val"]
     vazio = {"por_pista": {}, "global": None}
     try:
@@ -916,11 +928,29 @@ def analisar_calibracao(path=None, min_n=5):
 # =====================================================================
 # OVERALL (TEMPO PROJETADO EM CORPOS) / RANKING
 # =====================================================================
+def _ref_nome():
+    return {"ultimo": "o galgo mais lento do campo", "lider": "o líder", "mediano": "o galgo mediano"}.get(CFG["OVERALL_REF"], "o galgo mediano")
+
+
+def _fmt_ov(x):
+    """Overall para exibir: sem sinal quando a referencia e o galgo mais lento (valores >= 0)."""
+    return f"{x:.1f}" if CFG["OVERALL_REF"] == "ultimo" else f"{x:+.1f}"
+
+
+def _ref_vals(vals):
+    modo = CFG["OVERALL_REF"]
+    if modo == "ultimo": return float(max(vals))
+    if modo == "lider": return float(min(vals))
+    return float(np.median(vals))
+
+
 def calcular_overall(ok, ctx):
-    """Overall = (tempo projetado mediano do campo - tempo projetado do galgo) / CORPO_S, em CORPOS.
-    Usa o MESMO tempo projetado do AvB e do Predictor. Sem teto, sem piso, sem reescala. Positivo = mais rapido que o mediano.
+    """Overall = (tempo projetado de referencia - tempo projetado do galgo) / CORPO_S, em CORPOS.
+    Referencia (CFG["OVERALL_REF"]): "ultimo" (galgo mais lento, Overall >= 0), "mediano" ou "lider".
+    Usa o MESMO tempo projetado (ja encolhido) do AvB e do Predictor. Sem reescala.
     Componentes (em corpos): tempo base (Time Ajust./Media Time/BRT), peso, trap, largada e Post Pick."""
     cs = CFG["CORPO_S"]
+    zero = {"tempo": 0.0, "peso": 0.0, "trap": 0.0, "largada": 0.0, "postpick": 0.0}
     for d in ok:
         t, var = projetar_tempo(d, ctx)
         d["t_sd"] = math.sqrt(var) if var else None
@@ -928,19 +958,33 @@ def calcular_overall(ok, ctx):
     if not com:
         for d in ok:
             d["overall"] = 0.0
-            d["ovr_comp"] = {"tempo": 0.0, "peso": 0.0, "trap": 0.0, "largada": 0.0, "postpick": 0.0}
+            d["ovr_comp"] = dict(zero)
         return
-    ref = float(np.median([d["t_proj"] for d in com]))
-    ref_base = float(np.median([d["t_base"] for d in com]))
+    ref = _ref_vals([d["t_proj"] for d in com])
+    ref_base = _ref_vals([d["t_base"] for d in com])
     for d in ok:
         if d.get("t_proj") is None:
             d["overall"] = 0.0
-            d["ovr_comp"] = {"tempo": 0.0, "peso": 0.0, "trap": 0.0, "largada": 0.0, "postpick": 0.0}
+            d["ovr_comp"] = dict(zero)
             continue
         c = d["t_comp"]
         d["overall"] = (ref - d["t_proj"]) / cs
         d["ovr_comp"] = {"tempo": (ref_base - d["t_base"]) / cs, "peso": -c["peso"] / cs, "trap": -c["trap"] / cs,
                          "largada": -c["largada"] / cs, "postpick": -c["postpick"] / cs}
+
+
+def _calcular_shrink(ok, ctx):
+    """Parametros do encolhimento: centro (mediana dos tempos base) e dispersao real de habilidade no campo (tau2).
+    tau2 = variancia observada dos tempos base - media da incerteza de cada galgo (minimo tau_min^2)."""
+    ctx.pop("_shrink", None)
+    S = CFG["SHRINK"]
+    if not S.get("ativo"): return
+    raws = [r for r in (_base_raw(d, ctx) for d in ok) if r is not None]
+    if len(raws) < 3: return
+    tb = np.array([r[0] for r in raws]); ve = np.array([r[2] for r in raws])
+    obs = float(np.var(tb, ddof=1))
+    tau2 = max(obs - float(np.mean(ve)), S["tau_min"] ** 2)
+    ctx["_shrink"] = {"ref": float(np.median(tb)), "tau2": tau2}
 
 
 def finalizar(ds, ctx):
@@ -953,6 +997,7 @@ def finalizar(ds, ctx):
     top_split_name = ms_rank[0]["name"] if ms_rank else None
     ctx["top3_ms"] = top3_ms
 
+    _calcular_shrink(ok, ctx)
     calcular_overall(ok, ctx)
     ok.sort(key=lambda x: (-x["overall"], -x.get("cat", 0.0)))
     for i, d in enumerate(ok, 1):
@@ -994,29 +1039,50 @@ def _brt_valido(d, ctx):
     return brt
 
 
-def projetar_tempo(d, ctx):
-    """(tempo projetado em s, variância em s²) ou (None, None).
-    Grava d["t_base"] (mistura Time Ajust./Media Time/BRT) e d["t_comp"] (ajustes em s; positivo = mais lento)."""
+def _base_raw(d, ctx):
+    """(t_base, var_dog, var_est) SEM encolhimento, ou None.
+    t_base = mistura Time Ajust./Media Time/BRT; var_dog = variancia de uma corrida do galgo (dia de prova);
+    var_est = incerteza sobre a media dele (poucas corridas + diferenca de distancia)."""
     A = CFG["AVB"]
     partes = []
     if d.get("tadj") is not None: partes.append((A["w_tadj"], d["tadj"] + A["risk_k"] * (d.get("tadj_desc") or 0.0)))
     if d.get("mtime") is not None: partes.append((A["w_mtime"], d["mtime"]))
     brt = _brt_valido(d, ctx)
     if brt: partes.append((A["w_brt"], brt))
-    if not partes: return None, None
+    if not partes: return None
     t_base = sum(w * x for w, x in partes) / sum(w for w, _ in partes)
+    n = max(d.get("n_val") or len(d.get("val") or []), 1)
+    sd = d.get("sd") or 0.0
+    var_dog = (n * sd ** 2 + A["sigma_k"] * A["sigma0"] ** 2) / (n + A["sigma_k"])  # encolhe o desvio para o padrão
+    var_dog = max(var_dog, A["sigma_min"] ** 2)
+    var_est = var_dog / n + d.get("dist_var", 0.0)
+    return t_base, var_dog, var_est
+
+
+def projetar_tempo(d, ctx):
+    """(tempo projetado em s, variância em s²) ou (None, None).
+    Com ctx["_shrink"] (calculado em finalizar), o tempo base é puxado para o centro do campo na proporção da incerteza
+    do galgo: k = tau2 / (tau2 + var_est). Galgo bem conhecido (k ~ 1) fica como está; galgo incerto (k baixo) vira "mediano".
+    Grava d["t_base"] (já encolhido), d["t_base_raw"], d["shrink_k"] e d["t_comp"] (ajustes em s; positivo = mais lento)."""
+    A = CFG["AVB"]
+    r = _base_raw(d, ctx)
+    if r is None: return None, None
+    t_raw, var_dog, var_est = r
+    k = 1.0
+    sh = ctx.get("_shrink")
+    if sh:
+        k = sh["tau2"] / (sh["tau2"] + var_est)
+        t_base = sh["ref"] + k * (t_raw - sh["ref"])
+    else:
+        t_base = t_raw
     peso = d.get("peso_adj", 0.0)
     trap = A["trap_sec"].get(d["trap"], 0.0)
     largada = -A["start_bonus"] if d["name"] in ctx.get("top3_ms", set()) else 0.0
     pp = str(ctx.get("post_pick") or "")
     postpick = -A["postpick_sec"] if (pp and str(d["trap"]) in pp) else 0.0
     t = t_base + peso + trap + largada + postpick
-    n = max(d.get("n_val") or len(d.get("val") or []), 1)
-    sd = d.get("sd") or 0.0
-    var = (n * sd ** 2 + A["sigma_k"] * A["sigma0"] ** 2) / (n + A["sigma_k"])  # encolhe o desvio para o padrão
-    var = max(var, A["sigma_min"] ** 2)
-    var = var + var / n + d.get("dist_var", 0.0)  # incerteza sobre a média + incerteza por diferença de distância
-    d["t_proj"], d["t_base"] = t, t_base
+    var = var_dog + k * var_est  # variancia preditiva: ruido da prova + incerteza residual sobre a habilidade (posterior)
+    d["t_proj"], d["t_base"], d["t_base_raw"], d["shrink_k"] = t, t_base, t_raw, k
     d["t_comp"] = {"peso": peso, "trap": trap, "largada": largada, "postpick": postpick}
     return t, var
 
@@ -1643,7 +1709,7 @@ def tabela_projecao(ds):
             rec_cell = "-"
 
         rows.append([
-            trap_label(d), nome_marcado(d) + brt_html(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:+.1f}",
+            trap_label(d), nome_marcado(d) + brt_html(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {_fmt_ov(d['overall'])}",
             f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", f"{perfil_e} {d['perfil']}",
             grades_txt(d), peso_txt(d), dias_txt,
             split_display, get_rank_html(d.get("time"), rk["time"][i], max_rk["time"]),
@@ -1813,7 +1879,7 @@ def gerar_observacoes(rank, avbs, ctx):
             else:
                 st.markdown(f"{trap_label(d)} **{html.escape(d['name'])}** ({d['perfil']}): sem remarks reconhecidos.")
     # componentes do Overall (em corpos) — o MESMO tempo projetado do AvB e do Predictor
-    with st.expander("🧮 Componentes do Overall (corpos sobre o galgo mediano)"):
+    with st.expander("🧮 Componentes do Overall (em corpos)"):
         linhas = []
         for d in sorted(rank, key=lambda x: x["pos"]):
             c = d.get("ovr_comp", {})
@@ -1821,13 +1887,16 @@ def gerar_observacoes(rank, avbs, ctx):
                            "Tempo": round(c.get("tempo", 0), 2), "Peso": round(c.get("peso", 0), 2),
                            "Trap (pista)": round(c.get("trap", 0), 2), "Largada": round(c.get("largada", 0), 2),
                            "Post Pick": round(c.get("postpick", 0), 2),
+                           "Peso do histórico %": (round(100 * d.get("shrink_k", 1.0)) if d.get("t_proj") is not None else None),
                            "Tempo proj. (s)": (round(d["t_proj"], 2) if d.get("t_proj") is not None else None),
                            "± (s)": (round(d["t_sd"], 2) if d.get("t_sd") is not None else None),
                            "Prob. vitória %": (round(d["p_vit"], 1) if d.get("p_vit") is not None else None)})
         st.dataframe(pd.DataFrame(linhas), hide_index=True)
-        st.caption(f"1 corpo = {CFG['CORPO_S']:.2f} s. Overall = (tempo projetado mediano − tempo projetado do galgo) ÷ 1 corpo; "
-                   "é o mesmo tempo projetado usado no AvB e no Predictor. Categoria, Recuperação e Regularidade seguem como "
-                   "critérios do AvB e na incerteza (±).")
+        st.caption(f"1 corpo = {CFG['CORPO_S']:.2f} s. Overall = vantagem em corpos sobre {_ref_nome()}: (tempo projetado de referência − tempo "
+                   "projetado do galgo) ÷ 1 corpo. É o mesmo tempo projetado usado no AvB e no Predictor. "
+                   "'Peso do histórico' mostra quanto do tempo do galgo vem do histórico dele (100% = historico confiavel; "
+                   "menos que isso = puxado para a média do campo por ter poucas corridas ou corridas de outra distância). "
+                   "Categoria, Recuperação e Regularidade seguem como critérios do AvB e na incerteza (±).")
     with st.expander("📏 Fator de distância (velocidade por 100 m)"):
         try:
             tabela_f, pares_pista, pares_total = resumo_fator_dist()
@@ -1875,9 +1944,9 @@ def gerar_observacoes(rank, avbs, ctx):
     pp_fav = next((d for d in elegiveis if d["trap"] == pp_fav_trap), None)
 
     if pp_fav and pp_fav["trap"] != fav_app["trap"]:
-        insights.append(f"**⚔️ Duelo de Favoritos:** O mercado elegeu o **{TRAP_EMOJI.get(pp_fav['trap'])} {pp_fav['name']}** (Post Pick 1), mas o App crava o **{TRAP_EMOJI.get(fav_app['trap'])} {fav_app['name']}** ({fav_app['overall']:+.1f} corpos sobre o mediano) como o verdadeiro dono da prova. É um choque direto.")
+        insights.append(f"**⚔️ Duelo de Favoritos:** O mercado elegeu o **{TRAP_EMOJI.get(pp_fav['trap'])} {pp_fav['name']}** (Post Pick 1), mas o App crava o **{TRAP_EMOJI.get(fav_app['trap'])} {fav_app['name']}** (Overall {_fmt_ov(fav_app['overall'])}) como o verdadeiro dono da prova. É um choque direto.")
     else:
-        insights.append(f"**🤝 Consenso Total:** O mercado e o App concordam que o **{TRAP_EMOJI.get(fav_app['trap'])} {fav_app['name']}** é o cão a ser batido. Overall {fav_app['overall']:+.1f} e Confiança {fav_app['conf']:.0f}%.")
+        insights.append(f"**🤝 Consenso Total:** O mercado e o App concordam que o **{TRAP_EMOJI.get(fav_app['trap'])} {fav_app['name']}** é o cão a ser batido. Overall {_fmt_ov(fav_app['overall'])} e Confiança {fav_app['conf']:.0f}%.")
 
     trombadores_internos = [d for d in elegiveis if d["perfil"] == "Trombador" and d["trap"] <= 4]
     if len(trombadores_internos) >= 2:
@@ -1896,7 +1965,7 @@ def gerar_observacoes(rank, avbs, ctx):
     if bloqueados:
         b = max(bloqueados, key=lambda x: x["overall"])
         if b["overall"] > fav_app["overall"]:
-            insights.append(f"**🚫 Armadilha do Histórico:** O {TRAP_EMOJI.get(b['trap'])} {b['name']} tem Overall bruto de {b['overall']:+.1f}, mas o App o bloqueou. O histórico dele nessa distância é curto ou ruim. Não caia na armadilha da odd baixa.")
+            insights.append(f"**🚫 Armadilha do Histórico:** O {TRAP_EMOJI.get(b['trap'])} {b['name']} tem Overall bruto de {_fmt_ov(b['overall'])}, mas o App o bloqueou. O histórico dele nessa distância é curto ou ruim. Não caia na armadilha da odd baixa.")
 
     tadj_rank = sorted([d for d in elegiveis if d.get("tadj")], key=lambda x: x["tadj"])
     if len(tadj_rank) >= 3:
