@@ -1015,34 +1015,8 @@ def tabela_projecao(ds):
     rows = []
     for i, d in enumerate(ds):
         if d["nd"]:
-            rows.append([trap_label(d), nome_marcado(d) + brt_html(d)] + ["-"] * 15)
+            rows.append([trap_label(d), nome_marcado(d) + brt_html(d)] + ["-"] * 14)
             continue
-
-        # Coluna "Remarks": 2 linhas, texto completo, largura maior (220px)
-        rem_list = sorted(set(d.get("remarks_translated") or []))
-        if not rem_list:
-            rem_cell = "-"
-        else:
-            full_text = ", ".join(rem_list)
-            if len(rem_list) > 1:
-                mid = len(rem_list) // 2
-                linha1 = ", ".join(rem_list[:mid])
-                linha2 = ", ".join(rem_list[mid:])
-                if len(linha2) > len(linha1) * 2 and mid < len(rem_list) - 1:
-                    mid += 1
-                    linha1 = ", ".join(rem_list[:mid])
-                    linha2 = ", ".join(rem_list[mid:])
-                rem_text = f"{html.escape(linha1)}<br>{html.escape(linha2)}"
-            else:
-                if len(full_text) > 35:
-                    words = full_text.split()
-                    mid_w = len(words) // 2
-                    rem_text = f"{html.escape(' '.join(words[:mid_w]))}<br>{html.escape(' '.join(words[mid_w:]))}"
-                else:
-                    rem_text = html.escape(full_text)
-
-            rem_cell = (f"<div style='min-width:220px; max-width:220px; width:220px; white-space:normal; line-height:1.3; font-size:12px; color:#aaa; text-align:left;' "
-                        f"title='{html.escape(full_text)}'>{rem_text}</div>")
 
         perfil_e = {"Limpo": "✅", "Irregular": "⚠️", "Trombador": "🔴"}[d["perfil"]]
         dias_txt = f"{d['dias']} ⚠️" if d['dias'] > 21 else str(d['dias'])
@@ -1055,7 +1029,7 @@ def tabela_projecao(ds):
 
         rows.append([
             trap_label(d), nome_marcado(d) + brt_html(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}",
-            f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", f"{perfil_e} {d['perfil']}", rem_cell, grades_txt(d),
+            f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", f"{perfil_e} {d['perfil']}", grades_txt(d),
             peso_txt(d), dias_txt,
             split_display, get_rank_html(d["time"], rk["time"][i], max_rk["time"]), msplit_display,
             get_rank_html(d["mtime"], rk["mtime"][i], max_rk["mtime"]),
@@ -1063,7 +1037,7 @@ def tabela_projecao(ds):
             get_rank_html(d.get("metrica"), rk["metrica"][i], max_rk["metrica"]),
             rec_cell, f"{d['conf']:.0f}%"
         ])
-    return tbl(["Trap", "Galgo", "Overall", "Cat", "Perfil", "Remarks", "Grades", "Peso", "Dias",
+    return tbl(["Trap", "Galgo", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias",
                 "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica",
                 "Recup. Média", "Conf."], rows, sticky=2, w1=64, w2=125)
 
