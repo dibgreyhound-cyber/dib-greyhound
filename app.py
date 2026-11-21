@@ -448,12 +448,20 @@ def buscar_form_raw(race_id, data_str):
 
 def _fechar_confrontos(data_str, linhas):
     """Usa a ordem de chegada lida do site para fechar, no log de AvBs, os confrontos dessa corrida."""
-    if not linhas or not hasattr(dib, "resolver_por_resultado"):
+    if not linhas:
         return 0
-    try:
-        return int(dib.resolver_por_resultado(data_str, linhas) or 0)
-    except Exception:
-        return 0
+    n = 0
+    if hasattr(dib, "resolver_por_resultado"):
+        try:
+            n = int(dib.resolver_por_resultado(data_str, linhas) or 0)
+        except Exception:
+            n = 0
+    if hasattr(dib, "resolver_overall_por_resultado"):  # posicao real e margem para calibrar o Overall
+        try:
+            dib.resolver_overall_por_resultado(data_str, linhas)
+        except Exception:
+            pass
+    return n
 
 
 # ---------------------------------------------------------------- utilidades
@@ -673,30 +681,34 @@ def badge_p(t):
 
 
 def grafico_predictor(ds):
-    com = [d for d in ds if not d.get("nd") and d.get("overall") is not None]
+    """Barras = probabilidade de vitoria (simulacao sobre o tempo projetado), nao o Overall."""
+    com = [d for d in ds if not d.get("nd") and d.get("p_vit") is not None]
     if not com:
         return ""
-    mx = max(d["overall"] for d in com)
+    mx = max(d["p_vit"] for d in com)
     linhas = []
     for d in sorted(ds, key=lambda x: x["trap"]):
         t = d["trap"]
         estilo, _ = BAR_STYLE.get(t, ("background:#888;", "invert"))
-        if d.get("nd") or d.get("overall") is None:
+        pct = ""
+        if d.get("nd") or d.get("p_vit") is None:
             fill = ""
         else:
-            w = 100.0 if mx <= 0 else max(11.0, min(100.0, d["overall"] / mx * 100.0))
-            tip = f"{d['name']} · Overall {d['overall']:.1f}"
+            w = 100.0 if mx <= 0 else max(11.0, min(100.0, d["p_vit"] / mx * 100.0))
+            tip = f"{d['name']} · {d['p_vit']:.1f}% de vencer"
             fill = (f"<div title=\"{tip}\" style='position:relative;width:{w:.1f}%;height:100%;"
                     f"border-radius:8px;{estilo}'>"
                     f"<span style='position:absolute;right:4px;top:50%;transform:translateY(-50%);"
                     f"line-height:0;'>{greyhound_svg(t)}</span></div>")
+            pct = (f"<span style='color:#fff;font-size:11px;min-width:34px;text-align:right'>"
+                   f"{d['p_vit']:.0f}%</span>")
         linhas.append(f"<div style='display:flex;align-items:center;gap:6px;margin:4px 0'>{badge_p(t)}"
                       f"<div style='flex:1;height:15px;background:#0a2a52;border-radius:8px;overflow:hidden'>"
-                      f"{fill}</div></div>")
+                      f"{fill}</div>{pct}</div>")
     return ("<div style='background:#143f6f;border-radius:16px;padding:12px 10px 5px;max-width:640px;margin:6px 0;"
             "position:relative'>"
             "<div style='position:absolute;top:-1px;left:10px;background:#d32f2f;color:#fff;font-weight:700;"
-            "font-size:11px;padding:2px 12px;border-radius:0 0 10px 10px'>Predictor</div>"
+            "font-size:11px;padding:2px 12px;border-radius:0 0 10px 10px'>Predictor · chance de vencer</div>"
             "<div style='height:6px'></div>" + "".join(linhas) + "</div>")
 
 
@@ -851,7 +863,7 @@ def preparar(race_id, r_date, c, classe_in, dist_in, pp_in, so_antes=False):
     if so_antes:
         dogs = [dict(d, runs=[r for r in d["runs"] if (r.get("date_str") or "") < r_date]) for d in dogs]
     classe = (classe_in or c.get("grade") or (meta_info or {}).get("classe") or "").strip().upper()
-    dist = float(dist_in or c.get("dist") or 0)
+    dist = float(dist_in or c.get("dist") or (meta_info or {}).get("dist") or 0)
     if not dist:
         ds_all = [r["dist"] for d in dogs for r in d["runs"] if r["dist"]]
         dist = float(pd.Series(ds_all).mode().iloc[0]) if ds_all else 480.0
@@ -887,29 +899,31 @@ def gerar_texto_analise(c, p):
     txt.append("")
 
     txt.append("**Planilha de Projeção**")
-    txt.append("| Trp | Galgo | Overall | Cat | Fatores | Perfil | Grades | Peso | Dias | Split | Time | Méd. Split | Méd. Time | Time Ajust. | Ritmo | Recup. Média | Conf. |")
-    txt.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    txt.append("| Trp | Galgo | Overall | P. Vit. | Cat | Perfil | Grades | Peso | Dias | Split | Time | Méd. Split | Méd. Time | Time Ajust. | Recup. Média | Conf. |")
+    txt.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 
     for d in p["ds"]:
         if d["nd"]:
-            txt.append(f"| {d['trap']} | {d['name']} | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |")
+            txt.append(f"| {d['trap']} | {d['name']} | " + " | ".join(["-"] * 14) + " |")
             continue
 
         nome = f"{d['name']} {'🚫' if d.get('bloqueado') else ''} {'🎯' if d.get('alvo') else ''}".strip()
-        fat = "<br>".join(f"{k} ({v:+.1f})" for k, v in d["fatores"]) or "-"
-        grades = "-".join((r["grade"] or "?") for r in d["val"])  # [CORRIGIDO] só as corridas que entram no cálculo
+        D_ = p["dist"]
+        grades = "-".join(((r["grade"] or "?") + ("*" if abs(r["dist"] - D_) >= 1 else "")) for r in d["val"])
 
         f_split = f"{d['split']:.2f}" if d.get("split") else "-"
         f_time = f"{d['time']:.2f}" if d.get("time") else "-"
-        f_msplit = f"{d['msplit']:.2f}" if d.get("msplit") else (f"Pos:{d['msplit_pos']:.1f}" if d.get("msplit_pos") else "-")
+        f_msplit = f"{d['msplit']:.2f}" if d.get("msplit") else "-"
         f_mtime = f"{d['mtime']:.2f}" if d.get("mtime") else "-"
         f_tadj = f"{d['tadj']:.2f}" if d.get("tadj") else "-"
-        f_ritmo = f"{d['ritmo']:.2f}" if d.get("ritmo") else "-"
         f_rec = f"{d['rec']:+.2f}%" if d.get("rec") is not None else "-"
         f_peso = f"{d['peso']:.1f}" if d.get("peso") else "-"
+        f_pv = f"{d['p_vit']:.1f}%" if d.get("p_vit") is not None else "-"
 
-        txt.append(f"| {d['trap']} | {nome} | {d['overall']:.1f} | {d['cat']:.1f} | {fat} | {d['perfil']} | {grades} | {f_peso} | {d['dias']} | {f_split} | {f_time} | {f_msplit} | {f_mtime} | {f_tadj} | {f_ritmo} | {f_rec} | {d['conf']:.0f}% |")
+        txt.append(f"| {d['trap']} | {nome} | {d['overall']:+.1f} | {f_pv} | {d['cat']:.1f} | {d['perfil']} | {grades} | {f_peso} | {d['dias']} | {f_split} | {f_time} | {f_msplit} | {f_mtime} | {f_tadj} | {f_rec} | {d['conf']:.0f}% |")
 
+    txt.append("")
+    txt.append("(Overall em corpos sobre o galgo mediano; * = corrida em distância diferente da prova, convertida por velocidade.)")
     txt.append("")
 
     classif = " > ".join(f"{d['pos']}º [T{d['trap']}]" for d in p["rank"])
@@ -932,7 +946,6 @@ def gerar_texto_analise(c, p):
     elegiveis = [d for d in p["rank"] if not d.get("bloqueado")]
     bloqueados = [d for d in p["rank"] if d.get("bloqueado")]
     alvos = [d for d in p["rank"] if d.get("alvo")]
-    top_ritmo = min([d for d in p["rank"] if d.get("ritmo") is not None], key=lambda x: x["ritmo"], default=None)
     top_split = min([d for d in p["rank"] if d.get("msplit") is not None], key=lambda x: x["msplit"], default=None) if any(d.get("msplit") for d in p["rank"]) else None
 
     if elegiveis:
@@ -947,7 +960,7 @@ def gerar_texto_analise(c, p):
         else:
             f_name = fav['name']
             txt_rec = f" Ele tem recuperação excelente ({rec_fav:+.1f}%)." if (rec_fav is not None and rec_fav > 10) else ""
-            txt.append(f"- 🏆 Favorito Claro: O {f_name} domina o Overall ({fav['overall']:.1f}).{txt_rec}")
+            txt.append(f"- 🏆 Favorito Claro: O {f_name} lidera o Overall ({fav['overall']:+.1f} corpos).{txt_rec}")
 
     if bloqueados:
         b = bloqueados[0]
@@ -958,7 +971,7 @@ def gerar_texto_analise(c, p):
                 if (V["trap"] == elegiveis[0]["trap"] and D["trap"] == b["trap"]) or (D["trap"] == elegiveis[0]["trap"] and V["trap"] == b["trap"]):
                     avb_info = f" AVB apertado contra o elegível ({prob:.1f}%)."
                     break
-        txt.append(f"- 🚫 Falso Favorito Bloqueado: O {b_name} tem Overall alto ({b['overall']:.1f}), mas foi pego pela Trava (Conf. {b['conf']:.0f}%).{avb_info}")
+        txt.append(f"- 🚫 Falso Favorito Bloqueado: O {b_name} tem Overall alto ({b['overall']:+.1f}), mas foi pego pela Trava (Conf. {b['conf']:.0f}%).{avb_info}")
 
     if alvos:
         nomes_alvo = ", ".join([d['name'] for d in alvos])
@@ -973,18 +986,11 @@ def gerar_texto_analise(c, p):
     if top_split and split_outlier and not is_irish_metric:
         s_name = top_split['name']
         txt.append(f"- ⚠️ Alerta de Dados: O {s_name} tem Split muito mais rápido que o resto do campo ({top_split['msplit']:.2f}). Pode ser erro na base.")
-    elif top_ritmo and top_split and top_ritmo["trap"] != top_split["trap"]:
-        s_name = top_split['name']
-        r_name = top_ritmo['name']
-        txt.append(f"- 💡 Análise de Pace: O {s_name} tem a melhor largada, mas o {r_name} tem o melhor ritmo final.")
-        if top_split["pos"] > 3:
-            txt.append(f"- 🦓 Alerta de Zebra: O {s_name} (Posição {top_split['pos']}) tem o melhor Early Pace. Pode surpreender.")
-    elif not top_split and top_ritmo:
-        top_split_pos = min([d for d in p["rank"] if d.get("msplit_pos") is not None], key=lambda x: x["msplit_pos"], default=None)
-        if top_split_pos and top_ritmo["trap"] != top_split_pos["trap"]:
-             s_name = top_split_pos['name']
-             r_name = top_ritmo['name']
-             txt.append(f"- 💡 Análise de Pace: O {s_name} assume a liderança na 1ª curva, mas o {r_name} tem o melhor ritmo de prova final.")
+    elif top_split and top_split["pos"] > 3:
+        txt.append(f"- 🦓 Alerta de Zebra: O {top_split['name']} (Posição {top_split['pos']}) tem o melhor Split médio. Pode largar na frente e surpreender.")
+    sem_split = [d["name"] for d in p["rank"] if d.get("msplit") is None]
+    if sem_split:
+        txt.append(f"- ℹ️ Sem Split na distância exata (largada neutra): {', '.join(sem_split)}.")
 
     pior_rec = min([d for d in p["rank"] if d.get("rec") is not None], key=lambda x: x["rec"], default=None)
     if pior_rec and pior_rec["rec"] < -10.0:
