@@ -1,20 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-dib_core.py (v4)
+dib_core.py (v4.1)
 
-O que mudou nesta versao:
-  - Media Time e Time Ajust. por VELOCIDADE: corridas oficiais entre (distancia - 100m) e (distancia + 100m),
-    convertidas para a distancia da prova de hoje. Trials contam; so HP fica de fora.
-  - Split: somente corridas na distancia exata; sem dado = neutro (nunca vira posicao nem 0).
-  - Ritmo, Fatores (remarks/Trap Vazia) e pontos de Perfil removidos do Overall e das tabelas.
-  - OVERALL SEM TETO E SEM PISO: e a vantagem esperada em CORPOS sobre o galgo mediano do campo
-    (1 corpo = CFG["CORPO_S"] segundos). Pode ser positivo ou negativo. Sem escala 0-100 e sem reescala.
-  - Confianca de Dados pondera pela distancia (1,0 na distancia exata, CONF_PESO_MIN nas pontas da janela).
-  - Perfil: 3+ corridas limpas = Limpo; 3+ com bloqueio/toque/trombada = Trombador; senao Irregular.
-  - AvB: apoio = categoria + largada (minimo 1 de 2); score 0-6; incerteza extra por diferenca de distancia.
-  - Probabilidade de vitoria de cada galgo (simulacao) para o grafico "Predictor".
-  - Log por galgo (overall_previsoes.csv) para calibrar o Overall com o resultado real.
-  - VERSAO = "avb-unico-2" (a validacao separa as amostras por versao).
+Base: o v4 enviado pelo usuario. Mudancas desta versao (3 pontos):
+
+  1) JANELA DE DISTANCIA 200 m (antes 100 m): o Don Cici (so corridas de 575 m, prova de 400 m, diferenca de 175 m)
+     agora entra na planilha, no Overall e no Predictor.
+  2) FATOR DE DISTANCIA MEDIDO nos seus proprios dados (calibracao_corridas.csv): galgos que correram duas distancias
+     na mesma pista em ate 75 dias. Ajusta a velocidade por 100 m (ex.: -1,5 %/100 m) em vez de assumir velocidade igual.
+       - pista com poucos pares usa o fator global; sem dados suficientes = conversao so proporcional,
+         com incerteza grande (DIST_SD_100M_SEM_FATOR) e o galgo NAO entra em AvB (AVB.exige_fator_medido).
+       - Grades: "*" = corrida convertida com fator medido; "†" = convertida so por proporcao (sem fator medido).
+  3) OVERALL = TEMPO PROJETADO EM CORPOS: o mesmo tempo projetado que alimenta o AvB e o Predictor
+     (Overall = (mediana do campo - tempo projetado) / CORPO_S). Planilha, Predictor e AvB nao discordam mais.
+     Categoria, Recuperacao e Regularidade continuam aparecendo e entram como criterios do AvB / na incerteza.
+     Post Pick (palpite de tipster) nao entra mais no tempo (postpick_sec = 0.0), para o modelo ser independente.
+
+  VERSAO = "avb-unico-3" (a validacao separa as amostras por versao).
 """
 import re
 import html
@@ -22,6 +24,7 @@ import math
 import json
 import os
 import csv
+import time
 import hashlib
 from datetime import datetime
 import numpy as np
@@ -104,22 +107,26 @@ _ORD = {"first": "1", "second": "2", "third": "3", "fourth": "4"}
 CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
 
-    # ---- Janela de distancia (velocidade) ----
-    "JANELA_M": 100.0,        # corridas oficiais de (dist - JANELA_M) a (dist + JANELA_M) entram nas medias de tempo
+    # ---- Janela de distancia ----
+    "JANELA_M": 200.0,        # corridas oficiais de (dist - JANELA_M) a (dist + JANELA_M) entram nas medias de tempo
     "CONF_PESO_MIN": 0.5,     # peso de uma corrida na PONTA da janela na Confianca (1.0 = distancia exata)
-    "DIST_SD_100M": 0.05,     # incerteza extra (s) por 100 m de diferenca de distancia (entra na variancia do AvB)
+    # incerteza extra (s) por 100 m de diferenca de distancia, entra na variancia do tempo projetado:
+    "DIST_SD_100M_MEDIDO": 0.06,      # quando existe fator de distancia medido para a pista
+    "DIST_SD_100M_SEM_FATOR": 0.20,   # conversao so proporcional (sem fator medido): incerteza grande
 
-    # ---- Overall em CORPOS (sem teto e sem piso) ----
-    "CORPO_S": 0.08,          # segundos por corpo (medido nos cards: ~0,08 a 0,09 s). CALIBRAR com overall_previsoes.csv
-    "OVR": {
-        # tempo (pesos somam 1.0): mistura de Time Ajust., Media Time e Pico (melhor tempo equivalente)
-        "tadj": 0.45, "mtime": 0.35, "pico": 0.20,
-        # extras (valores provisorios; calibrar com os resultados)
-        "split": 0.30,        # peso da diferenca de Media Split (s) para a mediana do campo
-        "cat_s": 0.05,        # segundos por ponto de Categoria
-        "rec_s": 0.002,       # segundos por 1% de Recuperacao
-        "sd": 0.30,           # peso da regularidade (desvio padrao dos tempos equivalentes)
+    # ---- Fator de distancia medido nos proprios dados (velocidade por 100 m) ----
+    "FATOR_DIST": {
+        "min_pares_pista": 25,    # pares (mesmo galgo, mesma pista, duas distancias) para usar o fator da pista
+        "min_pares_global": 60,   # pares para usar o fator global (todas as pistas) quando a pista tem poucos
+        "janela_dias": 75,        # as duas corridas do par devem estar a ate N dias uma da outra
+        "dx_min": 0.4,            # diferenca minima de distancia no par (em 100 m)
+        "slope_min": -0.06,       # fator plausivel: de -6 % a +2 % de velocidade por 100 m (fora disso = ignora)
+        "slope_max": 0.02,
+        "recalc_s": 600,          # recalcula no maximo a cada N segundos
     },
+
+    # ---- Overall = tempo projetado em CORPOS sobre o galgo mediano (sem teto e sem piso) ----
+    "CORPO_S": 0.08,          # segundos por corpo (medido nos cards: ~0,08 a 0,09 s). CALIBRAR com overall_previsoes.csv
 
     # ---- Perfil: nº minimo de corridas (de ate 5) para classificar ----
     "PERFIL_MIN": 3,
@@ -137,18 +144,20 @@ CFG = {
     "AVB": {"w_tadj": 0.45, "w_mtime": 0.35, "w_brt": 0.20, "risk_k": 0.5,
             "brt_max_dias": 90, "brt_grade_gap": 2,
             "sigma0": 0.25, "sigma_k": 2.0, "sigma_min": 0.15, "prob_scale": 1.0,
-            "start_bonus": 0.04, "postpick_sec": 0.02,
+            "start_bonus": 0.04,
+            "postpick_sec": 0.0,     # 0.0 = o Post Pick (palpite de tipster) NAO entra no tempo projetado
             "trap_sec": {1: -0.02, 2: -0.01, 3: 0.0, 4: 0.0, 5: 0.01, 6: 0.02},
             # ---- Regra ÚNICA de aprovação do AvB ----
             "prob_min": 62.0,        # probabilidade mínima (RECALIBRAR: o modelo mudou)
             "conf_min_v": 60.0,      # confiança mínima do galgo escolhido (V)
             "conf_min_d": 40.0,      # confiança mínima do adversário (D)
             "apoio_min": 1,          # mínimo de critérios de apoio (categoria, largada) de 2
+            "exige_fator_medido": True,  # galgo com corrida convertida SEM fator de distancia medido nao entra em AvB
             # ---- Calibração logística (ativa só com amostra suficiente) ----
             "calib_min_n": 150, "calib_lambda": 5.0},
     "AVB_FILE": "avb_previsoes.csv",
     "OVERALL_FILE": "overall_previsoes.csv",
-    "VERSAO": "avb-unico-2",
+    "VERSAO": "avb-unico-3",
 }
 
 FIELD_MAP = {
@@ -349,6 +358,102 @@ def diagnostico_remarks(dogs):
 
 
 # =====================================================================
+# FATOR DE DISTANCIA (velocidade por 100 m), MEDIDO NOS PROPRIOS DADOS
+# =====================================================================
+_SLOPE_CACHE = {"t": 0.0, "mtime": None, "val": {"por_pista": {}, "global": None}}
+
+
+def _ajustar_slope(lst):
+    """Regressao pela origem de ln(v2/v1) sobre a diferenca de distancia (em 100 m). Retorna dict ou None."""
+    if not lst: return None
+    x = np.array([a for a, _ in lst], dtype=float)
+    y = np.array([b for _, b in lst], dtype=float)
+    den = float(np.sum(x * x))
+    if den <= 0: return None
+    b = float(np.sum(x * y) / den)
+    return {"b": b, "n": int(len(lst)), "sd": float(np.std(y - b * x))}
+
+
+def _slopes_dist(forcar=False):
+    """{'por_pista': {pista: {b, n, sd}}, 'global': {b, n, sd} | None}.
+    Pares: mesmo galgo, mesma pista, duas distancias diferentes, ate `janela_dias` de intervalo, so corridas limpas."""
+    F = CFG["FATOR_DIST"]
+    c = _SLOPE_CACHE
+    path = CFG["CALIB_FILE"]
+    if not os.path.exists(path): return c["val"]
+    mt = os.path.getmtime(path)
+    if not forcar:
+        if c["mtime"] == mt: return c["val"]
+        if c["mtime"] is not None and (time.time() - c["t"]) < F["recalc_vazio"] if False else (c["mtime"] is not None and (time.time() - c["t"]) < F["recalc_s"]):
+            return c["val"]
+    vazio = {"por_pista": {}, "global": None}
+    try:
+        df = pd.read_csv(path, usecols=["pista", "data", "dist", "galgo", "caltm", "remarks"])
+        df["caltm"] = pd.to_numeric(df["caltm"], errors="coerce")
+        df["dist"] = pd.to_numeric(df["dist"], errors="coerce")
+        df["data"] = pd.to_datetime(df["data"], errors="coerce")
+        df = df[(df["caltm"] > 0) & df["dist"].notna() & df["data"].notna()]
+        df = df.drop_duplicates(subset=["galgo", "pista", "data", "dist", "caltm"])
+        df = df[df["remarks"].fillna("").map(lambda s: analisar_remarks(s)["limpa"])]
+        df = df.assign(v=df["dist"] / df["caltm"])
+        pares = {}
+        for (g, p), grp in df.groupby(["galgo", "pista"]):
+            if len(grp) < 2: continue
+            grp = grp.sort_values("data")
+            datas, dists, vs = grp["data"].tolist(), grp["dist"].tolist(), grp["v"].tolist()
+            n = len(grp)
+            for i in range(n):
+                for j in range(i + 1, n):
+                    if (datas[j] - datas[i]).days > F["janela_dias"]: break
+                    dx = (dists[j] - dists[i]) / 100.0
+                    if abs(dx) < F["dx_min"]: continue
+                    pares.setdefault(p, []).append((dx, math.log(vs[j] / vs[i])))
+        por_pista = {}
+        for p, lst in pares.items():
+            a = _ajustar_slope(lst)
+            if a and a["n"] >= F["min_pares_pista"] and F["slope_min"] <= a["b"] <= F["slope_max"]:
+                por_pista[p] = a
+        tudo = [t for lst in pares.values() for t in lst]
+        g = _ajustar_slope(tudo)
+        glob = g if (g and g["n"] >= F["min_pares_global"] and F["slope_min"] <= g["b"] <= F["slope_max"]) else None
+        val = {"por_pista": por_pista, "global": glob, "pares_total": len(tudo),
+               "pares_pista": {p: len(l) for p, l in pares.items()}}
+    except Exception:
+        val = vazio
+    c["t"], c["mtime"], c["val"] = time.time(), mt, val
+    return val
+
+
+def _slope_para(track):
+    """Fator (variacao relativa de velocidade por 100 m) para a pista, ou None se nao houver dado suficiente."""
+    v = _slopes_dist()
+    a = v["por_pista"].get(str(track))
+    if a: return a["b"]
+    g = v.get("global")
+    return g["b"] if g else None
+
+
+def _conv_tempo(t, r_dist, D, b):
+    """Converte o tempo `t` feito em `r_dist` metros para o tempo equivalente em D metros.
+    b = None -> velocidade igual (proporcional). b != None -> v(D) = v(r) * exp(b * (D - r)/100)."""
+    v = r_dist / t
+    if b: v *= math.exp(b * (D - r_dist) / 100.0)
+    return D / v
+
+
+def resumo_fator_dist():
+    """Para exibir na tela: fatores medidos por pista e quantidade de pares."""
+    v = _slopes_dist()
+    linhas = []
+    for p, a in sorted(v["por_pista"].items()):
+        linhas.append({"Pista": p, "Fator (%/100m)": round(100 * (math.exp(a["b"]) - 1), 2), "Pares": a["n"], "Origem": "medido na pista"})
+    g = v.get("global")
+    if g:
+        linhas.append({"Pista": "(global)", "Fator (%/100m)": round(100 * (math.exp(g["b"]) - 1), 2), "Pares": g["n"], "Origem": "todas as pistas"})
+    return linhas, v.get("pares_pista", {}), v.get("pares_total", 0)
+
+
+# =====================================================================
 # TEMPO POR VELOCIDADE (janela de distancia)
 # =====================================================================
 def _dist_na_janela(r, ctx):
@@ -367,7 +472,8 @@ def _conf_dados(R, ctx):
 
 def tempo_limpo(R, ctx):
     """(tadj, n_excluidas, desconto_medio_s): velocidade media ponderada por recencia, depois de descontar
-    interferencia e largada lenta (em segundos, na propria corrida), convertida para a distancia de hoje.
+    interferencia e largada lenta (em segundos, na propria corrida), convertida para a distancia de hoje
+    (com o fator de distancia medido quando existir).
     Nunca fica mais rapido que o melhor tempo equivalente real - 0,05 s."""
     A = CFG["ADJ"]
     D = ctx["dist"]
@@ -391,10 +497,12 @@ def tempo_limpo(R, ctx):
             else:
                 loss = A[i["slow"]]
         desc = min(i["interf"] + loss, A["cap_total"])
-        fator = D / r["dist"]
-        brutos.append(r["caltm"] * fator)
-        vals.append((r["caltm"] - desc) * fator)
-        descs.append(desc * fator)
+        b = _slope_para(r["track"]) if abs(r["dist"] - D) >= 1 else None
+        bruto = _conv_tempo(r["caltm"], r["dist"], D, b)
+        limpo = _conv_tempo(max(r["caltm"] - desc, 0.5), r["dist"], D, b)
+        brutos.append(bruto)
+        vals.append(limpo)
+        descs.append(bruto - limpo)
     piso = min(brutos) - 0.05
     vals = [max(v, piso) for v in vals]
     w = np.array(CFG["REC_W"][:len(vals)] + [CFG["REC_W"][-1]] * max(0, len(vals) - len(CFG["REC_W"])), dtype=float)
@@ -504,7 +612,7 @@ def extrair_metadados_json(data, info_card, dogs):
     for src in fontes:
         gng = pick(src, ["going", "goingType", "gng"])
         if gng: info["going"] = str(gng).strip().upper(); break
-    # [NOVO] distancia da prova lida do proprio card (evita adivinhar pela moda das corridas dos galgos)
+    # distancia da prova lida do proprio card (evita adivinhar pela moda das corridas dos galgos)
     for src in fontes:
         dv = to_float(pick(src, ["distMetres", "distMeters", "distance", "dist", "raceDistance"]))
         if dv and 100 <= dv <= 1000:
@@ -638,7 +746,7 @@ def analisar_galgo(dog, ctx):
     if dog.get("name") == "vacant":
         return {"name": "vacant", "trap": dog["trap"], "runs": [], "val": [], "nd": True,
                 "conf": 0.0, "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False,
-                "alerta_trial": False, "n_trials": 0, "n_val": 0, "p_vit": None}
+                "alerta_trial": False, "n_trials": 0, "n_val": 0, "p_vit": None, "conv_ok": True}
 
     D = ctx["dist"]
     todas = sorted(dog["runs"], key=lambda r: r["date"] or datetime.min, reverse=True)
@@ -652,7 +760,7 @@ def analisar_galgo(dog, ctx):
 
     d = {"name": dog["name"], "trap": dog["trap"], "runs": runs, "val": R, "nd": not R, "n_val": len(R),
          "conf": _conf_dados(R, ctx) if R else 0.0, "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False,
-         "alerta_trial": n_trials >= 3, "n_trials": n_trials, "p_vit": None, "dist_alvo": D}
+         "alerta_trial": n_trials >= 3, "n_trials": n_trials, "p_vit": None, "dist_alvo": D, "conv_ok": True}
 
     d["brt_raw"] = dog.get("brt")
     d["brt_txt"] = dog.get("brt_txt")
@@ -675,17 +783,26 @@ def analisar_galgo(dog, ctx):
 
     d["peso"] = dog.get("peso_atual") or R[0]["weight"]  # None se não houver (a tabela mostra "-")
 
-    # --- Velocidade (m/s) de cada corrida -> tempo equivalente na distância de hoje ---
-    vs = [r["dist"] / r["caltm"] for r in R]
-    teqs = [D / v for v in vs]
-    d["mtime"] = D / float(np.mean(vs))            # Média Time: velocidade média convertida para a distância de hoje
+    # --- Tempo equivalente na distância de hoje (fator de distância medido quando existir) ---
+    bs = [(_slope_para(r["track"]) if abs(r["dist"] - D) >= 1 else None) for r in R]
+    teqs = [_conv_tempo(r["caltm"], r["dist"], D, b) for r, b in zip(R, bs)]
+    vs_D = [D / t for t in teqs]
+    d["mtime"] = D / float(np.mean(vs_D))          # Média Time: velocidade média (na distância de hoje)
     d["pico"] = min(teqs)                           # melhor tempo equivalente
     d["time"] = d["pico"]                           # coluna "M. Time"
     d["sd"] = float(np.std(teqs)) if len(teqs) > 1 else None
-    # incerteza extra por diferença de distância (usada na variância do AvB)
-    d["dist_var"] = float(np.mean([(CFG["DIST_SD_100M"] * abs(r["dist"] - D) / 100.0) ** 2 for r in R]))
 
-    # --- Split: SÓ corridas na distância exata (opção A); sem dado = neutro (opção C) ---
+    # Corridas convertidas: quantas, e quantas SEM fator medido (só proporção)
+    conv = [(r, b) for r, b in zip(R, bs) if abs(r["dist"] - D) >= 1]
+    d["n_conv"] = len(conv)
+    d["n_conv_sem_fator"] = sum(1 for r, b in conv if b is None)
+    d["conv_ok"] = (d["n_conv_sem_fator"] == 0)
+    # incerteza extra por diferença de distância (entra na variância do tempo projetado)
+    sd_m, sd_s = CFG["DIST_SD_100M_MEDIDO"], CFG["DIST_SD_100M_SEM_FATOR"]
+    d["dist_var"] = float(np.mean([((sd_m if b is not None else sd_s) * abs(r["dist"] - D) / 100.0) ** 2
+                                   for r, b in zip(R, bs)]))
+
+    # --- Split: SÓ corridas na distância exata; sem dado = neutro ---
     exatos = [r["split"] for r in R if abs(r["dist"] - D) < 1 and r.get("split") is not None and r["split"] > 0]
     d["msplit"] = float(np.mean(exatos)) if exatos else None
     d["split"] = min(exatos) if exatos else None
@@ -797,32 +914,33 @@ def analisar_calibracao(path=None, min_n=5):
 
 
 # =====================================================================
-# OVERALL (CORPOS SOBRE O GALGO MEDIANO) / RANKING
+# OVERALL (TEMPO PROJETADO EM CORPOS) / RANKING
 # =====================================================================
-def _med(vals):
-    vals = [v for v in vals if v is not None]
-    return float(np.median(vals)) if vals else None
-
-
-def calcular_overall(ok):
-    """Overall = vantagem esperada em CORPOS sobre o galgo mediano do campo. Sem teto, sem piso, sem reescala.
-    Cada pilar vira diferenca em SEGUNDOS para a mediana (valor ausente = mediana = 0) e depois divide por CORPO_S."""
-    W, cs = CFG["OVR"], CFG["CORPO_S"]
-    ref = {k: _med([d.get(k) for d in ok]) for k in ("tadj", "mtime", "pico", "msplit", "sd", "cat", "rec")}
-
-    def delta(d, k, menor_melhor=True):
-        v, m = d.get(k), ref.get(k)
-        if v is None or m is None: return 0.0
-        return (m - v) if menor_melhor else (v - m)
-
+def calcular_overall(ok, ctx):
+    """Overall = (tempo projetado mediano do campo - tempo projetado do galgo) / CORPO_S, em CORPOS.
+    Usa o MESMO tempo projetado do AvB e do Predictor. Sem teto, sem piso, sem reescala. Positivo = mais rapido que o mediano.
+    Componentes (em corpos): tempo base (Time Ajust./Media Time/BRT), peso, trap, largada e Post Pick."""
+    cs = CFG["CORPO_S"]
     for d in ok:
-        c_tempo = (W["tadj"] * delta(d, "tadj") + W["mtime"] * delta(d, "mtime") + W["pico"] * delta(d, "pico")) / cs
-        c_split = W["split"] * delta(d, "msplit") / cs
-        c_cat = W["cat_s"] * delta(d, "cat", False) / cs
-        c_rec = W["rec_s"] * delta(d, "rec", False) / cs
-        c_sd = W["sd"] * delta(d, "sd") / cs
-        d["ovr_comp"] = {"tempo": c_tempo, "split": c_split, "cat": c_cat, "rec": c_rec, "sd": c_sd}
-        d["overall"] = c_tempo + c_split + c_cat + c_rec + c_sd
+        t, var = projetar_tempo(d, ctx)
+        d["t_sd"] = math.sqrt(var) if var else None
+    com = [d for d in ok if d.get("t_proj") is not None]
+    if not com:
+        for d in ok:
+            d["overall"] = 0.0
+            d["ovr_comp"] = {"tempo": 0.0, "peso": 0.0, "trap": 0.0, "largada": 0.0, "postpick": 0.0}
+        return
+    ref = float(np.median([d["t_proj"] for d in com]))
+    ref_base = float(np.median([d["t_base"] for d in com]))
+    for d in ok:
+        if d.get("t_proj") is None:
+            d["overall"] = 0.0
+            d["ovr_comp"] = {"tempo": 0.0, "peso": 0.0, "trap": 0.0, "largada": 0.0, "postpick": 0.0}
+            continue
+        c = d["t_comp"]
+        d["overall"] = (ref - d["t_proj"]) / cs
+        d["ovr_comp"] = {"tempo": (ref_base - d["t_base"]) / cs, "peso": -c["peso"] / cs, "trap": -c["trap"] / cs,
+                         "largada": -c["largada"] / cs, "postpick": -c["postpick"] / cs}
 
 
 def finalizar(ds, ctx):
@@ -835,7 +953,7 @@ def finalizar(ds, ctx):
     top_split_name = ms_rank[0]["name"] if ms_rank else None
     ctx["top3_ms"] = top3_ms
 
-    calcular_overall(ok)
+    calcular_overall(ok, ctx)
     ok.sort(key=lambda x: (-x["overall"], -x.get("cat", 0.0)))
     for i, d in enumerate(ok, 1):
         d["pos"] = i
@@ -877,7 +995,8 @@ def _brt_valido(d, ctx):
 
 
 def projetar_tempo(d, ctx):
-    """(tempo projetado em s, variância em s²) ou (None, None)."""
+    """(tempo projetado em s, variância em s²) ou (None, None).
+    Grava d["t_base"] (mistura Time Ajust./Media Time/BRT) e d["t_comp"] (ajustes em s; positivo = mais lento)."""
     A = CFG["AVB"]
     partes = []
     if d.get("tadj") is not None: partes.append((A["w_tadj"], d["tadj"] + A["risk_k"] * (d.get("tadj_desc") or 0.0)))
@@ -885,18 +1004,20 @@ def projetar_tempo(d, ctx):
     brt = _brt_valido(d, ctx)
     if brt: partes.append((A["w_brt"], brt))
     if not partes: return None, None
-    t = sum(w * x for w, x in partes) / sum(w for w, _ in partes)
-    t += d.get("peso_adj", 0.0)
-    t += A["trap_sec"].get(d["trap"], 0.0)
-    if d["name"] in ctx.get("top3_ms", set()): t -= A["start_bonus"]
+    t_base = sum(w * x for w, x in partes) / sum(w for w, _ in partes)
+    peso = d.get("peso_adj", 0.0)
+    trap = A["trap_sec"].get(d["trap"], 0.0)
+    largada = -A["start_bonus"] if d["name"] in ctx.get("top3_ms", set()) else 0.0
     pp = str(ctx.get("post_pick") or "")
-    if pp and str(d["trap"]) in pp: t -= A["postpick_sec"]
+    postpick = -A["postpick_sec"] if (pp and str(d["trap"]) in pp) else 0.0
+    t = t_base + peso + trap + largada + postpick
     n = max(d.get("n_val") or len(d.get("val") or []), 1)
     sd = d.get("sd") or 0.0
     var = (n * sd ** 2 + A["sigma_k"] * A["sigma0"] ** 2) / (n + A["sigma_k"])  # encolhe o desvio para o padrão
     var = max(var, A["sigma_min"] ** 2)
     var = var + var / n + d.get("dist_var", 0.0)  # incerteza sobre a média + incerteza por diferença de distância
-    d["t_proj"] = t
+    d["t_proj"], d["t_base"] = t, t_base
+    d["t_comp"] = {"peso": peso, "trap": trap, "largada": largada, "postpick": postpick}
     return t, var
 
 
@@ -991,7 +1112,8 @@ def aplicar_calibracao(prob_pct, params):
 # ---------------------------------------------------------------------
 # REGRA ÚNICA DO AVB
 #   Obrigatórios: prob >= prob_min | conf V >= conf_min_v | conf D >= conf_min_d |
-#                 V melhor em Time Ajust. | V melhor em Méd. Time | Recup. sem sinal ruim | V não é Trombador
+#                 V melhor em Time Ajust. | V melhor em Méd. Time | Recup. sem sinal ruim | V não é Trombador |
+#                 (exige_fator_medido) nenhum dos dois com corrida convertida sem fator de distância medido
 #   Apoio (mín. apoio_min de 2): Categoria, Largada
 # ---------------------------------------------------------------------
 def _vantagem_largada(V, D, ctx):
@@ -1016,7 +1138,8 @@ def _avaliar_confronto(V, D, prob, ctx):
     apoio = sum([c_cat, c_larg])
     obrig = c_tadj and c_mtime and c_rec and c_perfil
     conf_ok = V.get("conf", 0) >= A["conf_min_v"] and D.get("conf", 0) >= A["conf_min_d"]
-    aprovado = bool(prob >= A["prob_min"] and conf_ok and obrig and apoio >= A["apoio_min"])
+    conv_ok = (V.get("conv_ok", True) and D.get("conv_ok", True)) or not A.get("exige_fator_medido", True)
+    aprovado = bool(prob >= A["prob_min"] and conf_ok and obrig and apoio >= A["apoio_min"] and conv_ok)
     score = sum([c_tadj, c_mtime, c_rec, c_perfil]) + apoio  # 0..6
     flags = {"c_tadj": c_tadj, "c_mtime": c_mtime, "c_cat": c_cat,
              "c_rec": c_rec, "c_larg": c_larg, "c_perfil": c_perfil}
@@ -1034,8 +1157,8 @@ _AVB_COLS = (["corrida_id", "registrado_em", "data", "pista", "hora", "race", "r
               "brt_V", "brt_D", "pos_V", "pos_D", "acertou", "versao"])
 
 _OVR_COLS = ["corrida_id", "registrado_em", "data", "pista", "hora", "race", "race_id", "classe", "dist",
-             "galgo", "trap", "overall", "pos_prev", "p_vit", "c_tempo", "c_split", "c_cat", "c_rec", "c_sd",
-             "tadj", "mtime", "pico", "msplit", "conf", "pos_real", "margem_corpos", "tempo_real", "versao"]
+             "galgo", "trap", "overall", "pos_prev", "p_vit", "t_proj", "t_sd", "c_tempo", "c_peso", "c_trap", "c_larg", "c_pp",
+             "tadj", "mtime", "pico", "msplit", "conf", "conv_ok", "pos_real", "margem_corpos", "tempo_real", "versao"]
 
 
 def corrida_id(dogs, ctx):
@@ -1097,7 +1220,7 @@ def registrar_previsoes(dogs, linhas, ctx):
 
 
 def registrar_overall(rank, ctx):
-    """Grava, por galgo, o Overall (corpos), a posição prevista, a probabilidade de vitória e os componentes.
+    """Grava, por galgo, o Overall (corpos), a posição prevista, a probabilidade de vitória, o tempo projetado e os componentes.
     Depois que a corrida acontece, resolver_overall_por_resultado() preenche posição real, margem (corpos) e tempo."""
     if not rank: return 0
     path = CFG["OVERALL_FILE"]
@@ -1115,10 +1238,11 @@ def registrar_overall(rank, ctx):
                 "pista": ctx.get("pista", ""), "hora": ctx.get("hora", ""), "race": ctx.get("race", ""), "race_id": ctx.get("race_id", ""),
                 "classe": ctx.get("classe", ""), "dist": ctx.get("dist", ""), "galgo": d["name"], "trap": d["trap"],
                 "overall": fmt(d.get("overall")), "pos_prev": d.get("pos", ""), "p_vit": fmt(d.get("p_vit")),
-                "c_tempo": fmt(c.get("tempo")), "c_split": fmt(c.get("split")), "c_cat": fmt(c.get("cat")),
-                "c_rec": fmt(c.get("rec")), "c_sd": fmt(c.get("sd")),
+                "t_proj": fmt(d.get("t_proj")), "t_sd": fmt(d.get("t_sd")),
+                "c_tempo": fmt(c.get("tempo")), "c_peso": fmt(c.get("peso")), "c_trap": fmt(c.get("trap")),
+                "c_larg": fmt(c.get("largada")), "c_pp": fmt(c.get("postpick")),
                 "tadj": fmt(d.get("tadj")), "mtime": fmt(d.get("mtime")), "pico": fmt(d.get("pico")),
-                "msplit": fmt(d.get("msplit")), "conf": fmt(d.get("conf")),
+                "msplit": fmt(d.get("msplit")), "conf": fmt(d.get("conf")), "conv_ok": int(bool(d.get("conv_ok", True))),
                 "pos_real": "", "margem_corpos": "", "tempo_real": "", "versao": CFG["VERSAO"]}
         if antigo: antigo.update(novo)
         else:
@@ -1128,7 +1252,9 @@ def registrar_overall(rank, ctx):
 
 
 def resolver_overall_por_resultado(data_str, linhas):
-    """Preenche posição real, margem (corpos) e tempo real dos galgos de uma data, usando a ordem de chegada lida do site."""
+    """Preenche posição real, margem (corpos) e tempo real dos galgos de uma data, usando a ordem de chegada lida do site.
+    ATENCAO: confira se a margem do site e ate o VENCEDOR (a do 3o deve ser maior que a do 2o); se for ate o galgo
+    da frente, a margem acumulada precisa ser somada."""
     path = CFG["OVERALL_FILE"]
     if not linhas or not os.path.exists(path): return 0
     por_nome = {}
@@ -1323,8 +1449,8 @@ def avaliar_criterios(path=None, versao="atual"):
 
 
 def avaliar_overall(path=None):
-    """Com o Overall e o resultado real já registrados: quantos segundos/corpos de Overall correspondem a 1 corpo real.
-    Retorna (resumo, tabela) ou (None, None) se ainda não houver amostra."""
+    """Com o Overall e o resultado real já registrados: quantos corpos reais correspondem a 1 corpo previsto,
+    e se a probabilidade de vitória (p_vit) está calibrada. Retorna (resumo, tabela) ou (None, None)."""
     path = path or CFG["OVERALL_FILE"]
     if not os.path.exists(path): return None, None
     df = pd.read_csv(path)
@@ -1337,12 +1463,22 @@ def avaliar_overall(path=None):
               "vencedor_previsto_ok": float(df[df["pos_prev"] == 1]["venceu"].mean()) if (df["pos_prev"] == 1).any() else None}
     d2 = df.dropna(subset=["margem_corpos", "overall"]).copy()
     if len(d2) >= 10:
-        # margem real (corpos atrás do vencedor) x Overall relativo ao líder da corrida
         d2["lider"] = d2.groupby("corrida_id")["overall"].transform("max")
         d2["atras_prev"] = d2["lider"] - d2["overall"]
         x, y = d2["atras_prev"].values, d2["margem_corpos"].values
         if np.std(x) > 0:
             resumo["inclinacao_corpos_reais_por_corpo_previsto"] = float(np.polyfit(x, y, 1)[0])
+    # calibração da probabilidade de vitória
+    dv = df.dropna(subset=["p_vit"]).copy()
+    if len(dv) >= 20:
+        p = (dv["p_vit"] / 100.0).clip(0.001, 0.999); y = dv["venceu"]
+        resumo["p_vit_n"] = int(len(dv))
+        resumo["p_vit_brier"] = float(((p - y) ** 2).mean())
+        resumo["p_vit_media"] = float(p.mean())
+        resumo["p_vit_acerto_medio"] = float(y.mean())
+        faixas = pd.cut(dv["p_vit"], [0, 10, 20, 30, 40, 50, 100.01], right=False)
+        resumo["p_vit_faixas"] = [{"faixa": str(f), "n": len(g), "p_media_%": round(g["p_vit"].mean(), 1),
+                                   "venceu_%": round(100 * g["venceu"].mean(), 1)} for f, g in dv.groupby(faixas, observed=True)]
     tab = df[["data", "pista", "galgo", "trap", "overall", "p_vit", "pos_prev", "pos_real", "margem_corpos"]].tail(60)
     return resumo, tab
 
@@ -1363,7 +1499,7 @@ def calibrar_escala(path=None):
 
 
 # ---------------------------------------------------------------------
-# MONTAGEM DOS AVBs
+# MONTAGEM DOS AVBS
 # ---------------------------------------------------------------------
 def montar_avbs(rank, ctx):
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 20.0]
@@ -1452,6 +1588,7 @@ def nome_marcado(d):
     if d.get("alerta_trial", False): n += " ⚠️"
     if d.get("alvo", False): n += " 🎯"
     if d.get("bloqueado", False): n += " 🚫"
+    if d.get("conv_ok") is False: n += " 📏"  # tem corrida convertida sem fator de distância medido: fora dos AvBs
     return n
 
 
@@ -1468,13 +1605,13 @@ def peso_txt(d):
 
 
 def grades_txt(d):
-    """Grades das corridas usadas. Corrida fora da distância exata da prova leva '*' (entrou pela janela de ±100m)."""
+    """Grades das corridas usadas. '*' = convertida de outra distancia COM fator medido; '†' = convertida so por proporcao."""
     D = d.get("dist_alvo")
     out = []
     for r in d.get("val", []):
         g = r["grade"] or "?"
         if D and r.get("dist") is not None and abs(r["dist"] - D) >= 1:
-            g += "*"
+            g += "*" if _slope_para(r.get("track", "")) is not None else "†"
         out.append(g)
     return "-".join(out)
 
@@ -1623,8 +1760,8 @@ def painel_validacao():
 
 
 def painel_overall():
-    """Validação do Overall em corpos: compara o Overall previsto com a margem real das corridas já fechadas."""
-    with st.expander("📐 Overall em corpos (previsto × real)"):
+    """Validação do Overall em corpos e da probabilidade de vitória, com as corridas já fechadas."""
+    with st.expander("📐 Overall e probabilidade de vitória (previsto × real)"):
         try:
             resumo, tab = avaliar_overall()
         except Exception as e:
@@ -1640,6 +1777,11 @@ def painel_overall():
         if resumo.get("inclinacao_corpos_reais_por_corpo_previsto") is not None:
             st.markdown(f"Cada corpo de diferença prevista para o líder virou **{resumo['inclinacao_corpos_reais_por_corpo_previsto']:.2f} corpos** reais "
                         "(1,00 = o Overall está na escala certa; abaixo de 1 = está exagerando as diferenças).")
+        if resumo.get("p_vit_n"):
+            st.markdown(f"Probabilidade de vitória: média prevista **{100 * resumo['p_vit_media']:.1f}%** vs. vitória real **{100 * resumo['p_vit_acerto_medio']:.1f}%** "
+                        f"(Brier {resumo['p_vit_brier']:.3f}, n={resumo['p_vit_n']}).")
+            if resumo.get("p_vit_faixas"):
+                st.dataframe(pd.DataFrame(resumo["p_vit_faixas"]), hide_index=True)
         st.dataframe(tab, hide_index=True)
 
 
@@ -1663,7 +1805,6 @@ def gerar_observacoes(rank, avbs, ctx):
         if desc: st.markdown("**Não reconhecidos (não afetam o tempo):** " + ", ".join(f"`{k}` ×{v}" for k, v in sorted(desc.items())))
         if aprox: st.markdown("**Interpretados por aproximação:** " + ", ".join(f"`{k}` → `{v}`" for k, v in sorted(aprox.items())))
         if not desc and not aprox: st.markdown("Todos os remarks foram reconhecidos exatamente.")
-    # [NOVO] a tradução dos remarks saiu da coluna Fatores e passa a ficar aqui
     with st.expander("🗒️ Remarks traduzidos por galgo"):
         for d in sorted(rank, key=lambda x: x["trap"]):
             trad = d.get("remarks_translated") or []
@@ -1671,18 +1812,39 @@ def gerar_observacoes(rank, avbs, ctx):
                 st.markdown(f"{trap_label(d)} **{html.escape(d['name'])}** ({d['perfil']}): " + ", ".join(dict.fromkeys(trad)))
             else:
                 st.markdown(f"{trap_label(d)} **{html.escape(d['name'])}** ({d['perfil']}): sem remarks reconhecidos.")
-    # [NOVO] componentes do Overall (em corpos)
-    with st.expander("🧮 Componentes do Overall (em corpos sobre o galgo mediano)"):
+    # componentes do Overall (em corpos) — o MESMO tempo projetado do AvB e do Predictor
+    with st.expander("🧮 Componentes do Overall (corpos sobre o galgo mediano)"):
         linhas = []
         for d in sorted(rank, key=lambda x: x["pos"]):
             c = d.get("ovr_comp", {})
             linhas.append({"Trap": d["trap"], "Galgo": d["name"], "Overall": round(d["overall"], 2),
-                           "Tempo": round(c.get("tempo", 0), 2), "Split": round(c.get("split", 0), 2),
-                           "Categoria": round(c.get("cat", 0), 2), "Recuperação": round(c.get("rec", 0), 2),
-                           "Regularidade": round(c.get("sd", 0), 2),
+                           "Tempo": round(c.get("tempo", 0), 2), "Peso": round(c.get("peso", 0), 2),
+                           "Trap (pista)": round(c.get("trap", 0), 2), "Largada": round(c.get("largada", 0), 2),
+                           "Post Pick": round(c.get("postpick", 0), 2),
+                           "Tempo proj. (s)": (round(d["t_proj"], 2) if d.get("t_proj") is not None else None),
+                           "± (s)": (round(d["t_sd"], 2) if d.get("t_sd") is not None else None),
                            "Prob. vitória %": (round(d["p_vit"], 1) if d.get("p_vit") is not None else None)})
         st.dataframe(pd.DataFrame(linhas), hide_index=True)
-        st.caption(f"1 corpo = {CFG['CORPO_S']:.2f} s. Valor ausente (ex.: sem Split na distância exata) conta como o galgo mediano (zero).")
+        st.caption(f"1 corpo = {CFG['CORPO_S']:.2f} s. Overall = (tempo projetado mediano − tempo projetado do galgo) ÷ 1 corpo; "
+                   "é o mesmo tempo projetado usado no AvB e no Predictor. Categoria, Recuperação e Regularidade seguem como "
+                   "critérios do AvB e na incerteza (±).")
+    with st.expander("📏 Fator de distância (velocidade por 100 m)"):
+        try:
+            tabela_f, pares_pista, pares_total = resumo_fator_dist()
+        except Exception:
+            tabela_f, pares_pista, pares_total = [], {}, 0
+        F = CFG["FATOR_DIST"]
+        if tabela_f:
+            st.dataframe(pd.DataFrame(tabela_f), hide_index=True)
+            st.caption("Negativo = o galgo fica mais lento por 100 m a mais de prova. Medido com galgos que correram duas distâncias na mesma pista.")
+        else:
+            st.markdown(f"Nenhum fator medido ainda: são necessários {F['min_pares_pista']} pares por pista "
+                        f"(ou {F['min_pares_global']} no total); há {pares_total} pares no `{CFG['CALIB_FILE']}`. "
+                        "Enquanto isso, corridas de outra distância são convertidas só por proporção (†), com incerteza grande, "
+                        "e o galgo aparece marcado com 📏 e fica fora dos AvBs.")
+        sem = [d["name"] for d in rank if d.get("conv_ok") is False]
+        if sem:
+            st.markdown("Fora dos AvBs por falta de fator medido: " + ", ".join(html.escape(n) for n in sem))
     cid = corrida_id(rank, ctx)
     with st.expander("📝 Registrar resultado (calibração dos AvBs)"):
         ordem = st.text_input("Ordem de chegada (traps do 1º ao 6º, ex.: 3-1-4-5-2-6)", key=f"res_{cid}")
