@@ -935,7 +935,7 @@ def _avaliar_confronto(V, D, prob, ctx):
 AVB_META = {}
 
 _FLAGS = ["c_tadj", "c_mtime", "c_ritmo", "c_cat", "c_rec", "c_larg", "c_perfil"]
-_AVB_COLS = (["corrida_id", "registrado_em", "data", "pista", "hora", "race", "classe", "dist",
+_AVB_COLS = (["corrida_id", "registrado_em", "data", "pista", "hora", "race", "race_id", "classe", "dist",
               "galgo_V", "trap_V", "galgo_D", "trap_D", "prob", "prob_cal", "aprovado", "criterios"]
              + _FLAGS +
              ["exibido", "tproj_V", "tproj_D", "delta_s", "sd_total", "tadj_V", "tadj_D", "mtime_V", "mtime_D",
@@ -975,7 +975,8 @@ def registrar_previsoes(dogs, linhas, ctx):
         antigo = idx.get(_chave_par(cid, V["trap"], D["trap"]))
         if antigo and antigo.get("acertou") not in (None, ""): continue
         novo = {"corrida_id": cid, "registrado_em": datetime.now().strftime("%Y-%m-%d %H:%M"), "data": str(ctx.get("today"))[:10],
-                "pista": ctx.get("pista", ""), "hora": ctx.get("hora", ""), "race": ctx.get("race", ""), "classe": ctx.get("classe", ""), "dist": ctx.get("dist", ""),
+                "pista": ctx.get("pista", ""), "hora": ctx.get("hora", ""), "race": ctx.get("race", ""), "race_id": ctx.get("race_id", ""),
+                "classe": ctx.get("classe", ""), "dist": ctx.get("dist", ""),
                 "galgo_V": V["name"], "trap_V": V["trap"], "galgo_D": D["name"], "trap_D": D["trap"],
                 "prob": round(prob_raw, 2), "prob_cal": "" if prob_cal is None else round(prob_cal, 2),
                 "aprovado": int(aprovado), "criterios": crit, "exibido": int(aprovado),
@@ -1009,6 +1010,87 @@ def registrar_resultado(cid, ordem):
         n += 1
     if n: _gravar_avb_csv(path, rows)
     return n
+
+def resolver_pelo_historico(calib_path=None, avb_path=None):
+    """Preenche SOZINHO o resultado dos confrontos pendentes, sem digitar nada.
+    Usa o histórico dos galgos (calibracao_corridas.csv): depois que a corrida acontece, ela aparece no histórico de
+    cada galgo com a posição final. Quando os DOIS galgos do confronto já têm essa corrida registrada, o confronto é resolvido.
+    Casa por (galgo, data, distância e, se houver mais de uma, a trap). Empate ou posição ausente = continua pendente."""
+    calib_path = calib_path or CFG["CALIB_FILE"]
+    avb_path = avb_path or CFG["AVB_FILE"]
+    if not (os.path.exists(calib_path) and os.path.exists(avb_path)): return 0
+    rows = _ler_avb_csv(avb_path)
+    pend = [r for r in rows if r.get("acertou") in (None, "")]
+    if not pend: return 0
+    datas = {r.get("data") for r in pend}
+    hist = {}
+    with open(calib_path, newline="", encoding="utf-8") as f:
+        for h in csv.DictReader(f):
+            if h.get("data") in datas and h.get("fin") not in (None, ""):
+                hist.setdefault((h.get("galgo"), h.get("data")), []).append(h)
+
+    def achar(nome, data, dist, trap):
+        ok = []
+        for h in hist.get((nome, data), []):
+            try:
+                if dist not in (None, "") and h.get("dist") not in (None, "") and abs(float(h["dist"]) - float(dist)) >= 1:
+                    continue
+            except Exception: pass
+            ok.append(h)
+        if len(ok) > 1:
+            ok = [h for h in ok if str(h.get("trap")) == str(trap)] or ok
+        if len(ok) != 1: return None
+        try: return int(float(ok[0]["fin"]))
+        except Exception: return None
+
+    n = 0
+    for r in pend:
+        fv = achar(r.get("galgo_V"), r.get("data"), r.get("dist"), r.get("trap_V"))
+        fd = achar(r.get("galgo_D"), r.get("data"), r.get("dist"), r.get("trap_D"))
+        if fv is None or fd is None or fv == fd: continue
+        r["pos_V"], r["pos_D"], r["acertou"] = fv, fd, (1 if fv < fd else 0)
+        n += 1
+    if n: _gravar_avb_csv(avb_path, rows)
+    return n
+
+def resolver_por_resultado(data_str, linhas):
+    """Fecha os confrontos pendentes de uma data usando a ordem de chegada lida pelo site (aba Resultado).
+    linhas: lista de dicts com 'nome' e 'pos' (e 'trap'). Só fecha o confronto se os DOIS galgos aparecem na lista com
+    posições diferentes. Retorna quantos confrontos foram resolvidos."""
+    path = CFG["AVB_FILE"]
+    if not linhas or not os.path.exists(path): return 0
+    pos = {}
+    for l in linhas:
+        try: pos[str(l["nome"]).strip().lower()] = int(l["pos"])
+        except Exception: pass
+    rows = _ler_avb_csv(path); n = 0
+    dia = str(data_str)[:10]
+    for r in rows:
+        if r.get("acertou") not in (None, "") or r.get("data") != dia: continue
+        pv = pos.get(str(r.get("galgo_V", "")).strip().lower())
+        pd_ = pos.get(str(r.get("galgo_D", "")).strip().lower())
+        if pv is None or pd_ is None or pv == pd_: continue
+        r["pos_V"], r["pos_D"], r["acertou"] = pv, pd_, (1 if pv < pd_ else 0)
+        n += 1
+    if n: _gravar_avb_csv(path, rows)
+    return n
+
+def corridas_pendentes(avb_path=None):
+    """Lista [(race_id, data)] das corridas com confrontos ainda sem resultado (só as que têm race_id gravado)."""
+    rows = _ler_avb_csv(avb_path or CFG["AVB_FILE"])
+    vistos = []
+    for r in rows:
+        if r.get("acertou") in (None, "") and r.get("race_id"):
+            k = (str(r["race_id"]), r.get("data"))
+            if k not in vistos: vistos.append(k)
+    return vistos
+
+def contar_pendentes(avb_path=None):
+    """(pendentes, resolvidos) na versão atual do modelo."""
+    rows = _ler_avb_csv(avb_path or CFG["AVB_FILE"])
+    rows = [r for r in rows if r.get("versao") == CFG["VERSAO"]]
+    res = sum(1 for r in rows if r.get("acertou") not in (None, ""))
+    return len(rows) - res, res
 
 def previsoes_bytes():
     path = CFG["AVB_FILE"]
@@ -1085,6 +1167,8 @@ def montar_avbs(rank, ctx):
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 20.0]
     if len(elig) < 2: return []
 
+    try: resolver_pelo_historico()  # fecha sozinho os confrontos de corridas anteriores (sem digitar resultado)
+    except Exception: pass
     params = _params_calibracao()
     s1, linhas_log = [], []
     AVB_META.clear()
@@ -1311,6 +1395,12 @@ def painel_validacao():
             st.markdown("Compare **acerto_%** com **prob_media**. A **odd_segura** usa o limite inferior do intervalo: só vale pagar abaixo dela se você aceitar o pior cenário.")
             st.dataframe(tab, hide_index=True)
         n_res = 0 if df_all is None else len(df_all)
+        try:
+            pend, resolv = contar_pendentes()
+            st.markdown(f"Resultados: **{resolv} confrontos resolvidos** e {pend} pendentes. "
+                        "Os resultados são preenchidos sozinhos quando os galgos aparecem em análises seguintes; "
+                        "a digitação manual é opcional.")
+        except Exception: pass
         params = _params_calibracao()
         if params:
             st.markdown(f"Calibração **ativa** (n={params['n']}): prob_cal = sigmoid({params['a']:.2f}·logit(prob_bruta) + {params['b']:+.2f})")
