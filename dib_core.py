@@ -610,8 +610,7 @@ def finalizar(ds, ctx):
         if hi == lo: return float(maxp)
         return maxp * (hi - d[key]) / (hi - lo) if invert else maxp * (d[key] - lo) / (hi - lo)
 
-    # Nova Fórmula: Escala Logística Realista (Fechada em 0-100)
-    # O 1º colocado sempre ficará entre 70 e 85, o último entre 30 e 50.
+    # 1. Calcula a Nota Bruta (Força Pura)
     for d in ok:
         vel_norm = (pts_prop("tadj", 40.0, d) +
                     pts_prop("mtime", 30.0, d) +
@@ -622,16 +621,39 @@ def finalizar(ds, ctx):
         rec_norm = pts_prop("rec", 10.0, d, False, True)
         cat_norm = pts_prop("cat", 10.0, d, False)
         
-        # Bruto máximo: 145
-        bruto = vel_norm + conf_norm + rec_norm + cat_norm
-        
-        # Compressão Logística: Transforma os 145 pontos em uma nota de 30 a 90
-        # O fator 0.045 amortece as diferenças extremas.
-        d["overall"] = 100.0 / (1.0 + math.exp(-0.045 * (bruto - 75.0)))
-        
+        d["bruto"] = vel_norm + conf_norm + rec_norm + cat_norm
         d["fatores"] = []
 
+    # 2. Calcula o tempo projetado para todos (se não existir)
+    for d in ok:
+        if d.get("tproj") is None: projetar_tempo(d, ctx)
+
+    # 3. Encontra o líder e calcula a diferença de tempo real
+    valid_times = [d["tproj"] for d in ok if d.get("tproj") is not None]
+    if not valid_times:
+        # Fallback de segurança
+        for d in ok: d["overall"] = 50.0
+    else:
+        melhor_t = min(valid_times)
+        
+        for d in ok:
+            if d.get("tproj") is None:
+                d["overall"] = 10.0
+                d["gap_txt"] = "S/T"
+                continue
+                
+            delta_t = d["tproj"] - melhor_t
+            
+            # Converte a diferença de tempo em uma penalidade (1 segundo = 40 pontos de perda)
+            penalidade = delta_t * 40.0
+            
+            # O Overall é a nota base menos a punição pela distância até o líder
+            d["overall"] = d["bruto"] - penalidade
+            d["gap_txt"] = f"+{delta_t:.2f}s"
+
+    # 4. Ordena e define os insights
     ok.sort(key=lambda x: -x["overall"])
+    
     for i, d in enumerate(ok, 1):
         d["pos"] = i
         d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"]
@@ -639,6 +661,10 @@ def finalizar(ds, ctx):
         top2_safe = (i <= 2) and (rec is not None and rec >= -10.0)
         d["alvo"] = (d["name"] not in top3_ms) and (d["name"] != top_split_name) and (rec is not None and rec < -10.0) and not top2_safe
         d["elegivel"] = not d["bloqueado"]
+        
+        # Formata o texto de diferença para exibir no card
+        if i == 1: d["gap_txt"] = "Líder"
+        
     return ok, top3_ms
 
 def _brt_valido(d, ctx):
@@ -676,7 +702,7 @@ def projetar_tempo(d, ctx):
     var = (n * sd ** 2 + A["sigma_k"] * A["sigma0"] ** 2) / (n + A["sigma_k"])
     var = max(var, A["sigma_min"] ** 2)
     var = var + var / n
-    d["t_proj"] = t
+    d["tproj"] = t
     return t, var
 
 def _dif_proj(V, D, ctx):
@@ -1023,8 +1049,11 @@ def tabela_projecao(ds):
         rec_cell = (get_rank_html(d["rec"], rk["rec"][i], max_rk["rec"]) + f"<br><small>{d['rec_txt'].split()[1]}</small>"
                     if d.get("rec") is not None else "-")
 
+        # Adiciona o gap_txt (diferença para o líder) ao lado do Overall
+        gap_txt = f" <small style='color:#888;font-weight:normal'>({d.get('gap_txt', '')})</small>" if d.get('gap_txt') and d['pos'] > 1 else ""
+
         rows.append([
-            trap_label(d), nome_marcado(d) + brt_html(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}",
+            trap_label(d), nome_marcado(d) + brt_html(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}{gap_txt}",
             f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", f"{perfil_e} {d['perfil']}", grades_txt(d),
             peso_txt(d), dias_txt,
             split_display, get_rank_html(d["time"], rk["time"][i], max_rk["time"]), msplit_display,
