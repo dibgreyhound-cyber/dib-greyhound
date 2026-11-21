@@ -1015,20 +1015,49 @@ def tabela_projecao(ds):
     rows = []
     for i, d in enumerate(ds):
         if d["nd"]:
+            # vacant entra na ordem correta: Trap, Galgo, Overall, Cat, Perfil, Remarks...
             rows.append([trap_label(d), nome_marcado(d) + brt_html(d)] + ["-"] * 15)
             continue
 
-        # [NOVO] Coluna "Remarks": lista traduzida, truncada em 4 itens com tooltip no hover
+        # Coluna "Remarks": quebra em 2 linhas com limite de caracteres e tooltip para o resto
         rem_list = sorted(set(d.get("remarks_translated") or []))
         if not rem_list:
             rem_cell = "-"
-        elif len(rem_list) > 4:
-            rem_short = ", ".join(rem_list[:4]) + f" (+{len(rem_list) - 4})"
-            rem_cell = (f"<small style='color:#aaa' title='{html.escape(', '.join(rem_list))}'>"
-                        f"{html.escape(rem_short)}</small>")
         else:
-            rem_full = ", ".join(rem_list)
-            rem_cell = f"<small style='color:#aaa'>{html.escape(rem_full)}</small>"
+            full_text = ", ".join(rem_list)
+            # Se passar de ~35 caracteres, quebra na última vírgula antes do limite
+            if len(full_text) > 35:
+                # Pega os primeiros itens que couberem em ~35 caracteres
+                short_items = []
+                char_count = 0
+                for item in rem_list:
+                    if char_count + len(item) > 32: break
+                    short_items.append(item)
+                    char_count += len(item) + 2 # +2 pela vírgula e espaço
+                
+                # Se nenhum item coube (item único muito longo), fatia o texto
+                if not short_items:
+                    short_items = [rem_list[0][:30] + "..."]
+                
+                rem_short = ", ".join(short_items)
+                # Adiciona reticências visuais se houver mais itens
+                if len(short_items) < len(rem_list):
+                    rem_short += "..."
+                
+                # Quebra em duas linhas visuais se ainda estiver longo
+                if len(rem_short) > 16 and ", " in rem_short:
+                    parts = rem_short.rsplit(", ", 1)
+                    rem_short = f"{parts[0]},<br>{parts[1]}"
+                
+                rem_cell = (f"<div style='min-width:130px; max-width:150px; white-space:normal; line-height:1.2; font-size:11px; color:#aaa;' "
+                            f"title='{html.escape(full_text)}'>{html.escape(rem_short).replace('&lt;br&gt;', '<br>')}</div>")
+            else:
+                # Se for curto, pode exibir tudo com quebra de linha se houver vírgula
+                if len(full_text) > 16 and ", " in full_text:
+                    parts = full_text.rsplit(", ", 1)
+                    rem_cell = f"<div style='min-width:130px; max-width:150px; white-space:normal; line-height:1.2; font-size:11px; color:#aaa;'>{html.escape(parts[0])},<br>{html.escape(parts[1])}</div>"
+                else:
+                    rem_cell = f"<div style='min-width:130px; max-width:150px; white-space:normal; line-height:1.2; font-size:11px; color:#aaa;'>{html.escape(full_text)}</div>"
 
         perfil_e = {"Limpo": "✅", "Irregular": "⚠️", "Trombador": "🔴"}[d["perfil"]]
         dias_txt = f"{d['dias']} ⚠️" if d['dias'] > 21 else str(d['dias'])
@@ -1039,9 +1068,10 @@ def tabela_projecao(ds):
         rec_cell = (get_rank_html(d["rec"], rk["rec"][i], max_rk["rec"]) + f"<br><small>{d['rec_txt'].split()[1]}</small>"
                     if d.get("rec") is not None else "-")
 
+        # Alteração da ordem: Trap, Galgo, Overall, Cat, Perfil, Remarks, Grades...
         rows.append([
             trap_label(d), nome_marcado(d) + brt_html(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {d['overall']:.1f}",
-            f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", rem_cell, f"{perfil_e} {d['perfil']}", grades_txt(d),
+            f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", f"{perfil_e} {d['perfil']}", rem_cell, grades_txt(d),
             peso_txt(d), dias_txt,
             split_display, get_rank_html(d["time"], rk["time"][i], max_rk["time"]), msplit_display,
             get_rank_html(d["mtime"], rk["mtime"][i], max_rk["mtime"]),
@@ -1049,7 +1079,9 @@ def tabela_projecao(ds):
             get_rank_html(d.get("metrica"), rk["metrica"][i], max_rk["metrica"]),
             rec_cell, f"{d['conf']:.0f}%"
         ])
-    return tbl(["Trap", "Galgo", "Overall", "Cat", "Remarks", "Perfil", "Grades", "Peso", "Dias",
+        
+    # Atualização do cabeçalho para refletir a nova ordem
+    return tbl(["Trap", "Galgo", "Overall", "Cat", "Perfil", "Remarks", "Grades", "Peso", "Dias",
                 "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica",
                 "Recup. Média", "Conf."], rows, sticky=2, w1=64, w2=125)
 
