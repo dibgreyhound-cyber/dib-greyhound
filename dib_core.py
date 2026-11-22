@@ -165,6 +165,11 @@ CFG = {
             "conf_min_d": 40.0,      # confiança mínima do adversário (D)
             "apoio_min": 1,          # mínimo de critérios de apoio (categoria, largada) de 2
             "exige_fator_medido": True,  # galgo com corrida convertida SEM fator de distancia medido nao entra em AvB
+            # ---- Nível ALTERNATIVO (regras relaxadas; aparece com 🔹 e é validado à parte do principal) ----
+            "alt": {"ativo": True, "prob_min": 58.0, "conf_min_v": 40.0, "conf_min_d": 40.0, "apoio_min": 0,
+                    "um_tempo_basta": True,         # V precisa ser melhor em Time Ajust. OU Méd. Time (e não nos dois)
+                    "perfil_relativo": True,        # só reprova se V é Trombador e D não é
+                    "alvo_como_adversario": True},  # galgo marcado 🎯 pode ser o ADVERSÁRIO (nunca o escolhido)
             # ---- Calibração logística (ativa só com amostra suficiente) ----
             "calib_min_n": 150, "calib_lambda": 5.0},
     "AVB_FILE": "avb_previsoes.csv",
@@ -1208,8 +1213,22 @@ def _avaliar_confronto(V, D, prob, ctx):
     aprovado = bool(prob >= A["prob_min"] and conf_ok and obrig and apoio >= A["apoio_min"] and conv_ok)
     score = sum([c_tadj, c_mtime, c_rec, c_perfil]) + apoio  # 0..6
     flags = {"c_tadj": c_tadj, "c_mtime": c_mtime, "c_cat": c_cat,
-             "c_rec": c_rec, "c_larg": c_larg, "c_perfil": c_perfil}
+             "c_rec": c_rec, "c_larg": c_larg, "c_perfil": c_perfil,
+             # resultado de cada regra do nível principal (para o diagnóstico "por que não há AvB")
+             "r_prob": prob >= A["prob_min"], "r_conf": conf_ok, "r_tempos": bool(c_tadj and c_mtime), "r_rec": c_rec,
+             "r_perfil": c_perfil, "r_apoio": apoio >= A["apoio_min"], "r_conv": conv_ok}
     return aprovado, score, flags
+
+
+def _aprovado_alt(V, D, prob, flags):
+    """Regras relaxadas do nível alternativo (config em CFG["AVB"]["alt"])."""
+    A = CFG["AVB"]["alt"]
+    conf_ok = V.get("conf", 0) >= A["conf_min_v"] and D.get("conf", 0) >= A["conf_min_d"]
+    tempos = (flags["c_tadj"] or flags["c_mtime"]) if A.get("um_tempo_basta", True) else (flags["c_tadj"] and flags["c_mtime"])
+    if A.get("perfil_relativo", True): perfil = not (V.get("perfil") == "Trombador" and D.get("perfil") != "Trombador")
+    else: perfil = flags["c_perfil"]
+    apoio = int(bool(flags["c_cat"])) + int(bool(flags["c_larg"]))
+    return bool(prob >= A["prob_min"] and conf_ok and tempos and flags["c_rec"] and perfil and apoio >= A["apoio_min"] and flags["r_conv"])
 
 
 # (nome_V, nome_D) -> ("AVB", nº de critérios 0-6, calibrada?)
@@ -1217,7 +1236,7 @@ AVB_META = {}
 
 _FLAGS = ["c_tadj", "c_mtime", "c_cat", "c_rec", "c_larg", "c_perfil"]
 _AVB_COLS = (["corrida_id", "registrado_em", "data", "pista", "hora", "race", "race_id", "classe", "dist",
-              "galgo_V", "trap_V", "galgo_D", "trap_D", "prob", "prob_cal", "aprovado", "criterios"]
+              "galgo_V", "trap_V", "galgo_D", "trap_D", "prob", "prob_cal", "aprovado", "nivel", "criterios"]
              + _FLAGS +
              ["exibido", "tproj_V", "tproj_D", "delta_s", "sd_total", "tadj_V", "tadj_D", "mtime_V", "mtime_D",
               "brt_V", "brt_D", "pos_V", "pos_D", "acertou", "versao"])
@@ -1273,7 +1292,7 @@ def registrar_previsoes(dogs, linhas, ctx):
                 "classe": ctx.get("classe", ""), "dist": ctx.get("dist", ""),
                 "galgo_V": V["name"], "trap_V": V["trap"], "galgo_D": D["name"], "trap_D": D["trap"],
                 "prob": round(prob_raw, 2), "prob_cal": "" if prob_cal is None else round(prob_cal, 2),
-                "aprovado": int(aprovado), "criterios": crit, "exibido": int(aprovado),
+                "aprovado": int(aprovado), "nivel": int(flags.get("nivel", 1 if aprovado else 0)), "criterios": crit, "exibido": int(aprovado),
                 "tproj_V": fmt(tV), "tproj_D": fmt(tD), "delta_s": fmt(delta), "sd_total": fmt(sd_tot),
                 "tadj_V": fmt(V.get("tadj")), "tadj_D": fmt(D.get("tadj")), "mtime_V": fmt(V.get("mtime")), "mtime_D": fmt(D.get("mtime")),
                 "brt_V": fmt(V.get("brt")), "brt_D": fmt(D.get("brt")), "pos_V": "", "pos_D": "", "acertou": "", "versao": CFG["VERSAO"]}
@@ -1473,7 +1492,7 @@ def _wilson(k, n, z=1.96):
     return max(0.0, centro - marg), min(1.0, centro + marg)
 
 
-def avaliar_previsoes(path=None, so_exibidos=False, versao="atual"):
+def avaliar_previsoes(path=None, so_exibidos=False, versao="atual", nivel=None):
     """Faixa de probabilidade x acerto real (com intervalo de 95%), Brier e log-loss.
     Usa a probabilidade que foi exibida (calibrada, se houve) ou a bruta."""
     df = _df_resolvidos(path, versao)
@@ -1481,6 +1500,9 @@ def avaliar_previsoes(path=None, so_exibidos=False, versao="atual"):
     if so_exibidos:
         df["exibido"] = pd.to_numeric(df.get("exibido"), errors="coerce")
         df = df[df["exibido"] == 1]
+    if nivel is not None:
+        df["nivel"] = pd.to_numeric(df.get("nivel"), errors="coerce")
+        df = df[df["nivel"] == nivel]
     if df.empty: return None, {}
     pc = pd.to_numeric(df["prob_cal"], errors="coerce") if "prob_cal" in df.columns else pd.Series(np.nan, index=df.index)
     df["p_usada"] = pc.where(pc.notna(), df["prob"])
@@ -1567,33 +1589,59 @@ def calibrar_escala(path=None):
 # ---------------------------------------------------------------------
 # MONTAGEM DOS AVBS
 # ---------------------------------------------------------------------
+AVB_DIAG = {}  # diagnóstico da última corrida montada (usado na caixa "AvBs desta corrida")
+
+
 def montar_avbs(rank, ctx):
+    AVB_DIAG.clear()
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 20.0]
     if len(elig) < 2: return []
 
     try: resolver_pelo_historico()  # fecha sozinho os confrontos de corridas anteriores (sem digitar resultado)
     except Exception: pass
     params = _params_calibracao()
+    alt = CFG["AVB"].get("alt", {})
     s1, linhas_log = [], []
     AVB_META.clear()
+    diag = {"cid": corrida_id(rank, ctx), "pares": 0, "n_p": 0, "n_alt": 0, "motivos": {}, "unico": {},
+            "bloqueados": [d["name"] for d in elig if d.get("bloqueado")], "alvos": [d["name"] for d in elig if d.get("alvo")]}
     for i in range(len(elig)):
         for j in range(i + 1, len(elig)):
             A, B = elig[i], elig[j]
-            if A.get("bloqueado") or A.get("alvo") or B.get("bloqueado") or B.get("alvo"): continue
+            if A.get("bloqueado") or B.get("bloqueado"): continue
+            diag["pares"] += 1
             prob_A = calc_prob(A, B, rank, ctx)
             V, D, prob_raw = (A, B, prob_A) if prob_A >= 50.0 else (B, A, 100.0 - prob_A)
             prob = aplicar_calibracao(prob_raw, params)
             aprovado, crit, flags = _avaliar_confronto(V, D, prob, ctx)
-            if aprovado: s1.append((V, D, prob, crit))
-            linhas_log.append((V, D, prob_raw, (prob if params else None), aprovado, crit, flags))
+            tem_alvo = bool(V.get("alvo") or D.get("alvo"))
+            principal = bool(aprovado and not tem_alvo)
+            nivel = 1 if principal else 0
+            if not principal and alt.get("ativo"):
+                alvo_ok = (not V.get("alvo")) and (not D.get("alvo") or alt.get("alvo_como_adversario", True))
+                if alvo_ok and _aprovado_alt(V, D, prob, flags): nivel = 2
+            flags["nivel"] = nivel
+            motivos = [nome for nome, ok in (("probabilidade abaixo do mínimo", flags["r_prob"]), ("confiança baixa", flags["r_conf"]),
+                                             ("não é melhor nos dois tempos (Time Ajust. e Méd. Time)", flags["r_tempos"]),
+                                             ("recuperação ruim", flags["r_rec"]), ("escolhido é Trombador", flags["r_perfil"]),
+                                             ("sem apoio de categoria/largada", flags["r_apoio"]),
+                                             ("distância convertida sem fator medido 📏", flags["r_conv"])) if not ok]
+            if tem_alvo: motivos.append("galgo marcado como alvo 🎯")
+            for m in motivos: diag["motivos"][m] = diag["motivos"].get(m, 0) + 1
+            if len(motivos) == 1: diag["unico"][motivos[0]] = diag["unico"].get(motivos[0], 0) + 1
+            if nivel == 1: diag["n_p"] += 1
+            elif nivel == 2: diag["n_alt"] += 1
+            if nivel: s1.append((V, D, prob, crit, nivel))
+            linhas_log.append((V, D, prob_raw, (prob if params else None), principal, crit, flags))
 
-    s1.sort(key=lambda x: (-x[2], -x[3]))  # maior probabilidade primeiro
+    s1.sort(key=lambda x: (x[4], -x[2], -x[3]))  # principais primeiro; em cada nível, maior probabilidade primeiro
     try: registrar_previsoes(rank, linhas_log, ctx)
     except Exception: pass
+    AVB_DIAG.update(diag)
     out = []
-    for V, D, prob, crit in s1:
-        AVB_META[(V["name"], D["name"])] = ("AVB", crit, params is not None)
-        out.append((V, D, prob, True))  # formato (V, D, prob, star): app.py continua desempacotando 4 itens
+    for V, D, prob, crit, nivel in s1:
+        AVB_META[(V["name"], D["name"])] = ("AVB", crit, params is not None, nivel)
+        out.append((V, D, prob, nivel == 1))  # (V, D, prob, star): star=True só no principal; app.py continua desempacotando 4 itens
     return out
 
 
@@ -1739,7 +1787,8 @@ def tabela_avb(lista, titulo):
             elif val_v < val_d: v_str, d_str = f"<span style='color:#ff4b4b'>{v_str}</span>", f"<span style='color:#12873a;font-weight:bold'>{d_str}</span>"
         return v_str, d_str
 
-    badge = "<span style='color:#FFD700;font-weight:bold;margin-right:6px;' title='AvB aprovado'>★</span>"
+    badge = "<span style='color:#FFD700;font-weight:bold;margin-right:6px;' title='AvB principal'>★</span>"
+    badge_alt = "<span style='margin-right:6px;' title='AvB alternativo (regras relaxadas)'>🔹</span>"
 
     rows = []
     for i, item in enumerate(lista):
@@ -1747,6 +1796,7 @@ def tabela_avb(lista, titulo):
         meta = AVB_META.get((V["name"], D["name"]))
         score_crit = meta[1] if meta else 0
         calibrada = bool(meta[2]) if meta and len(meta) > 2 else False
+        nivel = meta[3] if meta and len(meta) > 3 else 1
 
         if i > 0: rows.append(["<hr>"])
 
@@ -1768,7 +1818,7 @@ def tabela_avb(lista, titulo):
         )
 
         rows.append([
-            f"{badge}{trap_label(V)} - {nome_marcado(V)}{brt_html(V)}",
+            f"{badge if nivel == 1 else badge_alt}{trap_label(V)} - {nome_marcado(V)}{brt_html(V)}",
             ov_v, cat_v, V['perfil'], grades_txt(V),
             peso_txt(V), f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, me_v, rec_v, f"{V['conf']:.0f}%",
             prob_cell
@@ -1782,11 +1832,30 @@ def tabela_avb(lista, titulo):
 
     heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica", "Recup.", "Conf.", "Probabilidade"]
     st.markdown(tbl(heads, rows, sticky=1, w1=190), unsafe_allow_html=True)
+    if any((AVB_META.get((it[0]["name"], it[1]["name"])) or (0, 0, 0, 1))[3] == 2 for it in lista):
+        st.caption("★ principal (regras completas) · 🔹 alternativo (regras relaxadas, em validação à parte)")
 
 
 # =====================================================================
 # PAINEL DE VALIDAÇÃO + OBSERVAÇÕES
 # =====================================================================
+def painel_diagnostico_avb(rank, ctx):
+    """Mostra por que os confrontos desta corrida foram aprovados ou reprovados, e qual regra mais trava."""
+    dg = AVB_DIAG
+    try: cid = corrida_id(rank, ctx)
+    except Exception: return
+    if not dg or dg.get("cid") != cid: return
+    with st.expander(f"🧭 AvBs desta corrida: {dg['n_p']} principal(is), {dg['n_alt']} alternativo(s)"):
+        st.markdown(f"{dg['pares']} confrontos avaliados.")
+        if dg["bloqueados"]: st.markdown("Fora dos confrontos por **confiança baixa (🚫)**: " + ", ".join(html.escape(n) for n in dg["bloqueados"]))
+        if dg["alvos"]: st.markdown("Marcados como **alvo (🎯)**: " + ", ".join(html.escape(n) for n in dg["alvos"]) + " (só entram como adversário no nível 🔹).")
+        if dg["motivos"]:
+            linhas = [{"regra que reprova": m, "confrontos reprovados": n, "só ela reprova": dg["unico"].get(m, 0)}
+                      for m, n in sorted(dg["motivos"].items(), key=lambda x: -x[1])]
+            st.dataframe(pd.DataFrame(linhas), hide_index=True)
+            st.caption("'Só ela reprova' = quantos confrontos passariam se somente essa regra fosse retirada: mostra onde está o gargalo.")
+
+
 def painel_validacao():
     with st.expander("📊 Validação dos AvBs (acerto real × probabilidade)"):
         try:
@@ -1807,6 +1876,15 @@ def painel_validacao():
                            "(veja ic95_inf/sup). Mantenha stakes baixos até a taxa se sustentar.")
             st.markdown("Compare **acerto_%** com **prob_media**. A **odd_segura** usa o limite inferior do intervalo: só vale pagar abaixo dela se você aceitar o pior cenário.")
             st.dataframe(tab, hide_index=True)
+        try:
+            tab2, met2 = avaliar_previsoes(nivel=2)
+        except Exception:
+            tab2, met2 = None, {}
+        if tab2 is not None and not tab2.empty:
+            st.markdown(f"**🔹 AvBs alternativos:** {met2['n']} resolvidos em {met2['corridas']} corridas · "
+                        f"acerto real **{100*met2['acerto']:.1f}%** vs. prob. média {100*met2['prob_media']:.1f}%")
+            st.dataframe(tab2, hide_index=True)
+            st.caption("Compare com os principais. Se o acerto dos 🔹 se sustentar perto do prometido, as regras relaxadas podem virar o padrão.")
         n_res = 0 if df_all is None else len(df_all)
         try:
             pend, resolv = contar_pendentes()
@@ -1924,6 +2002,7 @@ def gerar_observacoes(rank, avbs, ctx):
             else: st.warning("Nenhum confronto atualizado. Confira a ordem digitada.")
         _pv = previsoes_bytes()
         if _pv: st.download_button("Baixar avb_previsoes.csv", _pv, file_name="avb_previsoes.csv", mime="text/csv", key=f"dl_avb_{cid}")
+    painel_diagnostico_avb(rank, ctx)
     painel_validacao()
     painel_overall()
     st.markdown("#### 🏁 Leitura Tática da Corrida")
@@ -1987,3 +2066,4 @@ def gerar_observacoes(rank, avbs, ctx):
 
     for ins in insights[:4]:
         st.markdown(f"- {ins}")
+                                   
