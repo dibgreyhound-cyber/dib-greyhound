@@ -992,6 +992,23 @@ def _calcular_shrink(ok, ctx):
     ctx["_shrink"] = {"ref": float(np.median(tb)), "tau2": tau2}
 
 
+def _overall_de_pvit(ok):
+    """UNIFICA classificacao, Overall e Predictor: a ordem e o Overall passam a vir da probabilidade de vitoria (p_vit).
+    Overall (corpos) = escala_s * ln(p_i / p_ultimo) / CORPO_S, com escala_s = mediana do desvio dos galgos / 1.7
+    (equivalente a um modelo logistico de vitoria). Sempre >= 0; o ultimo colocado = 0; mesma ordem do Predictor.
+    O Overall baseado so no tempo medio fica em d["overall_tempo"] (referencia)."""
+    cs = CFG["CORPO_S"]
+    for d in ok: d["overall_tempo"] = d.get("overall", 0.0)
+    com = [d for d in ok if d.get("p_vit") is not None]
+    if len(com) < 2: return
+    sds = [d["t_sd"] for d in com if d.get("t_sd")]
+    esc = (float(np.median(sds)) if sds else 0.3) / 1.7
+    lp = {id(d): math.log(max(d["p_vit"], 0.05)) for d in com}
+    base = min(lp.values())
+    for d in ok:
+        d["overall"] = esc * (lp[id(d)] - base) / cs if id(d) in lp else 0.0
+
+
 def finalizar(ds, ctx):
     try: registrar_calibracao(ds)
     except Exception: pass
@@ -1004,7 +1021,10 @@ def finalizar(ds, ctx):
 
     _calcular_shrink(ok, ctx)
     calcular_overall(ok, ctx)
-    ok.sort(key=lambda x: (-x["overall"], -x.get("cat", 0.0)))
+    try: calcular_prob_vitoria(ok, ctx)
+    except Exception: pass
+    _overall_de_pvit(ok)
+    ok.sort(key=lambda x: (-(x.get("p_vit") or 0.0), -x["overall"], -x.get("cat", 0.0)))
     for i, d in enumerate(ok, 1):
         d["pos"] = i
         d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"]
@@ -1015,8 +1035,6 @@ def finalizar(ds, ctx):
                      and rec is not None and rec < -10.0 and not top2_safe)
         d["elegivel"] = not d["bloqueado"]
 
-    try: calcular_prob_vitoria(ok, ctx)
-    except Exception: pass
     try: registrar_overall(ok, ctx)
     except Exception: pass
     return ok, top3_ms
@@ -2066,4 +2084,3 @@ def gerar_observacoes(rank, avbs, ctx):
 
     for ins in insights[:4]:
         st.markdown(f"- {ins}")
-                                   
