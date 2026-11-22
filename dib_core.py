@@ -162,11 +162,11 @@ CFG = {
             # ---- Regra ÚNICA de aprovação do AvB ----
             "prob_min": 62.0,        # probabilidade mínima (RECALIBRAR: o modelo mudou)
             "conf_min_v": 60.0,      # confiança mínima do galgo escolhido (V)
-            "conf_min_d": 40.0,      # confiança mínima do adversário (D)
+            "conf_min_d": 0.0,       # confiança mínima do adversário (D): alvo/bloqueado podem ser adversário
             "apoio_min": 1,          # mínimo de critérios de apoio (categoria, largada) de 2
             "exige_fator_medido": True,  # galgo com corrida convertida SEM fator de distancia medido nao entra em AvB
             # ---- Nível ALTERNATIVO (regras relaxadas; aparece com 🔹 e é validado à parte do principal) ----
-            "alt": {"ativo": True, "prob_min": 58.0, "conf_min_v": 40.0, "conf_min_d": 40.0, "apoio_min": 0,
+            "alt": {"ativo": True, "prob_min": 58.0, "conf_min_v": 40.0, "conf_min_d": 0.0, "apoio_min": 0,
                     "um_tempo_basta": True,         # V precisa ser melhor em Time Ajust. OU Méd. Time (e não nos dois)
                     "perfil_relativo": True,        # só reprova se V é Trombador e D não é
                     "alvo_como_adversario": True},  # galgo marcado 🎯 pode ser o ADVERSÁRIO (nunca o escolhido)
@@ -1216,8 +1216,9 @@ def _vantagem_largada(V, D, ctx):
 
 def _avaliar_confronto(V, D, prob, ctx):
     A = CFG["AVB"]
-    c_tadj = (V.get("tadj") is not None and D.get("tadj") is not None and V["tadj"] < D["tadj"])
-    c_mtime = (V.get("mtime") is not None and D.get("mtime") is not None and V["mtime"] < D["mtime"])
+    # Adversario (D) incerto pode desafiar: se ele nao tem o tempo (poucos dados), basta o escolhido (V) ter e ser conhecido
+    c_tadj = (V.get("tadj") is not None and (D.get("tadj") is None or V["tadj"] < D["tadj"]))
+    c_mtime = (V.get("mtime") is not None and (D.get("mtime") is None or V["mtime"] < D["mtime"]))
     c_cat = (V.get("cat", 0) >= D.get("cat", 0))
     rv, rd = V.get("rec"), D.get("rec")
     c_rec = (rv is None or rv >= -10.0) and (rv is None or rd is None or rv >= rd)  # só reprova sinal ruim conhecido
@@ -1227,7 +1228,7 @@ def _avaliar_confronto(V, D, prob, ctx):
     apoio = sum([c_cat, c_larg])
     obrig = c_tadj and c_mtime and c_rec and c_perfil
     conf_ok = V.get("conf", 0) >= A["conf_min_v"] and D.get("conf", 0) >= A["conf_min_d"]
-    conv_ok = (V.get("conv_ok", True) and D.get("conv_ok", True)) or not A.get("exige_fator_medido", True)
+    conv_ok = V.get("conv_ok", True) or not A.get("exige_fator_medido", True)  # só o escolhido precisa de distância medida
     aprovado = bool(prob >= A["prob_min"] and conf_ok and obrig and apoio >= A["apoio_min"] and conv_ok)
     score = sum([c_tadj, c_mtime, c_rec, c_perfil]) + apoio  # 0..6
     flags = {"c_tadj": c_tadj, "c_mtime": c_mtime, "c_cat": c_cat,
@@ -1612,7 +1613,7 @@ AVB_DIAG = {}  # diagnóstico da última corrida montada (usado na caixa "AvBs d
 
 def montar_avbs(rank, ctx):
     AVB_DIAG.clear()
-    elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("conf", 0) >= 20.0]
+    elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("t_proj") is not None]
     if len(elig) < 2: return []
 
     try: resolver_pelo_historico()  # fecha sozinho os confrontos de corridas anteriores (sem digitar resultado)
@@ -1626,17 +1627,18 @@ def montar_avbs(rank, ctx):
     for i in range(len(elig)):
         for j in range(i + 1, len(elig)):
             A, B = elig[i], elig[j]
-            if A.get("bloqueado") or B.get("bloqueado"): continue
             diag["pares"] += 1
             prob_A = calc_prob(A, B, rank, ctx)
             V, D, prob_raw = (A, B, prob_A) if prob_A >= 50.0 else (B, A, 100.0 - prob_A)
             prob = aplicar_calibracao(prob_raw, params)
             aprovado, crit, flags = _avaliar_confronto(V, D, prob, ctx)
-            tem_alvo = bool(V.get("alvo") or D.get("alvo"))
-            principal = bool(aprovado and not tem_alvo)
+            # Alvo 🎯 e bloqueado 🚫 NUNCA podem ser o escolhido (V); como adversário (D) podem entrar nos dois niveis
+            v_proibido = bool(V.get("alvo") or V.get("bloqueado"))
+            tem_alvo = v_proibido
+            principal = bool(aprovado and not v_proibido)
             nivel = 1 if principal else 0
             if not principal and alt.get("ativo"):
-                alvo_ok = (not V.get("alvo")) and (not D.get("alvo") or alt.get("alvo_como_adversario", True))
+                alvo_ok = (not v_proibido)
                 if alvo_ok and _aprovado_alt(V, D, prob, flags): nivel = 2
             flags["nivel"] = nivel
             motivos = [nome for nome, ok in (("probabilidade abaixo do mínimo", flags["r_prob"]), ("confiança baixa", flags["r_conf"]),
@@ -1644,7 +1646,7 @@ def montar_avbs(rank, ctx):
                                              ("recuperação ruim", flags["r_rec"]), ("escolhido é Trombador", flags["r_perfil"]),
                                              ("sem apoio de categoria/largada", flags["r_apoio"]),
                                              ("distância convertida sem fator medido 📏", flags["r_conv"])) if not ok]
-            if tem_alvo: motivos.append("galgo marcado como alvo 🎯")
+            if tem_alvo: motivos.append("escolhido seria alvo 🎯/bloqueado 🚫 (só pode ser adversário)")
             for m in motivos: diag["motivos"][m] = diag["motivos"].get(m, 0) + 1
             if len(motivos) == 1: diag["unico"][motivos[0]] = diag["unico"].get(motivos[0], 0) + 1
             if nivel == 1: diag["n_p"] += 1
@@ -1865,8 +1867,8 @@ def painel_diagnostico_avb(rank, ctx):
     if not dg or dg.get("cid") != cid: return
     with st.expander(f"🧭 AvBs desta corrida: {dg['n_p']} principal(is), {dg['n_alt']} alternativo(s)"):
         st.markdown(f"{dg['pares']} confrontos avaliados.")
-        if dg["bloqueados"]: st.markdown("Fora dos confrontos por **confiança baixa (🚫)**: " + ", ".join(html.escape(n) for n in dg["bloqueados"]))
-        if dg["alvos"]: st.markdown("Marcados como **alvo (🎯)**: " + ", ".join(html.escape(n) for n in dg["alvos"]) + " (só entram como adversário no nível 🔹).")
+        if dg["bloqueados"]: st.markdown("Confiança baixa (🚫), só como adversário: " + ", ".join(html.escape(n) for n in dg["bloqueados"]))
+        if dg["alvos"]: st.markdown("Marcados como **alvo (🎯)**: " + ", ".join(html.escape(n) for n in dg["alvos"]) + " (nunca como escolhido; só como adversário).")
         if dg["motivos"]:
             linhas = [{"regra que reprova": m, "confrontos reprovados": n, "só ela reprova": dg["unico"].get(m, 0)}
                       for m, n in sorted(dg["motivos"].items(), key=lambda x: -x[1])]
