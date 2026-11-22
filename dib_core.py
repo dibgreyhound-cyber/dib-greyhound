@@ -114,6 +114,7 @@ CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
 
     # ---- Janela de distancia ----
+    "N_FORA_INCERTO": 3,      # galgo só fica "incerto por distância" com >= 3 corridas fora da distância de hoje
     "JANELA_M": 200.0,        # corridas oficiais de (dist - JANELA_M) a (dist + JANELA_M) entram nas medias de tempo
     "CONF_PESO_MIN": 0.5,     # peso de uma corrida na PONTA da janela na Confianca (1.0 = distancia exata)
     # incerteza extra (s) por 100 m de diferenca de distancia, entra na variancia do tempo projetado:
@@ -481,8 +482,9 @@ def _conf_dados(R, ctx):
     """Confianca: cada corrida vale 20 pontos x peso da distancia (1,0 na exata ... CONF_PESO_MIN na ponta da janela)."""
     J, pmin = CFG["JANELA_M"], CFG["CONF_PESO_MIN"]
     tot = 0.0
+    fora = sum(1 for r in R if abs(r["dist"] - ctx["dist"]) >= 1)
     for r in R:
-        delta = abs(r["dist"] - ctx["dist"])
+        delta = abs(r["dist"] - ctx["dist"]) if fora >= CFG["N_FORA_INCERTO"] else 0.0  # só penaliza se >= 3 corridas fora da distância
         tot += 1.0 - (1.0 - pmin) * min(delta / J, 1.0)
     return min(100.0, tot * 20.0)
 
@@ -813,11 +815,13 @@ def analisar_galgo(dog, ctx):
     conv = [(r, b) for r, b in zip(R, bs) if abs(r["dist"] - D) >= 1]
     d["n_conv"] = len(conv)
     d["n_conv_sem_fator"] = sum(1 for r, b in conv if b is None)
-    d["conv_ok"] = (d["n_conv_sem_fator"] == 0)
+    incerto_dist = len(conv) >= CFG["N_FORA_INCERTO"]  # 1-2 corridas fora da distância NÃO tornam o galgo incerto
+    d["incerto_dist"] = incerto_dist
+    d["conv_ok"] = (d["n_conv_sem_fator"] == 0) or not incerto_dist
     # incerteza extra por diferença de distância (entra na variância do tempo projetado)
     sd_m, sd_s = CFG["DIST_SD_100M_MEDIDO"], CFG["DIST_SD_100M_SEM_FATOR"]
-    d["dist_var"] = float(np.mean([((sd_m if b is not None else sd_s) * abs(r["dist"] - D) / 100.0) ** 2
-                                   for r, b in zip(R, bs)]))
+    d["dist_var"] = (float(np.mean([((sd_m if b is not None else sd_s) * abs(r["dist"] - D) / 100.0) ** 2
+                                    for r, b in zip(R, bs)])) if incerto_dist else 0.0)
 
     # --- Split: SÓ corridas na distância exata; sem dado = neutro ---
     exatos = [r["split"] for r in R if abs(r["dist"] - D) < 1 and r.get("split") is not None and r["split"] > 0]
