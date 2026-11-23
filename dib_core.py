@@ -114,8 +114,8 @@ CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
 
     # ---- Janela de distancia ----
-    "N_FORA_INCERTO": 3,      # galgo só fica "incerto por distância" com >= 3 corridas fora da distância de hoje
-    "JANELA_M": 200.0,        # corridas oficiais de (dist - JANELA_M) a (dist + JANELA_M) entram nas medias de tempo
+    "N_FORA_INCERTO": 2,      # 📏 (incerteza por distância) só com >= 2 corridas NA JANELA mas fora da distância exata
+    "JANELA_M": 100.0,        # corridas de (dist - JANELA_M) a (dist + JANELA_M) entram nos cálculos e na confiança; fora disso são ignoradas
     "CONF_PESO_MIN": 0.5,     # peso de uma corrida na PONTA da janela na Confianca (1.0 = distancia exata)
     # incerteza extra (s) por 100 m de diferenca de distancia, entra na variancia do tempo projetado:
     "DIST_SD_100M_MEDIDO": 0.06,      # quando existe fator de distancia medido para a pista
@@ -484,7 +484,7 @@ def _conf_dados(R, ctx):
     tot = 0.0
     fora = sum(1 for r in R if abs(r["dist"] - ctx["dist"]) >= 1)
     for r in R:
-        delta = abs(r["dist"] - ctx["dist"]) if fora >= CFG["N_FORA_INCERTO"] else 0.0  # só penaliza se >= 3 corridas fora da distância
+        delta = abs(r["dist"] - ctx["dist"]) if fora >= CFG["N_FORA_INCERTO"] else 0.0  # só penaliza se >= 2 corridas fora da distância
         tot += 1.0 - (1.0 - pmin) * min(delta / J, 1.0)
     return min(100.0, tot * 20.0)
 
@@ -1684,11 +1684,10 @@ _TBL_N = 0
 
 def tbl(headers, rows, sticky=1, w1=None, w2=None):
     css = """<style>.dib-container{overflow-x:auto;width:100%;margin-bottom:20px}.dib-table{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto}.dib-table th,.dib-table td{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}.dib-table th{background-color:rgba(128,128,128,0.1);font-weight:600}.dib-table td.sep{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}.dib-table td.sep-avb{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}"""
-    css += (".dib-table th.stk,.dib-table td.stk{position:sticky;z-index:2;background-color:#ffffff;background-clip:padding-box;white-space:nowrap;text-align:left;box-sizing:border-box}"
-            ".dib-table th.stk{background-color:#f0f2f6;z-index:3}"
+    css += (".dib-table th.stk,.dib-table td.stk{position:sticky;z-index:2;background-color:var(--background-color,#ffffff);color:var(--text-color,inherit);background-clip:padding-box;white-space:nowrap;text-align:left;box-sizing:border-box}"
+            ".dib-table th.stk{background-color:var(--secondary-background-color,#f0f2f6);z-index:3}"
             ".dib-table .stk1{left:0}"
-            ".dib-table .stk-last{box-shadow:2px 0 3px -1px rgba(128,128,128,0.45)}"
-            "@media (prefers-color-scheme: dark){.dib-table th.stk,.dib-table td.stk{background-color:#0e1117}.dib-table th.stk{background-color:#262730}}")
+            ".dib-table .stk-last{box-shadow:2px 0 3px -1px rgba(128,128,128,0.45)}")
     global _TBL_N
     _TBL_N += 1
     tid = f"dibt{_TBL_N}"
