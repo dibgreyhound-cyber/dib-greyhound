@@ -61,6 +61,7 @@ st.markdown(
 # --- FIM DO BLOCO DO GALGO ---
 
 import dib_core as dib
+import dib_ui
 
 BASE = "https://greyhoundbet.racingpost.com"
 LISTA_CANDIDATOS = [
@@ -1195,22 +1196,21 @@ _JS_TRAVAR = """<script>
     '.dib-table.sticky-2 td:nth-child(1)' + NOT + ',' +
     '.dib-table.sticky-1 th:nth-child(1),' +
     '.dib-table.sticky-2 th:nth-child(1)' +
-    '{ position: sticky !important; left: 0 !important; z-index: 2 !important;' +
-    '  box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45) !important; }' +
+    '{ position: sticky !important; left: 0 !important; z-index: 2 !important; }' +
     '.dib-table.sticky-2 td:nth-child(2)' + NOT + ',' +
     '.dib-table.sticky-2 th:nth-child(2)' +
     '{ position: sticky !important; left: var(--dib-left2, 0px) !important; z-index: 2 !important;' +
-    '  box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45), 3px 0 4px -2px rgba(0,0,0,.35) !important; }' +
+    '  box-shadow: 8px 0 10px -8px rgba(0,0,0,.3) !important; }' +
     '.dib-table.sticky-1 td:nth-child(1)' + NOT + ',' +
     '.dib-table.sticky-2 td:nth-child(1)' + NOT + ',' +
     '.dib-table.sticky-2 td:nth-child(2)' + NOT +
-    '{ background-color: var(--dib-bg, #fff) !important; }' +
+    '{ background-color: var(--dib-card, #fff) !important; }' +
+    '.dib-table.sticky-1 td:nth-child(1)' + NOT + '{ box-shadow: 8px 0 10px -8px rgba(0,0,0,.3) !important; }' +
     '.dib-table.sticky-1 th:nth-child(1),' +
     '.dib-table.sticky-2 th:nth-child(1),' +
     '.dib-table.sticky-2 th:nth-child(2)' +
-    '{ background-color: var(--dib-bg-head, #f0f2f6) !important; z-index: 3 !important; }' +
-    '.dib-table.sticky-1 td:nth-child(1)' + NOT + '{ box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45), 3px 0 4px -2px rgba(0,0,0,.35) !important; }' +
-    '.dib-table.sticky-1 th:nth-child(1){ box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45), 3px 0 4px -2px rgba(0,0,0,.35) !important; }';
+    '{ background-color: var(--dib-head, #f0f2f6) !important; z-index: 3 !important; }' +
+    '.dib-table.sticky-1 th:nth-child(1){ box-shadow: 8px 0 10px -8px rgba(0,0,0,.3) !important; }';
 
   var styleId = 'dib-sticky-style-v2';
   var estilo = doc.getElementById(styleId);
@@ -1220,19 +1220,6 @@ _JS_TRAVAR = """<script>
     doc.head.appendChild(estilo);
   }
   estilo.innerHTML = CSS;
-
-  function cores() {
-    var app = doc.querySelector('.stApp') || doc.body;
-    var m = win.getComputedStyle(app).backgroundColor.match(/[\\d.]+/g);
-    if (!m || m.length < 3 || (m.length > 3 && parseFloat(m[3]) === 0)) return;
-    var r = +m[0], g = +m[1], b = +m[2];
-    function mix(c) { return Math.round(c * 0.9 + 128 * 0.1); }
-    var raiz = doc.documentElement;
-    raiz.style.setProperty('--dib-bg', 'rgb(' + r + ',' + g + ',' + b + ')');
-    raiz.style.setProperty('--dib-bg-head', 'rgb(' + mix(r) + ',' + mix(g) + ',' + mix(b) + ')');
-  }
-  cores();
-  setInterval(cores, 400);
 
   function aplicar() {
     Array.prototype.forEach.call(doc.querySelectorAll('table.dib-table'), function (t) {
@@ -1284,7 +1271,7 @@ def analisar(c, classe_in, dist_in, pp_in):
             st.text_area("Relatório:", relatorio, height=200)
             st.dataframe(pd.DataFrame([{k: v for k, v in d_.items() if k != "Pistas"} for d_ in diag]),
                          use_container_width=True, hide_index=True)
-    dib.tabela_avb(p["s1"], "1ª Planilha — AVB Principal")
+    dib.tabela_avb(p["s1"], "Planilha de AvB — ★ principal · 🔹 alternativo")
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
 
@@ -1395,6 +1382,7 @@ section[data-testid="stSidebar"] .stButton > button p{font-size:.85rem;line-heig
 
 
 def main():
+    dib_ui.aplicar_tema()
     dib.mostrar_logo()  # logo: fundo branco no tema claro, fundo preto no tema escuro (assets/logo_*.jpg)
 
     st.markdown(_CSS_SIDEBAR, unsafe_allow_html=True)
