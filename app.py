@@ -1395,7 +1395,7 @@ section[data-testid="stSidebar"] .stButton > button p{font-size:.85rem;line-heig
 
 
 def main():
-    st.title("🐾 DIB GREYHOUND")
+    dib.mostrar_logo()  # logo: fundo branco no tema claro, fundo preto no tema escuro (assets/logo_*.jpg)
 
     st.markdown(_CSS_SIDEBAR, unsafe_allow_html=True)
     with st.sidebar:
