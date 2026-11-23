@@ -1675,7 +1675,8 @@ def montar_avbs(rank, ctx):
 def get_rank_html(val, rank, max_rank):
     if val is None or rank is None: return "-"
     sup = {1: "¹", 2: "²", 3: "³", 4: "⁴", 5: "⁵", 6: "⁶"}.get(rank, "")
-    color = "color:#12873a;font-weight:bold" if rank == 1 else ("color:#ff4b4b" if rank == max_rank and max_rank > 1 else "")
+    color = ("color:#16A34A;font-weight:800;background:rgba(22,163,74,.14);padding:3px 9px;border-radius:8px" if rank == 1
+             else ("color:#E5484D" if rank == max_rank and max_rank > 1 else ""))
     return f"<span style='{color}'>{val:.2f}{sup}</span>"
 
 
@@ -1683,11 +1684,18 @@ _TBL_N = 0
 
 
 def tbl(headers, rows, sticky=1, w1=None, w2=None):
-    css = """<style>.dib-container{overflow-x:auto;width:100%;margin-bottom:20px}.dib-table{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto}.dib-table th,.dib-table td{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}.dib-table th{background-color:rgba(128,128,128,0.1);font-weight:600}.dib-table td.sep{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}.dib-table td.sep-avb{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}"""
-    css += (".dib-table th.stk,.dib-table td.stk{position:sticky;z-index:2;background-color:var(--dib-bg,var(--background-color,#ffffff));color:var(--text-color,inherit);background-clip:padding-box;white-space:nowrap;text-align:left;box-sizing:border-box}"
-            ".dib-table th.stk{background-color:var(--dib-bg-head,var(--secondary-background-color,#f0f2f6));z-index:3}"
+    css = """<style>
+.dib-container{overflow-x:auto;width:100%;margin-bottom:20px;border-radius:16px;border:1px solid var(--dib-bd,rgba(128,128,128,.25));background:var(--dib-card,transparent);box-shadow:var(--dib-sh,none)}
+.dib-table{width:100%;border-collapse:separate;border-spacing:0;text-align:center;font-size:15px;table-layout:auto}
+.dib-table th,.dib-table td{padding:12px 12px;border-bottom:1px solid var(--dib-bd,rgba(128,128,128,.2));white-space:nowrap;line-height:1.3;font-variant-numeric:tabular-nums}
+.dib-table th{background-color:var(--dib-head,rgba(128,128,128,.1));color:var(--dib-mute,inherit);font-weight:700;font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;line-height:1.15;padding:10px 12px 8px;border-bottom:2px solid var(--dib-bd,rgba(128,128,128,.3))}
+.dib-table tr:last-child td{border-bottom:none}
+.dib-table td.sep{padding:0;height:2px;background-color:var(--dib-bd,rgba(128,128,128,0.4))}
+.dib-table td.sep-avb{padding:0;height:1px;background-color:var(--dib-bd,rgba(128,128,128,0.15))}"""
+    css += (".dib-table th.stk,.dib-table td.stk{position:sticky;z-index:2;background-color:var(--dib-card,#ffffff);background-clip:padding-box;white-space:nowrap;text-align:left;box-sizing:border-box}"
+            ".dib-table th.stk{background-color:var(--dib-head,#f0f2f6);z-index:3}"
             ".dib-table .stk1{left:0}"
-            ".dib-table .stk-last{box-shadow:2px 0 3px -1px rgba(128,128,128,0.45)}")
+            ".dib-table .stk-last{box-shadow:8px 0 10px -8px rgba(0,0,0,.3)}")
     global _TBL_N
     _TBL_N += 1
     tid = f"dibt{_TBL_N}"
@@ -1755,6 +1763,12 @@ def grades_txt(d):
     return "-".join(out)
 
 
+def perfil_pilula(p):
+    cor = {"Limpo": ("✅", "22,163,74", "#16A34A"), "Irregular": ("⚠️", "245,158,11", "#D97706"), "Trombador": ("🔴", "229,72,77", "#E5484D")}.get(p, ("", "128,128,128", "inherit"))
+    return (f"<span style='display:inline-block;padding:3px 10px;border-radius:999px;font-size:.82em;font-weight:700;"
+            f"background:rgba({cor[1]},.14);color:{cor[2]}'>{cor[0]} {p}</span>")
+
+
 def tabela_projecao(ds):
     cols = ["split", "time", "tadj", "metrica", "msplit", "mtime", "rec"]
     rk = {c: [None] * len(ds) for c in cols}
@@ -1782,15 +1796,15 @@ def tabela_projecao(ds):
             rec_cell = "-"
 
         rows.append([
-            trap_label(d), nome_marcado(d) + brt_html(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} {_fmt_ov(d['overall'])}",
-            f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", f"{perfil_e} {d['perfil']}",
+            trap_label(d), nome_marcado(d) + brt_html(d), f"{MEDALS.get(d['pos'], str(d['pos'])+'º')} <b style='font-size:1.05em'>{_fmt_ov(d['overall'])}</b>",
+            f"{d['cat']:.1f} ({d['cat_mod']:+.0f})", perfil_pilula(d["perfil"]),
             grades_txt(d), peso_txt(d), dias_txt,
             split_display, get_rank_html(d.get("time"), rk["time"][i], max_rk["time"]),
             msplit_display, get_rank_html(d.get("mtime"), rk["mtime"][i], max_rk["mtime"]),
             get_rank_html(d.get("tadj"), rk["tadj"][i], max_rk["tadj"]), get_rank_html(d.get("metrica"), rk["metrica"][i], max_rk["metrica"]),
             rec_cell, f"{d['conf']:.0f}%"
         ])
-    return tbl(["Trap", "Galgo", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica", "Recup. Média", "Conf."], rows, sticky=2, w1=64, w2=125)
+    return tbl(["Trap", "Galgo", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Melhor<br>Split", "Melhor<br>Time", "Média<br>Split", "Média<br>Time", "Tadj", "Métrica", "Recup.<br>Média", "Conf."], rows, sticky=2, w1=64, w2=125)
 
 
 def tabela_avb(lista, titulo):
@@ -1855,7 +1869,7 @@ def tabela_avb(lista, titulo):
             peso_txt(D), f"{D['dias']}", sp_d, t_d, ms_d, mt_d, ta_d, me_d, rec_d, f"{D['conf']:.0f}%"
         ])
 
-    heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica", "Recup.", "Conf.", "Probabilidade"]
+    heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Melhor<br>Split", "Melhor<br>Time", "Média<br>Split", "Média<br>Time", "Tadj", "Métrica", "Recup.", "Conf.", "Probabilidade"]
     st.markdown(tbl(heads, rows, sticky=1, w1=190), unsafe_allow_html=True)
     if any((AVB_META.get((it[0]["name"], it[1]["name"])) or (0, 0, 0, 1))[3] == 2 for it in lista):
         st.caption("★ principal (regras completas) · 🔹 alternativo (regras relaxadas, em validação à parte)")
@@ -2161,4 +2175,3 @@ function tudo(){{tema();altura();}}
 tudo();setInterval(tudo,400);window.addEventListener('resize',tudo);
 </script></body></html>""".replace("{RAZAO}", "0.5")
     components.html(pagina, height=220)
-  
