@@ -1,31 +1,28 @@
 # -*- coding: utf-8 -*-
 """
-dib_core.py (v4.3)
+dib_core.py (v4.1)
 
-Base: o v4.2 enviado pelo usuario (janela 200 m, fator de distancia medido, Overall = tempo projetado em corpos,
-encolhimento do tempo projetado, Overall com referencia no galgo mais lento).
+Base: o v4 enviado pelo usuario. Mudancas desta versao (3 pontos):
 
-Mudancas desta versao (so no AvB; planilha, Overall e Predictor nao mudam):
+  1) JANELA DE DISTANCIA 200 m (antes 100 m): o Don Cici (so corridas de 575 m, prova de 400 m, diferenca de 175 m)
+     agora entra na planilha, no Overall e no Predictor.
+  2) FATOR DE DISTANCIA MEDIDO nos seus proprios dados (calibracao_corridas.csv): galgos que correram duas distancias
+     na mesma pista em ate 75 dias. Ajusta a velocidade por 100 m (ex.: -1,5 %/100 m) em vez de assumir velocidade igual.
+       - pista com poucos pares usa o fator global; sem dados suficientes = conversao so proporcional,
+         com incerteza grande (DIST_SD_100M_SEM_FATOR) e o galgo NAO entra em AvB (AVB.exige_fator_medido).
+       - Grades: "*" = corrida convertida com fator medido; "†" = convertida so por proporcao (sem fator medido).
+  3) OVERALL = TEMPO PROJETADO EM CORPOS: o mesmo tempo projetado que alimenta o AvB e o Predictor
+     (Overall = (mediana do campo - tempo projetado) / CORPO_S). Planilha, Predictor e AvB nao discordam mais.
+     Categoria, Recuperacao e Regularidade continuam aparecendo e entram como criterios do AvB / na incerteza.
+     Post Pick (palpite de tipster) nao entra mais no tempo (postpick_sec = 0.0), para o modelo ser independente.
 
-  1) AvB em DOIS NIVEIS, para aparecerem mais confrontos sem perder qualidade:
-       NIVEL A = a regra completa de antes (sem nenhuma mudanca);
-       NIVEL B = "com ressalva": passa quando so reprova em porteiros que duplicam o que a probabilidade ja mede.
-     Flexibilizacoes do nivel B (cada uma com chave em CFG["AVB_B"]):
-       - Alvo pode ser o ADVERSARIO (D). Como V continua vetado.
-       - V Trombador entra se a probabilidade for +4 pontos acima do minimo.
-       - Galgo com corrida convertida sem fator de distancia medido entra se a probabilidade for +4 pontos acima.
-       - Confianca minima do V cai de 60 para 50.
-       - Tempo: Time Ajust. e Med. Time com tolerancia de 0,05 s (pelo menos um deles estritamente melhor).
-       - Recuperacao: V >= D - 15 pontos (ainda exige V >= -10).
-     O prob_min (62) e o apoio (categoria/largada) NAO mudam.
-     O log (avb_previsoes.csv) grava o nivel, o motivo da reprovacao em A e as ressalvas de B, e o painel de
-     validacao compara o acerto de A e de B. Assim voce decide com dados se B merece virar A.
-  2) FUNIL DE DIAGNOSTICO por corrida: todos os confrontos, qual porteiro reprovou cada um (A e B).
-     E um painel de GARGALOS ACUMULADOS (todos os pares ja registrados).
-  3) Compatibilidade: montar_avbs() continua devolvendo (V, D, prob, estrela) - estrela True = nivel A, False = nivel B.
-     O app.py nao precisa mudar.
+  4) (v4.2) ENCOLHIMENTO (shrinkage) do tempo projetado: galgo com historico incerto (poucas corridas, corridas de outra
+     distancia sem fator medido) tem o tempo puxado para o meio do campo. Antes, a incerteza maior INFLAVA a chance de
+     vencer de galgos pouco conhecidos (ex.: 38 % e 30 % para dois galgos marcados com a reguinha).
+  5) (v4.2) OVERALL sem valores negativos: referencia = galgo mais lento do campo (CFG["OVERALL_REF"] = "ultimo").
+     Opcoes: "mediano" (positivo e negativo) ou "lider" (0 = lider, demais negativos).
 
-  VERSAO = "avb-unico-5" (a validacao separa as amostras por versao).
+  VERSAO = "avb-unico-4" (a validacao separa as amostras por versao).
 """
 import re
 import html
@@ -35,7 +32,6 @@ import os
 import csv
 import time
 import hashlib
-from collections import Counter
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -118,6 +114,7 @@ CFG = {
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
 
     # ---- Janela de distancia ----
+    "N_FORA_INCERTO": 3,      # galgo só fica "incerto por distância" com >= 3 corridas fora da distância de hoje
     "JANELA_M": 200.0,        # corridas oficiais de (dist - JANELA_M) a (dist + JANELA_M) entram nas medias de tempo
     "CONF_PESO_MIN": 0.5,     # peso de uma corrida na PONTA da janela na Confianca (1.0 = distancia exata)
     # incerteza extra (s) por 100 m de diferenca de distancia, entra na variancia do tempo projetado:
@@ -163,28 +160,22 @@ CFG = {
             "start_bonus": 0.04,
             "postpick_sec": 0.0,     # 0.0 = o Post Pick (palpite de tipster) NAO entra no tempo projetado
             "trap_sec": {1: -0.02, 2: -0.01, 3: 0.0, 4: 0.0, 5: 0.01, 6: 0.02},
-            # ---- NIVEL A: regra completa de aprovacao do AvB ----
+            # ---- Regra ÚNICA de aprovação do AvB ----
             "prob_min": 62.0,        # probabilidade mínima (RECALIBRAR: o modelo mudou)
             "conf_min_v": 60.0,      # confiança mínima do galgo escolhido (V)
-            "conf_min_d": 40.0,      # confiança mínima do adversário (D)
+            "conf_min_d": 0.0,       # confiança mínima do adversário (D): alvo/bloqueado podem ser adversário
             "apoio_min": 1,          # mínimo de critérios de apoio (categoria, largada) de 2
-            "exige_fator_medido": True,  # galgo com corrida convertida SEM fator de distancia medido nao entra em AvB (nivel A)
+            "exige_fator_medido": True,  # galgo com corrida convertida SEM fator de distancia medido nao entra em AvB
+            # ---- Nível ALTERNATIVO (regras relaxadas; aparece com 🔹 e é validado à parte do principal) ----
+            "alt": {"ativo": True, "prob_min": 58.0, "conf_min_v": 40.0, "conf_min_d": 0.0, "apoio_min": 0,
+                    "um_tempo_basta": True,         # V precisa ser melhor em Time Ajust. OU Méd. Time (e não nos dois)
+                    "perfil_relativo": True,        # só reprova se V é Trombador e D não é
+                    "alvo_como_adversario": True},  # galgo marcado 🎯 pode ser o ADVERSÁRIO (nunca o escolhido)
             # ---- Calibração logística (ativa só com amostra suficiente) ----
             "calib_min_n": 150, "calib_lambda": 5.0},
-
-    # ---- NIVEL B ("com ressalva"): flexibilizacoes que NAO mexem no prob_min nem no apoio ----
-    "AVB_B": {
-        "ativo": True,           # False = so nivel A (comportamento da v4.2)
-        "alvo_como_D": True,     # Alvo pode ser o adversario (V continua vetado)
-        "trombador_extra": 4.0,  # V Trombador entra com +N pontos de probabilidade (None = continua vetado)
-        "sem_fator_extra": 4.0,  # corrida convertida sem fator medido entra com +N pontos (None = continua vetado)
-        "conf_min_v": 50.0,      # confianca minima do V no nivel B
-        "tempo_tol_s": 0.05,     # tolerancia (s) em Time Ajust. e Med. Time (pelo menos um deles estritamente melhor)
-        "rec_tol": 15.0,         # recuperacao: V >= D - N pontos (ainda exige V >= -10)
-    },
     "AVB_FILE": "avb_previsoes.csv",
     "OVERALL_FILE": "overall_previsoes.csv",
-    "VERSAO": "avb-unico-5",
+    "VERSAO": "avb-unico-4",
 }
 
 FIELD_MAP = {
@@ -491,8 +482,9 @@ def _conf_dados(R, ctx):
     """Confianca: cada corrida vale 20 pontos x peso da distancia (1,0 na exata ... CONF_PESO_MIN na ponta da janela)."""
     J, pmin = CFG["JANELA_M"], CFG["CONF_PESO_MIN"]
     tot = 0.0
+    fora = sum(1 for r in R if abs(r["dist"] - ctx["dist"]) >= 1)
     for r in R:
-        delta = abs(r["dist"] - ctx["dist"])
+        delta = abs(r["dist"] - ctx["dist"]) if fora >= CFG["N_FORA_INCERTO"] else 0.0  # só penaliza se >= 3 corridas fora da distância
         tot += 1.0 - (1.0 - pmin) * min(delta / J, 1.0)
     return min(100.0, tot * 20.0)
 
@@ -823,11 +815,13 @@ def analisar_galgo(dog, ctx):
     conv = [(r, b) for r, b in zip(R, bs) if abs(r["dist"] - D) >= 1]
     d["n_conv"] = len(conv)
     d["n_conv_sem_fator"] = sum(1 for r, b in conv if b is None)
-    d["conv_ok"] = (d["n_conv_sem_fator"] == 0)
+    incerto_dist = len(conv) >= CFG["N_FORA_INCERTO"]  # 1-2 corridas fora da distância NÃO tornam o galgo incerto
+    d["incerto_dist"] = incerto_dist
+    d["conv_ok"] = (d["n_conv_sem_fator"] == 0) or not incerto_dist
     # incerteza extra por diferença de distância (entra na variância do tempo projetado)
     sd_m, sd_s = CFG["DIST_SD_100M_MEDIDO"], CFG["DIST_SD_100M_SEM_FATOR"]
-    d["dist_var"] = float(np.mean([((sd_m if b is not None else sd_s) * abs(r["dist"] - D) / 100.0) ** 2
-                                   for r, b in zip(R, bs)]))
+    d["dist_var"] = (float(np.mean([((sd_m if b is not None else sd_s) * abs(r["dist"] - D) / 100.0) ** 2
+                                    for r, b in zip(R, bs)])) if incerto_dist else 0.0)
 
     # --- Split: SÓ corridas na distância exata; sem dado = neutro ---
     exatos = [r["split"] for r in R if abs(r["dist"] - D) < 1 and r.get("split") is not None and r["split"] > 0]
@@ -1002,6 +996,23 @@ def _calcular_shrink(ok, ctx):
     ctx["_shrink"] = {"ref": float(np.median(tb)), "tau2": tau2}
 
 
+def _overall_de_pvit(ok):
+    """UNIFICA classificacao, Overall e Predictor: a ordem e o Overall passam a vir da probabilidade de vitoria (p_vit).
+    Overall (corpos) = escala_s * ln(p_i / p_ultimo) / CORPO_S, com escala_s = mediana do desvio dos galgos / 1.7
+    (equivalente a um modelo logistico de vitoria). Sempre >= 0; o ultimo colocado = 0; mesma ordem do Predictor.
+    O Overall baseado so no tempo medio fica em d["overall_tempo"] (referencia)."""
+    cs = CFG["CORPO_S"]
+    for d in ok: d["overall_tempo"] = d.get("overall", 0.0)
+    com = [d for d in ok if d.get("p_vit") is not None]
+    if len(com) < 2: return
+    sds = [d["t_sd"] for d in com if d.get("t_sd")]
+    esc = (float(np.median(sds)) if sds else 0.3) / 1.7
+    lp = {id(d): math.log(max(d["p_vit"], 0.05)) for d in com}
+    base = min(lp.values())
+    for d in ok:
+        d["overall"] = esc * (lp[id(d)] - base) / cs if id(d) in lp else 0.0
+
+
 def finalizar(ds, ctx):
     try: registrar_calibracao(ds)
     except Exception: pass
@@ -1014,7 +1025,10 @@ def finalizar(ds, ctx):
 
     _calcular_shrink(ok, ctx)
     calcular_overall(ok, ctx)
-    ok.sort(key=lambda x: (-x["overall"], -x.get("cat", 0.0)))
+    try: calcular_prob_vitoria(ok, ctx)
+    except Exception: pass
+    _overall_de_pvit(ok)
+    ok.sort(key=lambda x: (-(x.get("p_vit") or 0.0), -x["overall"], -x.get("cat", 0.0)))
     for i, d in enumerate(ok, 1):
         d["pos"] = i
         d["bloqueado"] = d["conf"] < CFG["CONF_MIN_VENCEDOR"]
@@ -1025,8 +1039,6 @@ def finalizar(ds, ctx):
                      and rec is not None and rec < -10.0 and not top2_safe)
         d["elegivel"] = not d["bloqueado"]
 
-    try: calcular_prob_vitoria(ok, ctx)
-    except Exception: pass
     try: registrar_overall(ok, ctx)
     except Exception: pass
     return ok, top3_ms
@@ -1191,14 +1203,11 @@ def aplicar_calibracao(prob_pct, params):
 
 
 # ---------------------------------------------------------------------
-# REGRA DO AVB
-#   NIVEL A (regra completa)
-#     Obrigatórios: prob >= prob_min | conf V >= conf_min_v | conf D >= conf_min_d |
-#                   V melhor em Time Ajust. | V melhor em Méd. Time | Recup. do V >= -10 e >= a do D | V não é Trombador |
-#                   (exige_fator_medido) nenhum dos dois com corrida convertida sem fator de distância medido |
-#                   nenhum dos dois é Alvo
-#     Apoio (mín. apoio_min de 2): Categoria, Largada
-#   NIVEL B (com ressalva): ver CFG["AVB_B"]; reaproveita o prob_min e o apoio do nivel A.
+# REGRA ÚNICA DO AVB
+#   Obrigatórios: prob >= prob_min | conf V >= conf_min_v | conf D >= conf_min_d |
+#                 V melhor em Time Ajust. | V melhor em Méd. Time | Recup. sem sinal ruim | V não é Trombador |
+#                 (exige_fator_medido) nenhum dos dois com corrida convertida sem fator de distância medido
+#   Apoio (mín. apoio_min de 2): Categoria, Largada
 # ---------------------------------------------------------------------
 def _vantagem_largada(V, D, ctx):
     top3 = ctx.get("top3_ms", set())
@@ -1210,10 +1219,10 @@ def _vantagem_largada(V, D, ctx):
 
 
 def _avaliar_confronto(V, D, prob, ctx):
-    """Nivel A. Retorna (aprovado, score 0-6, flags, motivos de reprovacao)."""
     A = CFG["AVB"]
-    c_tadj = (V.get("tadj") is not None and D.get("tadj") is not None and V["tadj"] < D["tadj"])
-    c_mtime = (V.get("mtime") is not None and D.get("mtime") is not None and V["mtime"] < D["mtime"])
+    # Adversario (D) incerto pode desafiar: se ele nao tem o tempo (poucos dados), basta o escolhido (V) ter e ser conhecido
+    c_tadj = (V.get("tadj") is not None and (D.get("tadj") is None or V["tadj"] < D["tadj"]))
+    c_mtime = (V.get("mtime") is not None and (D.get("mtime") is None or V["mtime"] < D["mtime"]))
     c_cat = (V.get("cat", 0) >= D.get("cat", 0))
     rv, rd = V.get("rec"), D.get("rec")
     c_rec = (rv is None or rv >= -10.0) and (rv is None or rd is None or rv >= rd)  # só reprova sinal ruim conhecido
@@ -1222,107 +1231,37 @@ def _avaliar_confronto(V, D, prob, ctx):
 
     apoio = sum([c_cat, c_larg])
     obrig = c_tadj and c_mtime and c_rec and c_perfil
-    prob_ok = prob >= A["prob_min"]
-    conf_v_ok = V.get("conf", 0) >= A["conf_min_v"]
-    conf_d_ok = D.get("conf", 0) >= A["conf_min_d"]
-    conv_ok = (V.get("conv_ok", True) and D.get("conv_ok", True)) or not A.get("exige_fator_medido", True)
-    alvo_ok = not (V.get("alvo") or D.get("alvo"))
-    aprovado = bool(prob_ok and conf_v_ok and conf_d_ok and obrig and apoio >= A["apoio_min"] and conv_ok and alvo_ok)
+    conf_ok = V.get("conf", 0) >= A["conf_min_v"] and D.get("conf", 0) >= A["conf_min_d"]
+    conv_ok = V.get("conv_ok", True) or not A.get("exige_fator_medido", True)  # só o escolhido precisa de distância medida
+    aprovado = bool(prob >= A["prob_min"] and conf_ok and obrig and apoio >= A["apoio_min"] and conv_ok)
     score = sum([c_tadj, c_mtime, c_rec, c_perfil]) + apoio  # 0..6
     flags = {"c_tadj": c_tadj, "c_mtime": c_mtime, "c_cat": c_cat,
-             "c_rec": c_rec, "c_larg": c_larg, "c_perfil": c_perfil}
-
-    motivos = []
-    if not prob_ok: motivos.append(f"Prob. abaixo de {A['prob_min']:.0f}%")
-    if not conf_v_ok: motivos.append(f"Conf. do V abaixo de {A['conf_min_v']:.0f}%")
-    if not conf_d_ok: motivos.append(f"Conf. do D abaixo de {A['conf_min_d']:.0f}%")
-    if not c_tadj: motivos.append("Time Ajust. do V não é melhor")
-    if not c_mtime: motivos.append("Méd. Time do V não é melhor")
-    if not c_rec: motivos.append("Recuperação do V")
-    if not c_perfil: motivos.append("V é Trombador")
-    if apoio < A["apoio_min"]: motivos.append("Sem apoio (categoria/largada)")
-    if not conv_ok: motivos.append("Sem fator de distância medido")
-    if not alvo_ok: motivos.append("Alvo no confronto")
-    return aprovado, score, flags, motivos
+             "c_rec": c_rec, "c_larg": c_larg, "c_perfil": c_perfil,
+             # resultado de cada regra do nível principal (para o diagnóstico "por que não há AvB")
+             "r_prob": prob >= A["prob_min"], "r_conf": conf_ok, "r_tempos": bool(c_tadj and c_mtime), "r_rec": c_rec,
+             "r_perfil": c_perfil, "r_apoio": apoio >= A["apoio_min"], "r_conv": conv_ok}
+    return aprovado, score, flags
 
 
-def _avaliar_nivel_b(V, D, prob, ctx, flags_a):
-    """Nivel B ("com ressalva"). Retorna (aprovado, ressalvas usadas, motivos de reprovacao).
-    Nao mexe no prob_min nem no apoio; as flexibilizacoes vem de CFG["AVB_B"]."""
-    A, Bc = CFG["AVB"], CFG["AVB_B"]
-    ress, falhas = [], []
-
-    # Alvo: nunca como V; como D so se permitido
-    if V.get("alvo"):
-        falhas.append("V é Alvo")
-    if D.get("alvo"):
-        if Bc.get("alvo_como_D"): ress.append("adversário é Alvo")
-        else: falhas.append("D é Alvo")
-
-    # probabilidade exigida (sobe quando uma flexibilizacao e usada)
-    exigida = A["prob_min"]
-    if V.get("perfil") == "Trombador":
-        extra = Bc.get("trombador_extra")
-        if extra is None: falhas.append("V é Trombador")
-        else:
-            exigida += extra
-            ress.append(f"V Trombador (+{extra:.0f} pts de prob.)")
-    if not (V.get("conv_ok", True) and D.get("conv_ok", True)):
-        extra = Bc.get("sem_fator_extra")
-        if extra is None: falhas.append("Sem fator de distância medido")
-        else:
-            exigida += extra
-            ress.append(f"sem fator de distância (+{extra:.0f} pts de prob.)")
-    if prob < exigida:
-        falhas.append(f"Prob. abaixo de {exigida:.0f}%")
-
-    # confianca
-    cv, cd = V.get("conf", 0), D.get("conf", 0)
-    if cv < Bc["conf_min_v"]:
-        falhas.append(f"Conf. do V abaixo de {Bc['conf_min_v']:.0f}%")
-    elif cv < A["conf_min_v"]:
-        ress.append(f"conf. do V {cv:.0f}% (< {A['conf_min_v']:.0f}%)")
-    if cd < A["conf_min_d"]:
-        falhas.append(f"Conf. do D abaixo de {A['conf_min_d']:.0f}%")
-
-    # tempo (Time Ajust. e Med. Time): ambos dentro da tolerancia e pelo menos um estritamente melhor
-    tol = Bc["tempo_tol_s"]
-    tv, td, mv, md = V.get("tadj"), D.get("tadj"), V.get("mtime"), D.get("mtime")
-    if None in (tv, td, mv, md):
-        falhas.append("Sem tempo para comparar")
-    else:
-        dentro = (tv < td + tol) and (mv < md + tol)
-        um_melhor = (tv < td) or (mv < md)
-        if not (dentro and um_melhor):
-            falhas.append("Tempo (Time Ajust./Méd. Time)")
-        elif not (tv < td and mv < md):
-            ress.append(f"tempo com tolerância de {tol:.2f}s")
-
-    # recuperacao: V >= -10 e V >= D - rec_tol
-    rv, rd = V.get("rec"), D.get("rec")
-    rec_b = (rv is None) or (rv >= -10.0 and (rd is None or rv >= rd - Bc["rec_tol"]))
-    if not rec_b:
-        falhas.append("Recuperação do V")
-    elif not flags_a.get("c_rec"):
-        ress.append("recuperação com tolerância")
-
-    # apoio (igual ao nivel A)
-    apoio = sum([bool(flags_a.get("c_cat")), bool(flags_a.get("c_larg"))])
-    if apoio < A["apoio_min"]:
-        falhas.append("Sem apoio (categoria/largada)")
-
-    return (len(falhas) == 0), (ress if not falhas else []), falhas
+def _aprovado_alt(V, D, prob, flags):
+    """Regras relaxadas do nível alternativo (config em CFG["AVB"]["alt"])."""
+    A = CFG["AVB"]["alt"]
+    conf_ok = V.get("conf", 0) >= A["conf_min_v"] and D.get("conf", 0) >= A["conf_min_d"]
+    tempos = (flags["c_tadj"] or flags["c_mtime"]) if A.get("um_tempo_basta", True) else (flags["c_tadj"] and flags["c_mtime"])
+    if A.get("perfil_relativo", True): perfil = not (V.get("perfil") == "Trombador" and D.get("perfil") != "Trombador")
+    else: perfil = flags["c_perfil"]
+    apoio = int(bool(flags["c_cat"])) + int(bool(flags["c_larg"]))
+    return bool(prob >= A["prob_min"] and conf_ok and tempos and flags["c_rec"] and perfil and apoio >= A["apoio_min"] and flags["r_conv"])
 
 
-# (nome_V, nome_D) -> ("AVB", nº de critérios 0-6, calibrada?, nivel "A"/"B", ressalvas)
+# (nome_V, nome_D) -> ("AVB", nº de critérios 0-6, calibrada?)
 AVB_META = {}
 
 _FLAGS = ["c_tadj", "c_mtime", "c_cat", "c_rec", "c_larg", "c_perfil"]
 _AVB_COLS = (["corrida_id", "registrado_em", "data", "pista", "hora", "race", "race_id", "classe", "dist",
-              "galgo_V", "trap_V", "galgo_D", "trap_D", "prob", "prob_cal", "aprovado", "criterios"]
+              "galgo_V", "trap_V", "galgo_D", "trap_D", "prob", "prob_cal", "aprovado", "nivel", "criterios"]
              + _FLAGS +
-             ["exibido", "nivel", "motivo", "ressalvas",
-              "tproj_V", "tproj_D", "delta_s", "sd_total", "tadj_V", "tadj_D", "mtime_V", "mtime_D",
+             ["exibido", "tproj_V", "tproj_D", "delta_s", "sd_total", "tadj_V", "tadj_D", "mtime_V", "mtime_D",
               "brt_V", "brt_D", "pos_V", "pos_D", "acertou", "versao"])
 
 _OVR_COLS = ["corrida_id", "registrado_em", "data", "pista", "hora", "race", "race_id", "classe", "dist",
@@ -1358,8 +1297,7 @@ def _chave_par(cid, a, b):
 
 def registrar_previsoes(dogs, linhas, ctx):
     """Um registro por corrida+par (independe da orientação V/D). Previsão com resultado já salvo não é sobrescrita.
-    `prob` guarda SEMPRE a probabilidade bruta (para a calibração não se retroalimentar).
-    linhas: (V, D, prob_raw, prob_cal, nivel, crit, flags, motivos_a, ressalvas)."""
+    `prob` guarda SEMPRE a probabilidade bruta (para a calibração não se retroalimentar)."""
     if not linhas: return 0
     path = CFG["AVB_FILE"]
     cid = corrida_id(dogs, ctx)
@@ -1367,7 +1305,7 @@ def registrar_previsoes(dogs, linhas, ctx):
     idx = {_chave_par(r["corrida_id"], r["trap_V"], r["trap_D"]): r for r in rows}
     novos = 0
     fmt = lambda x: "" if x in (None, "") else round(float(x), 4)
-    for V, D, prob_raw, prob_cal, nivel, crit, flags, motivos_a, ressalvas in linhas:
+    for V, D, prob_raw, prob_cal, aprovado, crit, flags in linhas:
         r = _dif_proj(V, D, ctx)
         delta, sd_tot, tV, tD = r if r else ("", "", "", "")
         antigo = idx.get(_chave_par(cid, V["trap"], D["trap"]))
@@ -1377,9 +1315,7 @@ def registrar_previsoes(dogs, linhas, ctx):
                 "classe": ctx.get("classe", ""), "dist": ctx.get("dist", ""),
                 "galgo_V": V["name"], "trap_V": V["trap"], "galgo_D": D["name"], "trap_D": D["trap"],
                 "prob": round(prob_raw, 2), "prob_cal": "" if prob_cal is None else round(prob_cal, 2),
-                "aprovado": int(nivel == "A"), "criterios": crit,
-                "exibido": int(nivel in ("A", "B")), "nivel": nivel,
-                "motivo": " | ".join(motivos_a), "ressalvas": " | ".join(ressalvas),
+                "aprovado": int(aprovado), "nivel": int(flags.get("nivel", 1 if aprovado else 0)), "criterios": crit, "exibido": int(aprovado),
                 "tproj_V": fmt(tV), "tproj_D": fmt(tD), "delta_s": fmt(delta), "sd_total": fmt(sd_tot),
                 "tadj_V": fmt(V.get("tadj")), "tadj_D": fmt(D.get("tadj")), "mtime_V": fmt(V.get("mtime")), "mtime_D": fmt(D.get("mtime")),
                 "brt_V": fmt(V.get("brt")), "brt_D": fmt(D.get("brt")), "pos_V": "", "pos_D": "", "acertou": "", "versao": CFG["VERSAO"]}
@@ -1581,13 +1517,14 @@ def _wilson(k, n, z=1.96):
 
 def avaliar_previsoes(path=None, so_exibidos=False, versao="atual", nivel=None):
     """Faixa de probabilidade x acerto real (com intervalo de 95%), Brier e log-loss.
-    Usa a probabilidade que foi exibida (calibrada, se houve) ou a bruta. nivel = "A" | "B" | None (todos)."""
+    Usa a probabilidade que foi exibida (calibrada, se houve) ou a bruta."""
     df = _df_resolvidos(path, versao)
     if df is None or df.empty: return None, {}
     if so_exibidos:
         df["exibido"] = pd.to_numeric(df.get("exibido"), errors="coerce")
         df = df[df["exibido"] == 1]
-    if nivel and "nivel" in df.columns:
+    if nivel is not None:
+        df["nivel"] = pd.to_numeric(df.get("nivel"), errors="coerce")
         df = df[df["nivel"] == nivel]
     if df.empty: return None, {}
     pc = pd.to_numeric(df["prob_cal"], errors="coerce") if "prob_cal" in df.columns else pd.Series(np.nan, index=df.index)
@@ -1619,26 +1556,6 @@ def avaliar_criterios(path=None, versao="atual"):
         v, f = df[col == 1], df[col == 0]
         linhas.append({"critério": c, "n_sim": len(v), "acerto_sim_%": round(100 * v["acertou"].mean(), 1) if len(v) else None,
                        "n_não": len(f), "acerto_não_%": round(100 * f["acertou"].mean(), 1) if len(f) else None})
-    return pd.DataFrame(linhas)
-
-
-def avaliar_gargalos(path=None, versao="atual"):
-    """Gargalos ACUMULADOS: em quantos dos confrontos avaliados (todas as corridas ja registradas) cada porteiro do nivel A
-    reprovou o par. Um par pode ter varios motivos. Retorna DataFrame [Motivo, Confrontos, % dos avaliados] ou None."""
-    path = path or CFG["AVB_FILE"]
-    if not os.path.exists(path): return None
-    df = pd.read_csv(path)
-    if df.empty or "motivo" not in df.columns: return None
-    if versao and "versao" in df.columns:
-        df = df[df["versao"] == (CFG["VERSAO"] if versao == "atual" else versao)]
-    if df.empty: return None
-    total = len(df)
-    cont = Counter()
-    for m in df["motivo"].fillna("").astype(str):
-        for t in [x.strip() for x in m.split("|") if x.strip()]:
-            cont[t] += 1
-    if not cont: return pd.DataFrame(columns=["Motivo", "Confrontos", "% dos avaliados"])
-    linhas = [{"Motivo": k, "Confrontos": v, "% dos avaliados": round(100.0 * v / total, 1)} for k, v in cont.most_common()]
     return pd.DataFrame(linhas)
 
 
@@ -1693,58 +1610,62 @@ def calibrar_escala(path=None):
 
 
 # ---------------------------------------------------------------------
-# MONTAGEM DOS AVBS (nivel A e nivel B) + FUNIL
+# MONTAGEM DOS AVBS
 # ---------------------------------------------------------------------
+AVB_DIAG = {}  # diagnóstico da última corrida montada (usado na caixa "AvBs desta corrida")
+
+
 def montar_avbs(rank, ctx):
-    """Avalia TODOS os confrontos entre galgos com dados. Devolve [(V, D, prob, estrela)], estrela True = nivel A,
-    False = nivel B (compativel com o app.py). Grava ctx["funil"] com o motivo de cada confronto."""
-    ctx["funil"] = []
-    pool = [d for d in rank if d.get("name") != "vacant" and not d.get("nd")]
-    if len(pool) < 2: return []
+    AVB_DIAG.clear()
+    elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd") and d.get("t_proj") is not None]
+    if len(elig) < 2: return []
 
     try: resolver_pelo_historico()  # fecha sozinho os confrontos de corridas anteriores (sem digitar resultado)
     except Exception: pass
     params = _params_calibracao()
-    Bc = CFG["AVB_B"]
-    s1, linhas_log, funil = [], [], []
+    alt = CFG["AVB"].get("alt", {})
+    s1, linhas_log = [], []
     AVB_META.clear()
-    for i in range(len(pool)):
-        for j in range(i + 1, len(pool)):
-            A_, B_ = pool[i], pool[j]
-            prob_A = calc_prob(A_, B_, rank, ctx)
-            V, D, prob_raw = (A_, B_, prob_A) if prob_A >= 50.0 else (B_, A_, 100.0 - prob_A)
+    diag = {"cid": corrida_id(rank, ctx), "pares": 0, "n_p": 0, "n_alt": 0, "motivos": {}, "unico": {},
+            "bloqueados": [d["name"] for d in elig if d.get("bloqueado")], "alvos": [d["name"] for d in elig if d.get("alvo")]}
+    for i in range(len(elig)):
+        for j in range(i + 1, len(elig)):
+            A, B = elig[i], elig[j]
+            diag["pares"] += 1
+            prob_A = calc_prob(A, B, rank, ctx)
+            V, D, prob_raw = (A, B, prob_A) if prob_A >= 50.0 else (B, A, 100.0 - prob_A)
             prob = aplicar_calibracao(prob_raw, params)
+            aprovado, crit, flags = _avaliar_confronto(V, D, prob, ctx)
+            # Alvo 🎯 e bloqueado 🚫 NUNCA podem ser o escolhido (V); como adversário (D) podem entrar nos dois niveis
+            v_proibido = bool(V.get("alvo") or V.get("bloqueado"))
+            tem_alvo = v_proibido
+            principal = bool(aprovado and not v_proibido)
+            nivel = 1 if principal else 0
+            if not principal and alt.get("ativo"):
+                alvo_ok = (not v_proibido)
+                if alvo_ok and _aprovado_alt(V, D, prob, flags): nivel = 2
+            flags["nivel"] = nivel
+            motivos = [nome for nome, ok in (("probabilidade abaixo do mínimo", flags["r_prob"]), ("confiança baixa", flags["r_conf"]),
+                                             ("não é melhor nos dois tempos (Time Ajust. e Méd. Time)", flags["r_tempos"]),
+                                             ("recuperação ruim", flags["r_rec"]), ("escolhido é Trombador", flags["r_perfil"]),
+                                             ("sem apoio de categoria/largada", flags["r_apoio"]),
+                                             ("distância convertida sem fator medido 📏", flags["r_conv"])) if not ok]
+            if tem_alvo: motivos.append("escolhido seria alvo 🎯/bloqueado 🚫 (só pode ser adversário)")
+            for m in motivos: diag["motivos"][m] = diag["motivos"].get(m, 0) + 1
+            if len(motivos) == 1: diag["unico"][motivos[0]] = diag["unico"].get(motivos[0], 0) + 1
+            if nivel == 1: diag["n_p"] += 1
+            elif nivel == 2: diag["n_alt"] += 1
+            if nivel: s1.append((V, D, prob, crit, nivel))
+            linhas_log.append((V, D, prob_raw, (prob if params else None), principal, crit, flags))
 
-            if V.get("conf", 0) < 20.0 or D.get("conf", 0) < 20.0:
-                funil.append({"V": V, "D": D, "prob": prob, "nivel": "", "motivos_a": ["Dados insuficientes (conf. < 20%)"],
-                              "motivos_b": [], "ressalvas": []})
-                continue
-            if V.get("bloqueado") or D.get("bloqueado"):
-                funil.append({"V": V, "D": D, "prob": prob, "nivel": "",
-                              "motivos_a": [f"Galgo bloqueado (conf. < {CFG['CONF_MIN_VENCEDOR']:.0f}%)"],
-                              "motivos_b": [], "ressalvas": []})
-                continue
-
-            aprov_a, crit, flags, motivos_a = _avaliar_confronto(V, D, prob, ctx)
-            nivel, ress, motivos_b = ("A", [], []) if aprov_a else ("", [], [])
-            if not aprov_a and Bc.get("ativo"):
-                ok_b, ress, motivos_b = _avaliar_nivel_b(V, D, prob, ctx, flags)
-                if ok_b: nivel = "B"
-            funil.append({"V": V, "D": D, "prob": prob, "nivel": nivel, "motivos_a": motivos_a,
-                          "motivos_b": motivos_b, "ressalvas": ress})
-            linhas_log.append((V, D, prob_raw, (prob if params else None), nivel, crit, flags, motivos_a, ress))
-            if nivel in ("A", "B"):
-                s1.append((V, D, prob, crit, nivel, ress))
-
-    s1.sort(key=lambda x: (0 if x[4] == "A" else 1, -x[2], -x[3]))  # nivel A primeiro; depois maior probabilidade
+    s1.sort(key=lambda x: (x[4], -x[2], -x[3]))  # principais primeiro; em cada nível, maior probabilidade primeiro
     try: registrar_previsoes(rank, linhas_log, ctx)
     except Exception: pass
-    funil.sort(key=lambda f: (-f["prob"]))
-    ctx["funil"] = funil
+    AVB_DIAG.update(diag)
     out = []
-    for V, D, prob, crit, nivel, ress in s1:
-        AVB_META[(V["name"], D["name"])] = ("AVB", crit, params is not None, nivel, ress)
-        out.append((V, D, prob, nivel == "A"))  # formato (V, D, prob, estrela): app.py continua desempacotando 4 itens
+    for V, D, prob, crit, nivel in s1:
+        AVB_META[(V["name"], D["name"])] = ("AVB", crit, params is not None, nivel)
+        out.append((V, D, prob, nivel == 1))  # (V, D, prob, star): star=True só no principal; app.py continua desempacotando 4 itens
     return out
 
 
@@ -1763,27 +1684,20 @@ _TBL_N = 0
 
 def tbl(headers, rows, sticky=1, w1=None, w2=None):
     css = """<style>.dib-container{overflow-x:auto;width:100%;margin-bottom:20px}.dib-table{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto}.dib-table th,.dib-table td{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}.dib-table th{background-color:rgba(128,128,128,0.1);font-weight:600}.dib-table td.sep{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}.dib-table td.sep-avb{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}"""
-    css += (".dib-table th.stk,.dib-table td.stk{position:sticky;z-index:2;background-color:#ffffff;background-clip:padding-box;white-space:normal;overflow-wrap:anywhere;word-break:break-word;text-align:left;box-sizing:border-box}"
+    css += (".dib-table th.stk,.dib-table td.stk{position:sticky;z-index:2;background-color:#ffffff;background-clip:padding-box;white-space:nowrap;text-align:left;box-sizing:border-box}"
             ".dib-table th.stk{background-color:#f0f2f6;z-index:3}"
             ".dib-table .stk1{left:0}"
             ".dib-table .stk-last{box-shadow:2px 0 3px -1px rgba(128,128,128,0.45)}"
             "@media (prefers-color-scheme: dark){.dib-table th.stk,.dib-table td.stk{background-color:#0e1117}.dib-table th.stk{background-color:#262730}}")
-    # Tabelas SEM largura definida (aba Form e aba Resultado): sem coluna travada (ela quebrava a data letra por letra
-    # e ficava com a cor do tema do celular, deixando a linha altissima) e com linhas compactas.
-    compacta = not w1
-    if compacta:
-        sticky = 0
     global _TBL_N
     _TBL_N += 1
     tid = f"dibt{_TBL_N}"
+    if w1 or w2:  # só com largura fixa a coluna travada pode quebrar linha (nomes de galgo); sem largura = uma linha só
+        css += f"#{tid} .stk{{white-space:normal;overflow-wrap:anywhere;word-break:break-word}}"
     if w1:
         css += f"#{tid} .stk1{{min-width:{w1}px;max-width:{w1}px;width:{w1}px}}#{tid} .stk2{{left:{w1}px}}"
     if w2:
         css += f"#{tid} .stk2{{min-width:{w2}px;max-width:{w2}px;width:{w2}px}}"
-    if compacta:
-        css += (f"#{tid} .dib-table{{font-size:13px}}"
-                f"#{tid} .dib-table th,#{tid} .dib-table td{{padding:3px 8px;line-height:1.2;white-space:nowrap}}"
-                f"#{tid} .dib-table th{{padding:4px 8px}}")
     css += "</style>"
     out = []
     for row in rows:
@@ -1814,7 +1728,7 @@ def nome_marcado(d):
     if d.get("alerta_trial", False): n += " ⚠️"
     if d.get("alvo", False): n += " 🎯"
     if d.get("bloqueado", False): n += " 🚫"
-    if d.get("conv_ok") is False: n += " 📏"  # tem corrida convertida sem fator de distância medido (só entra no AvB nível B)
+    if d.get("conv_ok") is False: n += " 📏"  # tem corrida convertida sem fator de distância medido: fora dos AvBs
     return n
 
 
@@ -1899,8 +1813,8 @@ def tabela_avb(lista, titulo):
             elif val_v < val_d: v_str, d_str = f"<span style='color:#ff4b4b'>{v_str}</span>", f"<span style='color:#12873a;font-weight:bold'>{d_str}</span>"
         return v_str, d_str
 
-    badge_a = "<span style='color:#FFD700;font-weight:bold;margin-right:6px;' title='AvB nível A (regra completa)'>★</span>"
-    badge_b = "<span style='color:#f08c00;font-weight:bold;margin-right:6px;' title='AvB nível B (com ressalva)'>☆</span>"
+    badge = "<span style='color:#FFD700;font-weight:bold;margin-right:6px;' title='AvB principal'>★</span>"
+    badge_alt = "<span style='margin-right:6px;' title='AvB alternativo (regras relaxadas)'>🔹</span>"
 
     rows = []
     for i, item in enumerate(lista):
@@ -1908,8 +1822,7 @@ def tabela_avb(lista, titulo):
         meta = AVB_META.get((V["name"], D["name"]))
         score_crit = meta[1] if meta else 0
         calibrada = bool(meta[2]) if meta and len(meta) > 2 else False
-        nivel = meta[3] if meta and len(meta) > 3 else "A"
-        ress = meta[4] if meta and len(meta) > 4 else []
+        nivel = meta[3] if meta and len(meta) > 3 else 1
 
         if i > 0: rows.append(["<hr>"])
 
@@ -1926,18 +1839,12 @@ def tabela_avb(lista, titulo):
         prob_cell = (
             f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:16px;'>"
             f"<span style='color:#12873a'>{prob:.1f}%</span><br>"
-            f"<small style='color:#aaa;font-weight:normal'>Nível {nivel}</small><br>"
             f"<small style='color:#aaa;font-weight:normal'>{score_crit}/6 crit.</small><br>"
             f"<small style='color:#aaa;font-weight:normal'>{'calibrada' if calibrada else 'bruta'}</small></td>"
         )
 
-        ress_html = ""
-        if nivel == "B" and ress:
-            ress_html = "<br><small style='color:#b8860b;font-weight:normal'>◐ " + html.escape("; ".join(ress)) + "</small>"
-        badge = badge_a if nivel == "A" else badge_b
-
         rows.append([
-            f"{badge}{trap_label(V)} - {nome_marcado(V)}{brt_html(V)}{ress_html}",
+            f"{badge if nivel == 1 else badge_alt}{trap_label(V)} - {nome_marcado(V)}{brt_html(V)}",
             ov_v, cat_v, V['perfil'], grades_txt(V),
             peso_txt(V), f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, me_v, rec_v, f"{V['conf']:.0f}%",
             prob_cell
@@ -1951,38 +1858,59 @@ def tabela_avb(lista, titulo):
 
     heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "M. Split", "M. Time", "Méd. Split", "Méd. Time", "Time Ajust.", "Métrica", "Recup.", "Conf.", "Probabilidade"]
     st.markdown(tbl(heads, rows, sticky=1, w1=190), unsafe_allow_html=True)
+    if any((AVB_META.get((it[0]["name"], it[1]["name"])) or (0, 0, 0, 1))[3] == 2 for it in lista):
+        st.caption("★ principal (regras completas) · 🔹 alternativo (regras relaxadas, em validação à parte)")
 
 
 # =====================================================================
-# PAINEL DE VALIDAÇÃO + FUNIL + OBSERVAÇÕES
+# PAINEL DE VALIDAÇÃO + OBSERVAÇÕES
 # =====================================================================
+def painel_diagnostico_avb(rank, ctx):
+    """Mostra por que os confrontos desta corrida foram aprovados ou reprovados, e qual regra mais trava."""
+    dg = AVB_DIAG
+    try: cid = corrida_id(rank, ctx)
+    except Exception: return
+    if not dg or dg.get("cid") != cid: return
+    with st.expander(f"🧭 AvBs desta corrida: {dg['n_p']} principal(is), {dg['n_alt']} alternativo(s)"):
+        st.markdown(f"{dg['pares']} confrontos avaliados.")
+        if dg["bloqueados"]: st.markdown("Confiança baixa (🚫), só como adversário: " + ", ".join(html.escape(n) for n in dg["bloqueados"]))
+        if dg["alvos"]: st.markdown("Marcados como **alvo (🎯)**: " + ", ".join(html.escape(n) for n in dg["alvos"]) + " (nunca como escolhido; só como adversário).")
+        if dg["motivos"]:
+            linhas = [{"regra que reprova": m, "confrontos reprovados": n, "só ela reprova": dg["unico"].get(m, 0)}
+                      for m, n in sorted(dg["motivos"].items(), key=lambda x: -x[1])]
+            st.dataframe(pd.DataFrame(linhas), hide_index=True)
+            st.caption("'Só ela reprova' = quantos confrontos passariam se somente essa regra fosse retirada: mostra onde está o gargalo.")
+
+
 def painel_validacao():
     with st.expander("📊 Validação dos AvBs (acerto real × probabilidade)"):
         try:
+            tab, met = avaliar_previsoes(so_exibidos=True)
             df_all = _df_resolvidos()
         except Exception as e:
             st.info(f"Não foi possível ler as previsões: {e}")
             return
-        for nivel, rotulo in (("A", "Nível A — regra completa"), ("B", "Nível B — com ressalva")):
-            try:
-                tab, met = avaliar_previsoes(so_exibidos=True, nivel=nivel)
-            except Exception as e:
-                st.info(f"Não foi possível ler as previsões do nível {nivel}: {e}")
-                continue
-            st.markdown(f"##### {rotulo}")
-            if tab is None or tab.empty:
-                st.info(f"Ainda não há AvBs de nível {nivel} com resultado registrado nesta versão do modelo "
-                        f"(`{CFG['VERSAO']}`). Registre a ordem de chegada de cada corrida.")
-                continue
-            st.markdown(f"**{met['n']} AvBs resolvidos em {met['corridas']} corridas** · "
+        if tab is None or tab.empty:
+            st.info("Ainda não há AvBs exibidos com resultado registrado nesta versão do modelo "
+                    f"(`{CFG['VERSAO']}`). Registre a ordem de chegada de cada corrida.")
+        else:
+            st.markdown(f"**{met['n']} AvBs exibidos resolvidos em {met['corridas']} corridas** · "
                         f"acerto real **{100*met['acerto']:.1f}%** vs. prob. média {100*met['prob_media']:.1f}% · "
                         f"Brier {met['brier']:.3f} · log-loss {met['logloss']:.3f}")
             if met["n"] < 150:
                 st.warning("Amostra pequena: com menos de ~150 confrontos a taxa de acerto tem margem de erro grande "
                            "(veja ic95_inf/sup). Mantenha stakes baixos até a taxa se sustentar.")
+            st.markdown("Compare **acerto_%** com **prob_media**. A **odd_segura** usa o limite inferior do intervalo: só vale pagar abaixo dela se você aceitar o pior cenário.")
             st.dataframe(tab, hide_index=True)
-        st.markdown("Compare **acerto_%** com **prob_media**. A **odd_segura** usa o limite inferior do intervalo: só vale pagar abaixo dela se você aceitar o pior cenário. "
-                    "O nível B só merece virar A se o acerto dele acompanhar a probabilidade média tão bem quanto o A.")
+        try:
+            tab2, met2 = avaliar_previsoes(nivel=2)
+        except Exception:
+            tab2, met2 = None, {}
+        if tab2 is not None and not tab2.empty:
+            st.markdown(f"**🔹 AvBs alternativos:** {met2['n']} resolvidos em {met2['corridas']} corridas · "
+                        f"acerto real **{100*met2['acerto']:.1f}%** vs. prob. média {100*met2['prob_media']:.1f}%")
+            st.dataframe(tab2, hide_index=True)
+            st.caption("Compare com os principais. Se o acerto dos 🔹 se sustentar perto do prometido, as regras relaxadas podem virar o padrão.")
         n_res = 0 if df_all is None else len(df_all)
         try:
             pend, resolv = contar_pendentes()
@@ -1999,40 +1927,6 @@ def painel_validacao():
         if crit is not None and not crit.empty:
             st.markdown("**Quais critérios realmente separam acerto de erro** (todos os pares registrados):")
             st.dataframe(crit, hide_index=True)
-        garg = avaliar_gargalos()
-        if garg is not None and not garg.empty:
-            st.markdown("**Gargalos acumulados** (em quantos confrontos avaliados cada porteiro do nível A reprovou):")
-            st.dataframe(garg, hide_index=True)
-
-
-def painel_funil(ctx):
-    """Por que cada confronto passou ou nao: todos os pares da corrida, com os porteiros que reprovaram em A e em B."""
-    funil = ctx.get("funil") or []
-    with st.expander("🔬 Funil dos AvBs (por que cada confronto passou ou não)"):
-        if not funil:
-            st.info("Sem confrontos avaliados nesta corrida (menos de 2 galgos com dados).")
-            return
-        n_a = sum(1 for f in funil if f["nivel"] == "A")
-        n_b = sum(1 for f in funil if f["nivel"] == "B")
-        st.markdown(f"**{len(funil)} confrontos avaliados · {n_a} nível A · {n_b} nível B**")
-        cont = Counter(m for f in funil if f["nivel"] != "A" for m in f["motivos_a"])
-        if cont:
-            st.markdown("**Gargalos desta corrida** (quantos confrontos cada porteiro reprovou no nível A):")
-            st.dataframe(pd.DataFrame([{"Motivo": k, "Confrontos": v} for k, v in cont.most_common()]), hide_index=True)
-        linhas = []
-        for f in funil:
-            V, D = f["V"], f["D"]
-            linhas.append({
-                "Confronto": f"T{V['trap']} {V['name']} × T{D['trap']} {D['name']}",
-                "Prob. %": round(f["prob"], 1),
-                "Nível": f["nivel"] or "—",
-                "Reprovou em A": " | ".join(f["motivos_a"]) if f["nivel"] != "A" else "",
-                "Reprovou em B": " | ".join(f["motivos_b"]) if f["nivel"] == "" and f["motivos_b"] else "",
-                "Ressalvas de B": " | ".join(f["ressalvas"]) if f["nivel"] == "B" else "",
-            })
-        st.dataframe(pd.DataFrame(linhas), hide_index=True)
-        st.caption("Nível A = regra completa. Nível B = passa com ressalva (CFG['AVB_B']). '—' = não aprovado. "
-                   "A probabilidade mínima (CFG['AVB']['prob_min']) e o apoio (categoria/largada) valem nos dois níveis.")
 
 
 def painel_overall():
@@ -2119,13 +2013,11 @@ def gerar_observacoes(rank, avbs, ctx):
         else:
             st.markdown(f"Nenhum fator medido ainda: são necessários {F['min_pares_pista']} pares por pista "
                         f"(ou {F['min_pares_global']} no total); há {pares_total} pares no `{CFG['CALIB_FILE']}`. "
-                        "Enquanto isso, corridas de outra distância são convertidas só por proporção (†), com incerteza grande. "
-                        "O galgo aparece marcado com 📏: fica fora do AvB nível A e só entra no nível B com +"
-                        f"{(CFG['AVB_B'].get('sem_fator_extra') or 0):.0f} pontos de probabilidade.")
+                        "Enquanto isso, corridas de outra distância são convertidas só por proporção (†), com incerteza grande, "
+                        "e o galgo aparece marcado com 📏 e fica fora dos AvBs.")
         sem = [d["name"] for d in rank if d.get("conv_ok") is False]
         if sem:
-            st.markdown("Sem fator de distância medido (📏): " + ", ".join(html.escape(n) for n in sem))
-    painel_funil(ctx)
+            st.markdown("Fora dos AvBs por falta de fator medido: " + ", ".join(html.escape(n) for n in sem))
     cid = corrida_id(rank, ctx)
     with st.expander("📝 Registrar resultado (calibração dos AvBs)"):
         ordem = st.text_input("Ordem de chegada (traps do 1º ao 6º, ex.: 3-1-4-5-2-6)", key=f"res_{cid}")
@@ -2136,6 +2028,7 @@ def gerar_observacoes(rank, avbs, ctx):
             else: st.warning("Nenhum confronto atualizado. Confira a ordem digitada.")
         _pv = previsoes_bytes()
         if _pv: st.download_button("Baixar avb_previsoes.csv", _pv, file_name="avb_previsoes.csv", mime="text/csv", key=f"dl_avb_{cid}")
+    painel_diagnostico_avb(rank, ctx)
     painel_validacao()
     painel_overall()
     st.markdown("#### 🏁 Leitura Tática da Corrida")
