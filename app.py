@@ -1196,21 +1196,22 @@ _JS_TRAVAR = """<script>
     '.dib-table.sticky-2 td:nth-child(1)' + NOT + ',' +
     '.dib-table.sticky-1 th:nth-child(1),' +
     '.dib-table.sticky-2 th:nth-child(1)' +
-    '{ position: sticky !important; left: 0 !important; z-index: 2 !important; }' +
+    '{ position: sticky !important; left: 0 !important; z-index: 2 !important;' +
+    '  box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45) !important; }' +
     '.dib-table.sticky-2 td:nth-child(2)' + NOT + ',' +
     '.dib-table.sticky-2 th:nth-child(2)' +
     '{ position: sticky !important; left: var(--dib-left2, 0px) !important; z-index: 2 !important;' +
-    '  box-shadow: 8px 0 10px -8px rgba(0,0,0,.3) !important; }' +
+    '  box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45), 3px 0 4px -2px rgba(0,0,0,.35) !important; }' +
     '.dib-table.sticky-1 td:nth-child(1)' + NOT + ',' +
     '.dib-table.sticky-2 td:nth-child(1)' + NOT + ',' +
     '.dib-table.sticky-2 td:nth-child(2)' + NOT +
-    '{ background-color: var(--dib-card, #fff) !important; }' +
-    '.dib-table.sticky-1 td:nth-child(1)' + NOT + '{ box-shadow: 8px 0 10px -8px rgba(0,0,0,.3) !important; }' +
+    '{ background-color: var(--dib-bg, #fff) !important; }' +
     '.dib-table.sticky-1 th:nth-child(1),' +
     '.dib-table.sticky-2 th:nth-child(1),' +
     '.dib-table.sticky-2 th:nth-child(2)' +
-    '{ background-color: var(--dib-head, #f0f2f6) !important; z-index: 3 !important; }' +
-    '.dib-table.sticky-1 th:nth-child(1){ box-shadow: 8px 0 10px -8px rgba(0,0,0,.3) !important; }';
+    '{ background-color: var(--dib-bg-head, #f0f2f6) !important; z-index: 3 !important; }' +
+    '.dib-table.sticky-1 td:nth-child(1)' + NOT + '{ box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45), 3px 0 4px -2px rgba(0,0,0,.35) !important; }' +
+    '.dib-table.sticky-1 th:nth-child(1){ box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45), 3px 0 4px -2px rgba(0,0,0,.35) !important; }';
 
   var styleId = 'dib-sticky-style-v2';
   var estilo = doc.getElementById(styleId);
@@ -1220,6 +1221,19 @@ _JS_TRAVAR = """<script>
     doc.head.appendChild(estilo);
   }
   estilo.innerHTML = CSS;
+
+  function cores() {
+    var app = doc.querySelector('.stApp') || doc.body;
+    var m = win.getComputedStyle(app).backgroundColor.match(/[\\d.]+/g);
+    if (!m || m.length < 3 || (m.length > 3 && parseFloat(m[3]) === 0)) return;
+    var r = +m[0], g = +m[1], b = +m[2];
+    function mix(c) { return Math.round(c * 0.9 + 128 * 0.1); }
+    var raiz = doc.documentElement;
+    raiz.style.setProperty('--dib-bg', 'rgb(' + r + ',' + g + ',' + b + ')');
+    raiz.style.setProperty('--dib-bg-head', 'rgb(' + mix(r) + ',' + mix(g) + ',' + mix(b) + ')');
+  }
+  cores();
+  setInterval(cores, 400);
 
   function aplicar() {
     Array.prototype.forEach.call(doc.querySelectorAll('table.dib-table'), function (t) {
@@ -1253,10 +1267,12 @@ def analisar(c, classe_in, dist_in, pp_in):
     p = preparar(c["id"], c["data"], c, classe_in, dist_in, pp_in)
     if not p:
         return
-    st.markdown(cabecalho_corrida(c, p), unsafe_allow_html=True)
-    st.markdown("#### Planilha de Projeção")
-    st.markdown(dib.tabela_projecao(p["ds"]), unsafe_allow_html=True)
-    st.markdown(grafico_predictor(p["ds"]), unsafe_allow_html=True)
+    st.markdown(dib_ui.cabecalho(c, p, badge_g, hora_br), unsafe_allow_html=True)
+    st.markdown(dib_ui.cards_top3(p["rank"], badge), unsafe_allow_html=True)
+    st.markdown(dib_ui.cards_avb(p["s1"], badge), unsafe_allow_html=True)
+    st.markdown(dib_ui.predictor(p["ds"], badge), unsafe_allow_html=True)
+    with st.expander("📊 Planilha de Projeção (completa)"):
+        st.markdown(dib.tabela_projecao(p["ds"]), unsafe_allow_html=True)
     st.markdown(titulo_corrida(c, p))
     if not p["pp"]:
         st.caption("Post Pick não encontrado automaticamente. Você pode digitar em ⚙️ Ajustes (ex: 1-2-5).")
@@ -1271,7 +1287,8 @@ def analisar(c, classe_in, dist_in, pp_in):
             st.text_area("Relatório:", relatorio, height=200)
             st.dataframe(pd.DataFrame([{k: v for k, v in d_.items() if k != "Pistas"} for d_ in diag]),
                          use_container_width=True, hide_index=True)
-    dib.tabela_avb(p["s1"], "Planilha de AvB — ★ principal · 🔹 alternativo")
+    with st.expander("⚔️ Planilha de AvB (completa)"):
+        dib.tabela_avb(p["s1"], "AvBs — ★ principal · 🔹 alternativo")
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
 
