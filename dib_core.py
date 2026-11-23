@@ -2099,13 +2099,21 @@ def gerar_observacoes(rank, avbs, ctx):
 _LOGO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
 
-def _logo_b64(nome):
-    import base64
-    try:
-        with open(os.path.join(_LOGO_DIR, nome), "rb") as f:
-            return base64.b64encode(f.read()).decode()
-    except Exception:
-        return None
+def _achar_logo(chaves):
+    """Procura a imagem na pasta do app e em assets/ (qualquer extensão jpg/jpeg/png/webp; nome com uma das chaves).
+    Retorna (base64, mime) ou (None, None)."""
+    import base64, glob
+    base = os.path.dirname(os.path.abspath(__file__))
+    for pasta in (os.path.join(base, "assets"), base, os.path.join(base, "imagens"), os.path.join(base, "images")):
+        for p in sorted(glob.glob(os.path.join(pasta, "*"))):
+            nome = os.path.basename(p).lower()
+            ext = nome.rsplit(".", 1)[-1] if "." in nome else ""
+            if ext in ("jpg", "jpeg", "png", "webp") and any(k in nome for k in chaves):
+                try:
+                    with open(p, "rb") as f:
+                        return base64.b64encode(f.read()).decode(), ("jpeg" if ext == "jpg" else ext)
+                except Exception: pass
+    return None, None
 
 
 def _tema_escuro():
@@ -2131,13 +2139,13 @@ def mostrar_logo(largura=360):
 def _mostrar_logo(largura=360):
     """Mostra a logo no lugar do título de texto. Claro -> logo_claro.jpg | escuro -> logo_escuro.jpg.
     Se o tema não puder ser detectado, usa o tema do aparelho (prefers-color-scheme). Sem as imagens, mostra o título de texto."""
-    c, e = _logo_b64("logo_claro.jpg"), _logo_b64("logo_escuro.jpg")
+    (c, mc), (e, me) = _achar_logo(("claro", "branco", "light", "white")), _achar_logo(("escuro", "preto", "dark", "black"))
     if not c or not e:
         st.title("🐾 DIB GREYHOUND")
-        st.caption(f"(logo não encontrada na pasta: {_LOGO_DIR} — precisa de logo_claro.jpg e logo_escuro.jpg)")
+        st.caption(f"(logo não encontrada na pasta: {_LOGO_DIR} — precisa de logo_claro.jpg e logo_escuro.jpg; pasta do app tem: {', '.join(sorted(os.listdir(os.path.dirname(os.path.abspath(__file__)))))[:300]})")
         return
-    ic = f"<img src='data:image/jpeg;base64,{c}' style='width:100%;max-width:{largura}px;height:auto;border-radius:8px'>"
-    ie = f"<img src='data:image/jpeg;base64,{e}' style='width:100%;max-width:{largura}px;height:auto;border-radius:8px'>"
+    ic = f"<img src='data:image/{mc};base64,{c}' style='width:100%;max-width:{largura}px;height:auto;border-radius:8px'>"
+    ie = f"<img src='data:image/{me};base64,{e}' style='width:100%;max-width:{largura}px;height:auto;border-radius:8px'>"
     esc = _tema_escuro()
     if esc is True: corpo = ie
     elif esc is False: corpo = ic
@@ -2145,3 +2153,4 @@ def _mostrar_logo(largura=360):
         corpo = (f"<style>.dib-lg-e{{display:none}}@media (prefers-color-scheme: dark){{.dib-lg-c{{display:none}}.dib-lg-e{{display:block}}}}</style>"
                  f"<div class='dib-lg-c'>{ic}</div><div class='dib-lg-e'>{ie}</div>")
     st.markdown(f"<div style='margin:0 0 8px 0'>{corpo}</div>", unsafe_allow_html=True)
+  
