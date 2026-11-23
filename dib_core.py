@@ -1684,8 +1684,8 @@ _TBL_N = 0
 
 def tbl(headers, rows, sticky=1, w1=None, w2=None):
     css = """<style>.dib-container{overflow-x:auto;width:100%;margin-bottom:20px}.dib-table{width:100%;border-collapse:collapse;text-align:center;font-size:15px;table-layout:auto}.dib-table th,.dib-table td{padding:8px 6px;border-bottom:1px solid rgba(128,128,128,0.2);white-space:nowrap;line-height:1.3}.dib-table th{background-color:rgba(128,128,128,0.1);font-weight:600}.dib-table td.sep{padding:0;height:2px;background-color:rgba(128,128,128,0.4)}.dib-table td.sep-avb{padding:0;height:1px;background-color:rgba(128,128,128,0.15)}"""
-    css += (".dib-table th.stk,.dib-table td.stk{position:sticky;z-index:2;background-color:var(--background-color,#ffffff);color:var(--text-color,inherit);background-clip:padding-box;white-space:nowrap;text-align:left;box-sizing:border-box}"
-            ".dib-table th.stk{background-color:var(--secondary-background-color,#f0f2f6);z-index:3}"
+    css += (".dib-table th.stk,.dib-table td.stk{position:sticky;z-index:2;background-color:var(--dib-bg,var(--background-color,#ffffff));color:var(--text-color,inherit);background-clip:padding-box;white-space:nowrap;text-align:left;box-sizing:border-box}"
+            ".dib-table th.stk{background-color:var(--dib-bg-head,var(--secondary-background-color,#f0f2f6));z-index:3}"
             ".dib-table .stk1{left:0}"
             ".dib-table .stk-last{box-shadow:2px 0 3px -1px rgba(128,128,128,0.45)}")
     global _TBL_N
@@ -2123,8 +2123,9 @@ def _tema_escuro():
 
 def mostrar_logo(largura=360):
     try: _mostrar_logo(largura)
-    except Exception:
+    except Exception as e:
         st.title("🐾 DIB GREYHOUND")  # nunca derruba o app por causa da logo
+        st.caption(f"(logo não carregou: {type(e).__name__}: {e})")
 
 
 def _mostrar_logo(largura=360):
@@ -2132,7 +2133,9 @@ def _mostrar_logo(largura=360):
     Se o tema não puder ser detectado, usa o tema do aparelho (prefers-color-scheme). Sem as imagens, mostra o título de texto."""
     c, e = _logo_b64("logo_claro.jpg"), _logo_b64("logo_escuro.jpg")
     if not c or not e:
-        st.title("🐾 DIB GREYHOUND"); return
+        st.title("🐾 DIB GREYHOUND")
+        st.caption(f"(logo não encontrada na pasta: {_LOGO_DIR} — precisa de logo_claro.jpg e logo_escuro.jpg)")
+        return
     ic = f"<img src='data:image/jpeg;base64,{c}' style='width:100%;max-width:{largura}px;height:auto;border-radius:8px'>"
     ie = f"<img src='data:image/jpeg;base64,{e}' style='width:100%;max-width:{largura}px;height:auto;border-radius:8px'>"
     esc = _tema_escuro()
@@ -2142,4 +2145,3 @@ def _mostrar_logo(largura=360):
         corpo = (f"<style>.dib-lg-e{{display:none}}@media (prefers-color-scheme: dark){{.dib-lg-c{{display:none}}.dib-lg-e{{display:block}}}}</style>"
                  f"<div class='dib-lg-c'>{ic}</div><div class='dib-lg-e'>{ie}</div>")
     st.markdown(f"<div style='margin:0 0 8px 0'>{corpo}</div>", unsafe_allow_html=True)
-  
