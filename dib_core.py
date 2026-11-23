@@ -2116,41 +2116,49 @@ def _achar_logo(chaves):
     return None, None
 
 
-def _tema_escuro():
-    """True/False pelo tema ATIVO do Streamlit (st.context.theme, versões novas); None se não der para saber."""
-    try:
-        t = st.context.theme.type
-        if t in ("dark", "light"): return t == "dark"
-    except Exception: pass
-    try:
-        b = st.get_option("theme.base")
-        if b in ("dark", "light"): return b == "dark"
-    except Exception: pass
-    return None
-
-
-def mostrar_logo(largura=360):
+def mostrar_logo(largura=None):
     try: _mostrar_logo(largura)
     except Exception as e:
         st.title("🐾 DIB GREYHOUND")  # nunca derruba o app por causa da logo
         st.caption(f"(logo não carregou: {type(e).__name__}: {e})")
 
 
-def _mostrar_logo(largura=360):
-    """Mostra a logo no lugar do título de texto. Claro -> logo_claro.jpg | escuro -> logo_escuro.jpg.
-    Se o tema não puder ser detectado, usa o tema do aparelho (prefers-color-scheme). Sem as imagens, mostra o título de texto."""
+def _mostrar_logo(largura=None):
+    """Logo em LARGURA TOTAL. Tema claro -> logo de fundo branco | tema escuro -> logo de fundo preto.
+    O tema é lido AO VIVO da página (cor de fundo do app), então troca sozinho quando você muda o tema, sem recarregar."""
     (c, mc), (e, me) = _achar_logo(("claro", "branco", "light", "white")), _achar_logo(("escuro", "preto", "dark", "black"))
     if not c or not e:
         st.title("🐾 DIB GREYHOUND")
         st.caption(f"(logo não encontrada na pasta: {_LOGO_DIR} — precisa de logo_claro.jpg e logo_escuro.jpg; pasta do app tem: {', '.join(sorted(os.listdir(os.path.dirname(os.path.abspath(__file__)))))[:300]})")
         return
-    ic = f"<img src='data:image/{mc};base64,{c}' style='width:100%;max-width:{largura}px;height:auto;border-radius:8px'>"
-    ie = f"<img src='data:image/{me};base64,{e}' style='width:100%;max-width:{largura}px;height:auto;border-radius:8px'>"
-    esc = _tema_escuro()
-    if esc is True: corpo = ie
-    elif esc is False: corpo = ic
-    else:
-        corpo = (f"<style>.dib-lg-e{{display:none}}@media (prefers-color-scheme: dark){{.dib-lg-c{{display:none}}.dib-lg-e{{display:block}}}}</style>"
-                 f"<div class='dib-lg-c'>{ic}</div><div class='dib-lg-e'>{ie}</div>")
-    st.markdown(f"<div style='margin:0 0 8px 0'>{corpo}</div>", unsafe_allow_html=True)
+    import streamlit.components.v1 as components
+    maxw = f"max-width:{int(largura)}px;" if largura else ""
+    pagina = f"""<!doctype html><html><head><meta charset='utf-8'><style>
+html,body{{margin:0;padding:0;background:transparent;overflow:hidden}}
+img{{display:block;width:100%;{maxw}height:auto;border-radius:8px}}
+#e{{display:none}}
+@media (prefers-color-scheme: dark){{.auto #c{{display:none}}.auto #e{{display:block}}}}
+</style></head><body class='auto'>
+<img id='c' src='data:image/{mc};base64,{c}'><img id='e' src='data:image/{me};base64,{e}'>
+<script>
+function lum(cor){{var m=(cor||'').match(/\\d+(\\.\\d+)?/g);if(!m||m.length<3)return null;return 0.299*m[0]+0.587*m[1]+0.114*m[2];}}
+function tema(){{
+  try{{
+    var d=window.parent.document, el=d.querySelector('.stApp')||d.body;
+    var l=lum(window.parent.getComputedStyle(el).backgroundColor);
+    if(l===null)return;
+    document.body.className='';
+    document.getElementById('c').style.display=(l<128)?'none':'block';
+    document.getElementById('e').style.display=(l<128)?'block':'none';
+  }}catch(x){{}}
+}}
+function altura(){{
+  try{{var im=document.getElementById('c').offsetParent?document.getElementById('c'):document.getElementById('e');
+    var h=Math.ceil(document.body.clientWidth*{{RAZAO}});
+    window.frameElement.style.height=h+'px';}}catch(x){{}}
+}}
+function tudo(){{tema();altura();}}
+tudo();setInterval(tudo,400);window.addEventListener('resize',tudo);
+</script></body></html>""".replace("{RAZAO}", "0.5")
+    components.html(pagina, height=220)
   
