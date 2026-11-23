@@ -89,6 +89,9 @@ div[data-testid="stExpander"] summary{font-weight:600}
 .dib-pred .bar{flex:1}
 .dib-pred .pc{flex:0 0 44px;text-align:right;font-weight:800;font-size:.9rem}
 .dib-empty{color:var(--dib-mute);text-align:center;padding:18px}
+.dib-table th{background:var(--dib-head) !important;color:var(--dib-tx);font-size:.82rem !important;text-transform:none}
+.dib-table td{font-size:.92rem !important}
+.dib-container{border:1px solid var(--dib-bd);border-radius:12px}
 </style>"""
 
 # ------------------------------------------------------------------ tema ao vivo (claro/escuro)
