@@ -74,13 +74,16 @@ div[data-testid="stExpander"] summary{font-weight:600}
 .dib-vs{display:flex;flex-direction:column;gap:6px}
 .dib-vs .row{display:flex;align-items:center;gap:8px;font-weight:700;flex-wrap:wrap}
 .dib-vs .row.d{font-weight:500;color:var(--dib-mute)}
+.dib-pos{font-size:.78rem;font-weight:800;color:var(--dib-acc);margin-right:6px}
 .dib-prob{font-size:2rem;font-weight:900;color:var(--dib-ok);line-height:1}
 .dib-mini{width:100%;border-collapse:collapse;margin-top:6px;font-size:.84rem;color:var(--dib-tx)}
 .dib-det summary{cursor:pointer;margin-top:10px;font-size:.82rem;font-weight:600;color:var(--dib-acc);list-style:none}
 .dib-det summary::-webkit-details-marker{display:none}
 .dib-det summary::before{content:'▸ '}
 .dib-det[open] summary::before{content:'▾ '}
-.dib-mini td{padding:4px 2px;border-top:1px solid var(--dib-bd);text-align:center}
+.dib-mini td,.dib-mini th{padding:5px 2px;border:0 !important;border-top:1px solid var(--dib-bd) !important;text-align:center;background:transparent !important}
+.dib-mini tr:first-child td{border-top:0 !important}
+.dib-mini .df{font-size:.7em;font-weight:500;color:var(--dib-mute);margin-left:2px;opacity:.85}
 .dib-mini td:first-child{text-align:left;color:var(--dib-mute)}
 .dib-mini .w{color:var(--dib-ok);font-weight:800}
 .dib-mini .l{color:var(--dib-bad)}
@@ -89,9 +92,6 @@ div[data-testid="stExpander"] summary{font-weight:600}
 .dib-pred .bar{flex:1}
 .dib-pred .pc{flex:0 0 44px;text-align:right;font-weight:800;font-size:.9rem}
 .dib-empty{color:var(--dib-mute);text-align:center;padding:18px}
-.dib-table th{background:var(--dib-head) !important;color:var(--dib-tx);font-size:.82rem !important;text-transform:none}
-.dib-table td{font-size:.92rem !important}
-.dib-container{border:1px solid var(--dib-bd);border-radius:12px}
 </style>"""
 
 # ------------------------------------------------------------------ tema ao vivo (claro/escuro)
@@ -179,7 +179,7 @@ def cards_top3(rank, badge, n=3):
             f"<div class='dib-brt'>{_e(brt) if brt else '&nbsp;'}</div>"
             f"<div class='dib-nums'><div class='dib-num'><div class='v acc'>{_fmt(pv, 0, '%')}</div><div class='l'>chance de vencer</div></div>"
             f"<div class='dib-num'><div class='v'>{dib._fmt_ov(d['overall'])}</div><div class='l'>Overall (corpos)</div></div>"
-            f"<div class='dib-num'><div class='v'>{_fmt(d.get('tadj'), 2)}</div><div class='l'>Time Ajust.</div></div></div>"
+            f"<div class='dib-num'><div class='v'>{_fmt(d.get('tadj'), 2)}</div><div class='l'>Tadj</div></div></div>"
             f"<div class='dib-bar'><i style='width:{w:.0f}%'></i></div>"
             f"<div class='dib-chips'>{''.join(chips)}</div></div>")
     return secao("Top 3", "quem mais provavelmente vence") + f"<div class='dib-grid'>{''.join(cards)}</div>"
@@ -187,14 +187,23 @@ def cards_top3(rank, badge, n=3):
 
 # ------------------------------------------------------------------ AvB
 def _par(vv, dv, menor_melhor=True, nd=2, suf=""):
-    """Linha de comparação: destaca o melhor. Retorna (html_V, html_D)."""
+    """Linha de comparação: destaca o melhor e mostra, discreta e entre parênteses, a diferença só no galgo escolhido (V). Retorna (html_V, html_D)."""
     if vv is None or dv is None:
         return _fmt(vv, nd, suf), _fmt(dv, nd, suf)
     v_melhor = (vv < dv) if menor_melhor else (vv > dv)
     d_melhor = (dv < vv) if menor_melhor else (dv > vv)
-    fv, fd = f"{vv:.{nd}f}{suf}", f"{dv:.{nd}f}{suf}"
-    return (f"<span class='{'w' if v_melhor else 'l' if d_melhor else ''}'>{fv}</span>",
-            f"<span class='{'w' if d_melhor else 'l' if v_melhor else ''}'>{fd}</span>")
+    dif = lambda x, y: f"<small class='df'>({x - y:+.{nd}f}{suf})</small>"
+    return (f"<span class='{'w' if v_melhor else 'l' if d_melhor else ''}'>{vv:.{nd}f}{suf}</span> {dif(vv, dv)}",
+            f"<span class='{'w' if d_melhor else 'l' if v_melhor else ''}'>{dv:.{nd}f}{suf}</span>")
+
+
+def _marcas(d):
+    """Só os símbolos do galgo (⚠️ 🎯 🚫 📏), sem o nome."""
+    return "".join(s for s, k in (("⚠️", d.get("alerta_trial")), ("🎯", d.get("alvo")), ("🚫", d.get("bloqueado")), ("📏", d.get("conv_ok") is False)) if k)
+
+
+def _pos(d):
+    return f"<span class='dib-pos'>{d['pos']}º</span>" if d.get('pos') else ''
 
 
 def cards_avb(lista, badge):
@@ -208,10 +217,11 @@ def cards_avb(lista, badge):
         crit, calib, nivel = meta[1], bool(meta[2]), meta[3]
         tag = chip("★ Principal", "acc") if nivel == 1 else chip("🔹 Alternativo", "")
         linhas = []
-        for rot, a, b, menor, nd, suf in (("Time Ajust.", V.get("tadj"), D.get("tadj"), True, 2, ""),
-                                          ("Méd. Time", V.get("mtime"), D.get("mtime"), True, 2, ""),
+        for rot, a, b, menor, nd, suf in (("Overall", V.get("overall"), D.get("overall"), False, 1, ""),
+                                          ("Média Split", V.get("msplit"), D.get("msplit"), True, 2, ""),
+                                          ("Média Time", V.get("mtime"), D.get("mtime"), True, 2, ""),
+                                          ("Tadj", V.get("tadj"), D.get("tadj"), True, 2, ""),
                                           ("Métrica", V.get("metrica"), D.get("metrica"), True, 2, ""),
-                                          ("Overall", V.get("overall"), D.get("overall"), False, 1, ""),
                                           ("Recup.", V.get("rec"), D.get("rec"), False, 0, "%")):
             hv, hd = _par(a, b, menor, nd, suf)
             linhas.append(f"<tr><td>{rot}</td><td>{hv}</td><td>{hd}</td></tr>")
@@ -219,8 +229,8 @@ def cards_avb(lista, badge):
             f"<div class='dib-card'><div class='dib-avb-h'>{tag}"
             f"<span class='dib-chip mute'>{crit}/6 crit. · {'calibrada' if calib else 'bruta'}</span></div>"
             f"<div style='display:flex;justify-content:space-between;align-items:center;gap:10px'>"
-            f"<div class='dib-vs'><div class='row'>{badge(V['trap'])}<span>{dib.nome_marcado(V)}</span></div>"
-            f"<div class='row d'>vence {badge(D['trap'])}<span>{dib.nome_marcado(D)}</span></div></div>"
+            f"<div class='dib-vs'><div class='row'>{badge(V['trap'])}<span>{_pos(V)}{_marcas(V)}</span></div>"
+            f"<div class='row d'>vence {badge(D['trap'])}<span>{_pos(D)}{_marcas(D)}</span></div></div>"
             f"<div style='text-align:right'><div class='dib-prob'>{prob:.0f}%</div>"
             f"<div class='dib-num'><div class='l'>probabilidade</div></div></div></div>"
             f"<div class='dib-bar' style='margin-top:10px'><i style='width:{max(4.0, min(100.0, prob)):.0f}%;"
