@@ -489,11 +489,13 @@ def _conf_dados(R, ctx):
     return min(100.0, tot * 20.0)
 
 
-def tempo_limpo(R, ctx):
+def tempo_limpo(R, ctx, mtime=None):
     """(tadj, n_excluidas, desconto_medio_s): velocidade media ponderada por recencia, depois de descontar
     interferencia e largada lenta (em segundos, na propria corrida), convertida para a distancia de hoje
     (com o fator de distancia medido quando existir).
-    Nunca fica mais rapido que o melhor tempo equivalente real - 0,05 s."""
+    Nunca fica mais rapido que o melhor tempo equivalente real - 0,05 s.
+    REGRA: Tadj <= Media Time SEMPRE (so descontos, nunca acrescimo): Tadj = Media Time - desconto medio ponderado por recencia.
+    (A media ponderada por recencia sozinha podia passar da Media Time quando as corridas recentes eram mais lentas.)"""
     A = CFG["ADJ"]
     D = ctx["dist"]
     info = [(r, analisar_remarks(r["remarks"])) for r in R if r.get("caltm") and r["caltm"] > 0 and r.get("dist")]
@@ -526,8 +528,14 @@ def tempo_limpo(R, ctx):
     vals = [max(v, piso) for v in vals]
     w = np.array(CFG["REC_W"][:len(vals)] + [CFG["REC_W"][-1]] * max(0, len(vals) - len(CFG["REC_W"])), dtype=float)
     w = w / w.sum()
+    n_excl = (len(info) - len(usar) if len(usar) != len(info) else 0)
+    if mtime is not None:
+        # desconto (s) = quanto cada corrida foi "atrapalhada", ponderado por recencia; Tadj = Media Time - desconto
+        desc_w = float(np.dot(w, [max(b - v, 0.0) for b, v in zip(brutos, vals)]))
+        tadj = max(mtime - desc_w, min(piso, mtime))
+        return min(tadj, mtime), n_excl, float(np.mean(descs))
     v_med = float(np.dot(w, [D / t for t in vals]))
-    return D / v_med, (len(info) - len(usar) if len(usar) != len(info) else 0), float(np.mean(descs))
+    return D / v_med, n_excl, float(np.mean(descs))
 
 
 # =====================================================================
@@ -835,7 +843,7 @@ def analisar_galgo(dog, ctx):
     if d["brt"] and d["mtime"] and abs(d["brt"] - d["mtime"]) > 3.0:
         d["brt"] = None
 
-    d["tadj"], d["tadj_excl"], d["tadj_desc"] = tempo_limpo(R, ctx)
+    d["tadj"], d["tadj_excl"], d["tadj_desc"] = tempo_limpo(R, ctx, d["mtime"])
     d["tadj_excl"] = len(oficiais) - len(validas)
 
     d["metrica"] = ((d["brt"] + d["tadj"] + d["mtime"]) / 3.0
@@ -2138,40 +2146,12 @@ def mostrar_logo(largura=None):
 
 
 def _mostrar_logo(largura=None):
-    """Logo em LARGURA TOTAL. Tema claro -> logo de fundo branco | tema escuro -> logo de fundo preto.
-    O tema é lido AO VIVO da página (cor de fundo do app), então troca sozinho quando você muda o tema, sem recarregar."""
-    (c, mc), (e, me) = _achar_logo(("claro", "branco", "light", "white")), _achar_logo(("escuro", "preto", "dark", "black"))
-    if not c or not e:
+    """Logo (PNG sem fundo: serve para qualquer tema) em LARGURA TOTAL. Arquivo: assets/logo.png (ou qualquer imagem com 'logo' no nome)."""
+    c, mc = _achar_logo(("logo",))
+    if not c:
         st.title("🐾 DIB GREYHOUND")
-        st.caption(f"(logo não encontrada na pasta: {_LOGO_DIR} — precisa de logo_claro.jpg e logo_escuro.jpg; pasta do app tem: {', '.join(sorted(os.listdir(os.path.dirname(os.path.abspath(__file__)))))[:300]})")
+        st.caption(f"(logo não encontrada na pasta: {_LOGO_DIR} — precisa de logo.png; pasta do app tem: {', '.join(sorted(os.listdir(os.path.dirname(os.path.abspath(__file__)))))[:300]})")
         return
-    import streamlit.components.v1 as components
     maxw = f"max-width:{int(largura)}px;" if largura else ""
-    pagina = f"""<!doctype html><html><head><meta charset='utf-8'><style>
-html,body{{margin:0;padding:0;background:transparent;overflow:hidden}}
-img{{display:block;width:100%;{maxw}height:auto;border-radius:8px}}
-#e{{display:none}}
-@media (prefers-color-scheme: dark){{.auto #c{{display:none}}.auto #e{{display:block}}}}
-</style></head><body class='auto'>
-<img id='c' src='data:image/{mc};base64,{c}'><img id='e' src='data:image/{me};base64,{e}'>
-<script>
-function lum(cor){{var m=(cor||'').match(/\\d+(\\.\\d+)?/g);if(!m||m.length<3)return null;return 0.299*m[0]+0.587*m[1]+0.114*m[2];}}
-function tema(){{
-  try{{
-    var d=window.parent.document, el=d.querySelector('.stApp')||d.body;
-    var l=lum(window.parent.getComputedStyle(el).backgroundColor);
-    if(l===null)return;
-    document.body.className='';
-    document.getElementById('c').style.display=(l<128)?'none':'block';
-    document.getElementById('e').style.display=(l<128)?'block':'none';
-  }}catch(x){{}}
-}}
-function altura(){{
-  try{{var im=document.getElementById('c').offsetParent?document.getElementById('c'):document.getElementById('e');
-    var h=Math.ceil(document.body.clientWidth*{{RAZAO}});
-    window.frameElement.style.height=h+'px';}}catch(x){{}}
-}}
-function tudo(){{tema();altura();}}
-tudo();setInterval(tudo,400);window.addEventListener('resize',tudo);
-</script></body></html>""".replace("{RAZAO}", "0.5")
-    components.html(pagina, height=220)
+    st.markdown(f"<div style='margin:0 0 8px 0'><img src='data:image/{mc};base64,{c}' style='display:block;width:100%;{maxw}height:auto'></div>",
+                unsafe_allow_html=True)
