@@ -115,6 +115,7 @@ CFG = {
 
     # ---- Janela de distancia ----
     "N_FORA_INCERTO": 2,      # 📏 (incerteza por distância) só com >= 2 corridas NA JANELA mas fora da distância exata
+    "PAINEL_TECNICO": False,  # True = mostra os painéis técnicos (calibração, validação, componentes do Overall...)
     "JANELA_M": 100.0,        # corridas de (dist - JANELA_M) a (dist + JANELA_M) entram nos cálculos e na confiança; fora disso são ignoradas
     "CONF_PESO_MIN": 0.5,     # peso de uma corrida na PONTA da janela na Confianca (1.0 = distancia exata)
     # incerteza extra (s) por 100 m de diferenca de distancia, entra na variancia do tempo projetado:
@@ -1993,6 +1994,69 @@ _DL_N = 0
 def gerar_observacoes(rank, avbs, ctx):
     if not rank: return
     st.markdown("---")
+    with st.expander("🗒️ Remarks traduzidos por galgo"):
+        for d in sorted(rank, key=lambda x: x["trap"]):
+            trad = d.get("remarks_translated") or []
+            if trad:
+                st.markdown(f"{trap_label(d)} **{html.escape(d['name'])}** ({d['perfil']}): " + ", ".join(dict.fromkeys(trad)))
+            else:
+                st.markdown(f"{trap_label(d)} **{html.escape(d['name'])}** ({d['perfil']}): sem remarks reconhecidos.")
+    _leitura_tatica(rank, avbs, ctx)
+    if CFG.get("PAINEL_TECNICO", False):
+        _painel_tecnico(rank, ctx)
+
+
+def _leitura_tatica(rank, avbs, ctx):
+    st.markdown("#### 🏁 Leitura Tática da Corrida")
+    elegiveis = [d for d in rank if not d.get("bloqueado")]
+    bloqueados = [d for d in rank if d.get("bloqueado")]
+    if not elegiveis:
+        st.warning("Todos os cães estão bloqueados ou sem dados suficientes para esta corrida.")
+        return
+    E = lambda d: f"{TRAP_EMOJI.get(d['trap'], '')} **{html.escape(d['name'])}**"
+    L = []
+    fav = elegiveis[0]
+    pv = f"{fav['p_vit']:.0f}% de vitória · " if fav.get("p_vit") is not None else ""
+    seg = elegiveis[1] if len(elegiveis) > 1 else None
+    txt = f"**🥇 Favorito:** {E(fav)} — {pv}Overall {_fmt_ov(fav['overall'])} · Confiança {fav['conf']:.0f}%"
+    if seg: txt += f". Segundo: {E(seg)} ({_fmt_ov(seg['overall'])})."
+    pp = [int(x) for x in str(ctx.get("post_pick") or "") if x.isdigit()]
+    if pp and pp[0] != fav["trap"]:
+        txt += f" ⚠️ O Post Pick aponta a trap {pp[0]}."
+    L.append(txt)
+
+    tromb = [d for d in elegiveis if d["perfil"] == "Trombador" and d["trap"] <= 4]
+    if len(tromb) >= 2:
+        L.append("**💥 Risco de colisão:** " + " e ".join(E(d) for d in tromb) + " (Trombadores, traps internas).")
+    for b in bloqueados:
+        if b["overall"] > fav["overall"]:
+            L.append(f"**🚫 Cuidado:** {E(b)} tem Overall bruto {_fmt_ov(b['overall'])}, mas está bloqueado (histórico curto/ruim).")
+            break
+    tadj_rank = sorted([d for d in elegiveis if d.get("tadj")], key=lambda x: x["tadj"])
+    if len(tadj_rank) >= 3:
+        top2 = {d["name"] for d in tadj_rank[:2]}
+        for z in elegiveis:
+            if z["pos"] >= 4 and z["name"] in top2 and not (pp and z["trap"] in pp[:2]):
+                L.append(f"**🦓 Zebra:** {E(z)} é {z['pos']}º no Overall mas tem Tadj {z['tadj']:.2f} (top 2 da prova).")
+    alvos = [d for d in rank if d.get("alvo")]
+    if alvos:
+        L.append("**🎯 Alvo (não apostar como vencedor):** " + ", ".join(E(a) for a in alvos) + ".")
+
+    if avbs:
+        def lin(t):
+            V, D, prob = t[0], t[1], t[2]
+            return f"{E(V)} vence {E(D)} — {prob * 100 if prob <= 1 else prob:.0f}%"
+        princ = [t for t in avbs if len(t) > 3 and t[3]]
+        alt = [t for t in avbs if not (len(t) > 3 and t[3])]
+        if princ: L.append("**⭐ AvB principal:** " + " · ".join(lin(t) for t in princ))
+        if alt: L.append("**🔹 AvB alternativo:** " + " · ".join(lin(t) for t in alt[:3]))
+    else:
+        L.append("**⚔️ AvB:** nenhum confronto aprovado nos critérios.")
+    for x in L:
+        st.markdown(f"- {x}")
+
+
+def _painel_tecnico(rank, ctx):
     _dados_cal = calibracao_bytes()
     if _dados_cal:
         global _DL_N
@@ -2007,13 +2071,6 @@ def gerar_observacoes(rank, avbs, ctx):
         if desc: st.markdown("**Não reconhecidos (não afetam o tempo):** " + ", ".join(f"`{k}` ×{v}" for k, v in sorted(desc.items())))
         if aprox: st.markdown("**Interpretados por aproximação:** " + ", ".join(f"`{k}` → `{v}`" for k, v in sorted(aprox.items())))
         if not desc and not aprox: st.markdown("Todos os remarks foram reconhecidos exatamente.")
-    with st.expander("🗒️ Remarks traduzidos por galgo"):
-        for d in sorted(rank, key=lambda x: x["trap"]):
-            trad = d.get("remarks_translated") or []
-            if trad:
-                st.markdown(f"{trap_label(d)} **{html.escape(d['name'])}** ({d['perfil']}): " + ", ".join(dict.fromkeys(trad)))
-            else:
-                st.markdown(f"{trap_label(d)} **{html.escape(d['name'])}** ({d['perfil']}): sem remarks reconhecidos.")
     # componentes do Overall (em corpos) — o MESMO tempo projetado do AvB e do Predictor
     with st.expander("🧮 Componentes do Overall (em corpos)"):
         linhas = []
@@ -2063,67 +2120,6 @@ def gerar_observacoes(rank, avbs, ctx):
     painel_diagnostico_avb(rank, ctx)
     painel_validacao()
     painel_overall()
-    st.markdown("#### 🏁 Leitura Tática da Corrida")
-
-    elegiveis = [d for d in rank if not d.get("bloqueado")]
-    bloqueados = [d for d in rank if d.get("bloqueado")]
-
-    if not elegiveis:
-        st.warning("Todos os cães estão bloqueados ou sem dados suficientes para esta corrida.")
-        return
-
-    fav_app = elegiveis[0]
-    insights = []
-
-    pp_str = str(ctx.get("post_pick") or "")
-    pp_traps = [int(c) for c in pp_str if c.isdigit()]
-    pp_fav_trap = pp_traps[0] if pp_traps else None
-    pp_fav = next((d for d in elegiveis if d["trap"] == pp_fav_trap), None)
-
-    if pp_fav and pp_fav["trap"] != fav_app["trap"]:
-        insights.append(f"**⚔️ Duelo de Favoritos:** O mercado elegeu o **{TRAP_EMOJI.get(pp_fav['trap'])} {pp_fav['name']}** (Post Pick 1), mas o App crava o **{TRAP_EMOJI.get(fav_app['trap'])} {fav_app['name']}** (Overall {_fmt_ov(fav_app['overall'])}) como o verdadeiro dono da prova. É um choque direto.")
-    else:
-        insights.append(f"**🤝 Consenso Total:** O mercado e o App concordam que o **{TRAP_EMOJI.get(fav_app['trap'])} {fav_app['name']}** é o cão a ser batido. Overall {_fmt_ov(fav_app['overall'])} e Confiança {fav_app['conf']:.0f}%.")
-
-    trombadores_internos = [d for d in elegiveis if d["perfil"] == "Trombador" and d["trap"] <= 4]
-    if len(trombadores_internos) >= 2:
-        nomes_tromb = " e ".join([f"{TRAP_EMOJI.get(d['trap'])} {d['name']}" for d in trombadores_internos])
-        clean_candidates = [d for d in elegiveis if d["perfil"] != "Trombador"]
-
-        if clean_candidates:
-            c_clean = clean_candidates[0]
-            if c_clean["trap"] >= 5: local = "por fora"
-            elif c_clean["trap"] == 4: local = "pelo meio"
-            else: local = "no trilho (por dentro)"
-            insights.append(f"**💥 Risco de Colisão:** O {nomes_tromb} são Trombadores e correm nas traps internas. Se eles se chocarem na 1ª curva, o {TRAP_EMOJI.get(c_clean['trap'])} {c_clean['name']}, que corre {local} e não é Trombador, pode herdar a pista livre.")
-        else:
-            insights.append(f"**💥 Risco de Colisão:** O {nomes_tromb} são Trombadores e correm nas traps internas. A briga pelo trilho será intensa.")
-
-    if bloqueados:
-        b = max(bloqueados, key=lambda x: x["overall"])
-        if b["overall"] > fav_app["overall"]:
-            insights.append(f"**🚫 Armadilha do Histórico:** O {TRAP_EMOJI.get(b['trap'])} {b['name']} tem Overall bruto de {_fmt_ov(b['overall'])}, mas o App o bloqueou. O histórico dele nessa distância é curto ou ruim. Não caia na armadilha da odd baixa.")
-
-    tadj_rank = sorted([d for d in elegiveis if d.get("tadj")], key=lambda x: x["tadj"])
-    if len(tadj_rank) >= 3:
-        top2_tadj_names = {d["name"] for d in tadj_rank[:2]}
-        for z in elegiveis:
-            if z["pos"] >= 4 and z["name"] in top2_tadj_names:
-                is_mkt_zebra = True
-                if pp_traps and z["trap"] in pp_traps[:2]: is_mkt_zebra = False
-                if is_mkt_zebra:
-                    insights.append(f"**🦓 A Zebra Escondida:** O {TRAP_EMOJI.get(z['trap'])} {z['name']} está apenas em {z['pos']}º no App, mas tem o **{z['tadj']:.2f}** de Tadj (Top 2 da prova). O mercado também esqueceu dele no Post Pick. É a aposta de risco/retorno mais alta da corrida.")
-
-    alvos = [d for d in rank if d.get("alvo")]
-    if alvos:
-        nomes_alvo = ", ".join([f"{TRAP_EMOJI.get(a['trap'])} {a['name']}" for a in alvos])
-        insights.append(f"**🎯 O Bode Expiatório:** O {nomes_alvo} foi marcado como Alvo. Sem largada e com recuperação negativa, ele vai ficar preso no bolo. Evite apostar nele como vencedor.")
-
-    if not insights:
-        insights.append("**📊 Corrida de Rotina:** O favorito tem dados sólidos, não há trombadores em excesso e as traps estão bem distribuídas. O App sugere seguir o Overall sem grandes riscos táticos.")
-
-    for ins in insights[:4]:
-        st.markdown(f"- {ins}")
 
 
 # =====================================================================
