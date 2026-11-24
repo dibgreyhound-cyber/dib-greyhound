@@ -2007,53 +2007,116 @@ def gerar_observacoes(rank, avbs, ctx):
 
 
 def _leitura_tatica(rank, avbs, ctx):
+    """Narrativa de como a corrida deve se desenrolar (sem limite de observações)."""
     st.markdown("#### 🏁 Leitura Tática da Corrida")
     elegiveis = [d for d in rank if not d.get("bloqueado")]
     bloqueados = [d for d in rank if d.get("bloqueado")]
     if not elegiveis:
         st.warning("Todos os cães estão bloqueados ou sem dados suficientes para esta corrida.")
         return
-    E = lambda d: f"{TRAP_EMOJI.get(d['trap'], '')} **{html.escape(d['name'])}**"
-    L = []
-    fav = elegiveis[0]
-    pv = f"{fav['p_vit']:.0f}% de vitória · " if fav.get("p_vit") is not None else ""
-    seg = elegiveis[1] if len(elegiveis) > 1 else None
-    txt = f"**🥇 Favorito:** {E(fav)} — {pv}Overall {_fmt_ov(fav['overall'])} · Confiança {fav['conf']:.0f}%"
-    if seg: txt += f". Segundo: {E(seg)} ({_fmt_ov(seg['overall'])})."
+    E = lambda d: f"{TRAP_EMOJI.get(d['trap'], '')} T{d['trap']} **{html.escape(d['name'])}**"
+    ov = lambda d: _fmt_ov(d["overall"])
+    L, OBS = [], []
     pp = [int(x) for x in str(ctx.get("post_pick") or "") if x.isdigit()]
-    if pp and pp[0] != fav["trap"]:
-        txt += f" ⚠️ O Post Pick aponta a trap {pp[0]}."
-    L.append(txt)
+    ativos = [d for d in rank if not d.get("nd")]
 
-    tromb = [d for d in elegiveis if d["perfil"] == "Trombador" and d["trap"] <= 4]
-    if len(tromb) >= 2:
-        L.append("**💥 Risco de colisão:** " + " e ".join(E(d) for d in tromb) + " (Trombadores, traps internas).")
+    # ---- Top 1
+    fav = elegiveis[0]
+    pv = f" ({fav['p_vit']:.1f}% de chance de vitória)" if fav.get("p_vit") is not None else ""
+    t = f"**🥇 Top 1:** {E(fav)}{pv} — Overall {ov(fav)}, Confiança {fav['conf']:.0f}%, perfil {fav['perfil']}."
+    if pp:
+        if pp[0] == fav["trap"]: t += " O mercado também o colocou em 1º no Post Pick: é o consenso."
+        else:
+            pf = next((d for d in rank if d["trap"] == pp[0]), None)
+            t += f" ⚔️ O mercado prefere a T{pp[0]}" + (f" ({html.escape(pf['name'])}, {pf['pos']}º no App)" if pf else "") + ": é um choque de opiniões."
+    L.append(t)
+
+    # ---- Top 3 e proximidade (em corpos)
+    top3 = [d for d in rank if d.get("pos") and d["pos"] <= 3 and not d.get("nd")]
+    if len(top3) >= 2:
+        corpos = ", ".join(f"{E(d)} ({ov(d)})" for d in top3)
+        t = f"**🏅 Top 3 do App:** {corpos}."
+        gaps = [top3[0]["overall"] - d["overall"] for d in top3[1:]]
+        if max(gaps) <= 0.5 if False else all(g <= 0.5 for g in gaps):
+            t += " Os três estão praticamente colados (menos de meio corpo): qualquer problema na largada muda o desfecho."
+        elif gaps[0] <= 0.5:
+            t += f" O {html.escape(top3[1]['name'])} está a só {gaps[0]:.1f} corpo do líder."
+        elif gaps[0] >= 1.5:
+            t += f" O líder abre {gaps[0]:.1f} corpos sobre o 2º: favoritismo com folga."
+        L.append(t)
+
+    # ---- Alvos
+    for a in [d for d in rank if d.get("alvo")]:
+        mot = [f"Overall {ov(a)}"]
+        if a.get("rec") is not None: mot.append(f"recuperação média {a['rec']:+.0f}%")
+        if a.get("perfil") == "Trombador": mot.append("histórico de trombadas")
+        if a.get("alerta_trial"): mot.append("alerta de trial")
+        L.append(f"**🎯 Alvo:** {E(a)} — {', '.join(mot)}. Tende a ficar preso no bolo; evite como vencedor (mas pode ser desafiante nos AvBs).")
+
+    # ---- Bloqueados
     for b in bloqueados:
-        if b["overall"] > fav["overall"]:
-            L.append(f"**🚫 Cuidado:** {E(b)} tem Overall bruto {_fmt_ov(b['overall'])}, mas está bloqueado (histórico curto/ruim).")
-            break
-    tadj_rank = sorted([d for d in elegiveis if d.get("tadj")], key=lambda x: x["tadj"])
-    if len(tadj_rank) >= 3:
-        top2 = {d["name"] for d in tadj_rank[:2]}
-        for z in elegiveis:
-            if z["pos"] >= 4 and z["name"] in top2 and not (pp and z["trap"] in pp[:2]):
-                L.append(f"**🦓 Zebra:** {E(z)} é {z['pos']}º no Overall mas tem Tadj {z['tadj']:.2f} (top 2 da prova).")
-    alvos = [d for d in rank if d.get("alvo")]
-    if alvos:
-        L.append("**🎯 Alvo (não apostar como vencedor):** " + ", ".join(E(a) for a in alvos) + ".")
+        extra = f" Overall bruto {ov(b)} engana: " if b["overall"] > fav["overall"] else " "
+        L.append(f"**🚫 Bloqueado:** {E(b)} —{extra}confiança {b['conf']:.0f}% (histórico curto, ruim ou fora da distância). Não entra como vencedor.")
 
+    # ---- Zebras (fora do top 3 com argumento)
+    def rk(chave, rev=False):
+        v = sorted([d for d in ativos if d.get(chave) is not None], key=lambda x: x[chave], reverse=rev)
+        return {d["trap"]: i + 1 for i, d in enumerate(v)}
+    r_ms, r_tadj, r_rec, r_met = rk("msplit"), rk("tadj"), rk("rec", True), rk("metrica")
+    limpos = [d for d in ativos if d.get("perfil") == "Limpo"]
+    for z in elegiveis:
+        if z["pos"] <= 3 or z.get("alvo"): continue
+        raz = []
+        if r_ms.get(z["trap"]) == 1: raz.append(f"melhor Média Split da prova ({z['msplit']:.2f})")
+        if r_tadj.get(z["trap"], 9) <= 2: raz.append(f"Tadj {z['tadj']:.2f} (top 2)")
+        if r_rec.get(z["trap"]) == 1 and (z.get("rec") or 0) > 0: raz.append(f"melhor recuperação ({z['rec']:+.0f}%)")
+        if r_met.get(z["trap"]) == 1: raz.append("melhor Métrica")
+        if len(limpos) == 1 and limpos[0]["trap"] == z["trap"]: raz.append("é o único galgo Limpo da prova")
+        if pp and z["trap"] in pp[:2]: raz.append(f"o mercado o colocou no Post Pick ({pp.index(z['trap']) + 1}º)")
+        if raz:
+            L.append(f"**🦓 Zebra:** {E(z)} é {z['pos']}º no App, mas chama atenção: " + "; ".join(raz) + ". Se a briga na frente for feia, ele passa.")
+
+    # ---- Colisão / pista livre
+    tromb = [d for d in elegiveis if d.get("perfil") == "Trombador" and d["trap"] <= 4]
+    if len(tromb) >= 2:
+        livres = [d for d in elegiveis if d.get("perfil") != "Trombador" and d not in tromb]
+        t = f"**💥 Risco de colisão:** {' e '.join(E(d) for d in tromb)} são Trombadores e saem das traps internas; a briga pelo trilho na 1ª curva pode ser feia."
+        if livres:
+            c = livres[0]
+            t += f" Quem pode herdar a pista livre: {E(c)} ({'por fora' if c['trap'] >= 5 else ('pelo meio' if c['trap'] == 4 else 'no trilho')})."
+        L.append(t)
+    elif len(limpos) >= 1 and len(limpos) < len(ativos) - 2 and not any(x.startswith("**💥") for x in L):
+        L.append("**🧭 Corrida limpa por perfil:** " + ", ".join(E(d) for d in limpos[:4]) + " têm histórico limpo; o ritmo deve ser decidido pela velocidade.")
+
+    # ---- AvBs
     if avbs:
-        def lin(t):
-            V, D, prob = t[0], t[1], t[2]
-            return f"{E(V)} vence {E(D)} — {prob * 100 if prob <= 1 else prob:.0f}%"
+        def pct(p): return p * 100 if p <= 1 else p
         princ = [t for t in avbs if len(t) > 3 and t[3]]
         alt = [t for t in avbs if not (len(t) > 3 and t[3])]
-        if princ: L.append("**⭐ AvB principal:** " + " · ".join(lin(t) for t in princ))
-        if alt: L.append("**🔹 AvB alternativo:** " + " · ".join(lin(t) for t in alt[:3]))
+        for nome, lst in (("⭐ AvB principal", princ), ("🔹 AvB alternativo", alt)):
+            if lst: L.append(f"**{nome}:** " + " · ".join(f"{E(t[0])} vence {E(t[1])} ({pct(t[2]):.0f}%)" for t in lst))
+        alvos_d = [t[1] for t in avbs]
+        rep = max(set(d["trap"] for d in alvos_d), key=lambda x: sum(1 for d in alvos_d if d["trap"] == x))
+        if sum(1 for d in alvos_d if d["trap"] == rep) >= 2:
+            dd = next(d for d in alvos_d if d["trap"] == rep)
+            L.append(f"**⚔️ Padrão dos AvBs:** todos giram em torno de {E(dd)} como desafiante; se ele afundar, os AvBs tendem a bater juntos.")
     else:
-        L.append("**⚔️ AvB:** nenhum confronto aprovado nos critérios.")
+        L.append("**⚔️ AvB:** nenhum confronto aprovado nos critérios desta corrida.")
+
+    # ---- O que observar
+    OBS.append(f"{E(fav)} vai justificar o favoritismo" + (f" e a trap {fav['trap']}" if True else "") + (", ou algum problema na 1ª curva abre espaço para " + " / ".join(html.escape(d["name"]) for d in top3[1:3]) + "?" if len(top3) >= 2 else "?"))
+    for a in [d for d in rank if d.get("alvo")]:
+        OBS.append(f"{E(a)} vai afundar na corrida, como o App prevê (Alvo)?")
     for x in L:
-        st.markdown(f"- {x}")
+        if x.startswith("**🦓"):
+            nm = re.search(r"T\d \*\*(.+?)\*\*", x)
+            if nm: OBS.append(f"**{nm.group(1)}** vai surpreender saindo bem da caixa?")
+    for x in L:
+        if x.startswith("**💥"): OBS.append("A 1ª curva vai ter trombada entre os Trombadores das traps internas?")
+
+    for x in L: st.markdown(f"- {x}")
+    st.markdown("**👀 O que observar na corrida:**")
+    for i, o in enumerate(OBS, 1): st.markdown(f"{i}. {o}")
 
 
 def _painel_tecnico(rank, ctx):
@@ -2162,4 +2225,4 @@ def _mostrar_logo(largura=None):
     maxw = f"max-width:{int(largura)}px;" if largura else ""
     st.markdown(f"<div style='margin:-6px 0 -2px 0;line-height:0'><img src='data:image/{mc};base64,{c}' style='display:block;width:100%;{maxw}height:auto'></div>",
                 unsafe_allow_html=True)
-  
+          
