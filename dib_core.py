@@ -2153,5 +2153,6 @@ def _mostrar_logo(largura=None):
         st.caption(f"(logo não encontrada na pasta: {_LOGO_DIR} — precisa de logo.png; pasta do app tem: {', '.join(sorted(os.listdir(os.path.dirname(os.path.abspath(__file__)))))[:300]})")
         return
     maxw = f"max-width:{int(largura)}px;" if largura else ""
-    st.markdown(f"<div style='margin:0 0 8px 0'><img src='data:image/{mc};base64,{c}' style='display:block;width:100%;{maxw}height:auto'></div>",
+    st.markdown(f"<div style='margin:-6px 0 -2px 0;line-height:0'><img src='data:image/{mc};base64,{c}' style='display:block;width:100%;{maxw}height:auto'></div>",
                 unsafe_allow_html=True)
+  
