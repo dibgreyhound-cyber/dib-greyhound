@@ -1428,6 +1428,9 @@ def mostrar_resultado(c, classe_in, dist_in, pp_in):
 _CSS_SIDEBAR = """<style>
 section[data-testid="stSidebar"]{width:21rem !important;min-width:21rem !important;max-width:21rem !important;}
 section[data-testid="stSidebar"] .stButton > button{padding:.35rem .4rem;min-height:0;}
+span[data-baseweb="tag"]{background-color:#2F6BFF !important;color:#fff !important;}
+div[data-baseweb="slider"] div[role="slider"]{background-color:#2F6BFF !important;}
+div[data-baseweb="slider"] [data-testid="stSliderThumbValue"]{color:#2F6BFF !important;}
 section[data-testid="stSidebar"] .stButton > button p{font-size:.85rem;line-height:1.25;}
 </style>"""
 
@@ -1468,6 +1471,14 @@ def _passa_filtro(d, rk, f):
         return False
     if pmax is not None and (d.get("peso") is None or d["peso"] > pmax):
         return False
+    rmin, rmax = f.get("rec_faixa", (None, None))
+    if rmin is not None or rmax is not None:
+        if d.get("rec") is None:
+            return False
+        if rmin is not None and d["rec"] < rmin:
+            return False
+        if rmax is not None and d["rec"] > rmax:
+            return False
     if (d.get("conf") or 0) < f.get("conf_min", 0):
         return False
     return True
@@ -1484,6 +1495,10 @@ def painel_filtro(lista, data_str, classe_in, dist_in, pp_in):
     for i, (k, nome) in enumerate(_FIL_METRICAS):
         with cols[i % 4]:
             f[k] = st.multiselect(nome, pos, key=f"fil_{k}", format_func=lambda x: f"{x}º")
+    rmin_, rmax_ = st.slider("Recup. média — margem (%)", -50, 50, (-50, 50), step=1, key="fil_rec_faixa",
+                             help="Recuperação média em % (positivo = ganha posições na corrida). "
+                                  "Nas pontas (-50 / 50) não há limite.")
+    f["rec_faixa"] = (rmin_ if rmin_ > -50 else None, rmax_ if rmax_ < 50 else None)
     c1, c2, c3 = st.columns(3)
     with c1:
         f["perfil"] = st.multiselect("Perfil", ["Limpo", "Irregular", "Trombador"], key="fil_perfil")
@@ -1525,7 +1540,7 @@ def painel_filtro(lista, data_str, classe_in, dist_in, pp_in):
     if not dados:
         return
 
-    ativo = any(f.get(k) for k, _ in _FIL_METRICAS) or f["perfil"] or f["peso"] != (None, None) or f["conf_min"] > 0
+    ativo = any(f.get(k) for k, _ in _FIL_METRICAS) or f["perfil"] or f["peso"] != (None, None) or f["rec_faixa"] != (None, None) or f["conf_min"] > 0
     if not ativo:
         st.info("Defina pelo menos um filtro para ver as corridas.")
         return
@@ -1613,7 +1628,9 @@ def main():
         sel = st.session_state.get("sel")
         if corridas:
             pistas = sorted({c["pista"] for c in corridas})
-            filtro = st.multiselect("Pistas (vazio = todas)", pistas)
+            filtro = st.multiselect("Pistas (vazio = todas)" if modo != "fil" else "Limitar a pistas (opcional)", pistas)
+            if modo == "fil":
+                st.caption("👉 Os filtros de galgos ficam na tela principal. Feche este menu (setas «) para vê-los.")
             lista = [c for c in corridas if not filtro or c["pista"] in filtro]
             hoje = data == agora_uk().date()
             limite = agora_uk().strftime("%H:%M")
@@ -1653,10 +1670,15 @@ def main():
                 else:
                     st.error("Link inválido: precisa ter race_id e r_date.")
 
+    if modo != "fil":
+        st.session_state["modo_ant"] = modo
     if modo == "col":
         painel_coleta(url_custom)
         return
     if modo == "fil":
+        if st.session_state.get("modo_ant") != "fil":
+            fechar_sidebar()  # no celular o menu cobre a tela: fecha para mostrar os filtros
+        st.session_state["modo_ant"] = "fil"
         painel_filtro(lista if corridas else [], data_str, classe_in, dist_in, pp_in)
         return
 
