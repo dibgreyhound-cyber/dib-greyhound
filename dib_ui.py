@@ -232,7 +232,7 @@ def cards_avb(lista, badge):
         V, D, prob = it[0], it[1], it[2]
         meta = dib.AVB_META.get((V["name"], D["name"])) or ("AVB", 0, False, 1)
         crit, calib, nivel = meta[1], bool(meta[2]), meta[3]
-        tag = chip("★ Principal", "acc") if nivel == 1 else chip("🔹 Alternativo", "")
+        tag = chip("★ Principal", "acc") if nivel == 1 else (chip("🔥 Trombador × Limpo", "acc") if nivel == 3 else chip("🔹 Alternativo", ""))
         linhas = []
         for rot, a, b, menor, nd, suf in (("Overall", V.get("overall"), D.get("overall"), False, 1, ""),
                                           ("Média Split", V.get("msplit"), D.get("msplit"), True, 2, ""),
@@ -254,7 +254,7 @@ def cards_avb(lista, badge):
             f"background:linear-gradient(90deg,var(--dib-ok),#5BD68A)'></i></div>"
             f"<details class='dib-det'><summary>Comparar números</summary><table class='dib-mini'><tr><td></td><td>{badge(V['trap'])}</td><td>{badge(D['trap'])}</td></tr>{''.join(linhas)}</table></details></div>")
     leg = ("<div style='color:var(--dib-mute);font-size:.8rem;margin-top:8px'>★ principal (regras completas) · "
-           "🔹 alternativo (regras relaxadas, validado à parte)</div>")
+           "🔹 alternativo (regras relaxadas) · 🔥 Trombador × Limpo (tempo parecido), validado à parte</div>")
     return secao("AvBs", f"{len(lista)} confronto(s) · maior probabilidade primeiro") + f"<div class='dib-grid'>{''.join(cards)}</div>" + leg
 
 
