@@ -1322,7 +1322,7 @@ def analisar(c, classe_in, dist_in, pp_in):
             st.dataframe(pd.DataFrame([{k: v for k, v in d_.items() if k != "Pistas"} for d_ in diag]),
                          use_container_width=True, hide_index=True)
     with st.expander("⚔️ Planilha de AvB (completa)"):
-        dib.tabela_avb(p["s1"], "AvBs — ★ principal · 🔹 alternativo")
+        dib.tabela_avb(p["s1"], "AvBs — ★ principal · 🔹 alternativo · 🔥 Trombador × Limpo")
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
 
