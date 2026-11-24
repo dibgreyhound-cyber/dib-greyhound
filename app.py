@@ -531,6 +531,45 @@ def coletar_corrida(c, data_str):
     return len(novas), com_res
 
 
+def completar_resultados_coleta():
+    """Preenche res_pos/res_by/res_tempo das corridas coletadas SEM precisar do endereço de resultado:
+    o histórico (runs_json) de qualquer galgo coletado depois traz as corridas anteriores dele com posição, margem e tempo.
+    Casa por nome do galgo + data + distância. Retorna (preenchidos_agora, total_de_linhas, com_resultado)."""
+    if not os.path.exists(COLETA_ARQ):
+        return 0, 0, 0
+    df = pd.read_csv(COLETA_ARQ, dtype=str).fillna("")
+    idx = {}
+    for _, r in df.iterrows():
+        try:
+            runs = json.loads(r["runs_json"])
+        except Exception:
+            continue
+        for x in runs:
+            try:
+                if x.get("fin") and x.get("date_str") and x.get("dist"):
+                    idx[(r["galgo"].strip().lower(), x["date_str"], int(round(float(x["dist"]))))] = x
+            except Exception:
+                continue
+    n = 0
+    for i, r in df.iterrows():
+        if r["res_pos"] != "":
+            continue
+        try:
+            chave = (r["galgo"].strip().lower(), r["data"], int(round(float(r["dist"]))))
+        except Exception:
+            continue
+        x = idx.get(chave)
+        if x:
+            df.at[i, "res_pos"] = str(x["fin"])
+            df.at[i, "res_by"] = "" if x.get("by") is None else str(x["by"])
+            df.at[i, "res_tempo"] = "" if not x.get("caltm") else str(x["caltm"])
+            df.at[i, "res_origem"] = "historico"
+            n += 1
+    if n:
+        df.to_csv(COLETA_ARQ, index=False, encoding="utf-8")
+    return n, len(df), int((df["res_pos"] != "").sum())
+
+
 def painel_coleta(url_custom):
     st.markdown("### 🧪 Coleta histórica (validar o modelo com dados reais)")
     st.caption("Baixa corridas de dias anteriores com o histórico de cada galgo e o resultado real. Não precisa ficar aberto: "
@@ -580,9 +619,18 @@ def painel_coleta(url_custom):
                 res += r_
                 barra.progress(i / len(alvo))
                 time.sleep(0.2)
-            st.success(f"{len(alvo)} corridas coletadas ({gal} galgos, {res} com resultado) · "
+            try:
+                completar_resultados_coleta()  # resultados vindos do histórico dos galgos coletados depois
+            except Exception:
+                pass
+            st.success(f"{len(alvo)} corridas coletadas ({gal} galgos) · "
                        f"restam {max(0, total - len(alvo))} no período. Toque de novo para continuar.")
     if os.path.exists(COLETA_ARQ):
+        if st.button("🧩 Completar resultados pelo histórico dos galgos"):
+            n_, tot_, com_ = completar_resultados_coleta()
+            st.success(f"{n_} galgos preenchidos agora · {com_} de {tot_} com resultado.")
+        st.caption("Os resultados são preenchidos pelo histórico dos galgos que correram de novo depois: "
+                   "colete também os dias seguintes (até hoje) e toque no botão acima. Não depende do endereço de resultado.")
         try:
             df = pd.read_csv(COLETA_ARQ, dtype=str)
             n_c = df["race_id"].nunique()
