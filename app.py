@@ -1432,14 +1432,139 @@ section[data-testid="stSidebar"] .stButton > button p{font-size:.85rem;line-heig
 </style>"""
 
 
+# ---------------------------------------------------------------- filtro de galgos
+_FIL_METRICAS = [("overall", "Overall"), ("split", "Melhor Split"), ("time", "Melhor Time"),
+                 ("msplit", "Média Split"), ("mtime", "Média Time"), ("tadj", "Tadj"),
+                 ("metrica", "Métrica"), ("rec", "Recup. média")]
+
+
+def _ranks_corrida(ds):
+    """Posicao (1 = melhor) de cada galgo em cada metrica, dentro da corrida."""
+    out = {d["trap"]: {} for d in ds}
+    for k, _ in _FIL_METRICAS:
+        if k == "overall":
+            for d in ds:
+                if not d.get("nd") and d.get("pos"):
+                    out[d["trap"]][k] = int(d["pos"])
+            continue
+        vals = [(d["trap"], d[k]) for d in ds if not d.get("nd") and d.get(k) is not None]
+        vals.sort(key=lambda x: x[1], reverse=(k == "rec"))
+        for r, (t, _) in enumerate(vals, 1):
+            out[t][k] = r
+    return out
+
+
+def _passa_filtro(d, rk, f):
+    if d.get("nd"):
+        return False
+    for k, _ in _FIL_METRICAS:
+        sel_ = f.get(k)
+        if sel_ and rk.get(k) not in sel_:
+            return False
+    if f.get("perfil") and d.get("perfil") not in f["perfil"]:
+        return False
+    pmin, pmax = f.get("peso", (None, None))
+    if pmin is not None and (d.get("peso") is None or d["peso"] < pmin):
+        return False
+    if pmax is not None and (d.get("peso") is None or d["peso"] > pmax):
+        return False
+    if (d.get("conf") or 0) < f.get("conf_min", 0):
+        return False
+    return True
+
+
+def painel_filtro(lista, data_str, classe_in, dist_in, pp_in):
+    st.markdown("### 🔎 Filtro de galgos")
+    st.caption("Escolha as características (pode marcar mais de uma em cada). Os filtros se combinam (E). "
+               "As posições são do galgo **dentro da própria corrida** (1º = melhor; em Recup. 1º = maior recuperação). "
+               "Campo vazio = sem filtro.")
+    pos = [1, 2, 3, 4, 5, 6]
+    f = {}
+    cols = st.columns(4)
+    for i, (k, nome) in enumerate(_FIL_METRICAS):
+        with cols[i % 4]:
+            f[k] = st.multiselect(nome, pos, key=f"fil_{k}", format_func=lambda x: f"{x}º")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        f["perfil"] = st.multiselect("Perfil", ["Limpo", "Irregular", "Trombador"], key="fil_perfil")
+    with c2:
+        pmin, pmax = st.slider("Peso (kg)", 20.0, 40.0, (20.0, 40.0), step=0.5, key="fil_peso")
+        f["peso"] = (pmin if pmin > 20.0 else None, pmax if pmax < 40.0 else None)
+    with c3:
+        f["conf_min"] = st.slider("Confiança mínima (%)", 0, 100, 0, step=5, key="fil_conf")
+
+    cache = st.session_state.setdefault("fil_dados", {})
+    chave = f"{data_str}|{len(lista)}|{lista[0]['id'] if lista else ''}|{classe_in}|{dist_in}|{pp_in}"
+    dados = cache.get(chave)
+    ja = len(dados) if dados else 0
+    st.markdown("---")
+    b1, b2 = st.columns([1, 3])
+    with b1:
+        carregar = st.button(f"⚙️ Analisar {len(lista)} corridas" if not dados else "🔄 Reanalisar", key="fil_carregar")
+    with b2:
+        if dados is None:
+            st.caption("Primeiro analise as corridas do dia (respeita o filtro de Pistas da barra lateral). "
+                       "Depois, mudar os filtros é instantâneo.")
+        else:
+            st.caption(f"{ja} corridas analisadas.")
+    if carregar:
+        dados = {}
+        barra = st.progress(0.0, text="Analisando corridas...")
+        for i, c in enumerate(lista):
+            try:
+                p = preparar(c["id"], data_str, c, classe_in, dist_in, pp_in)
+            except Exception:
+                p = None
+            if p:
+                dados[c["id"]] = (c, p, _ranks_corrida(p["ds"]))
+            barra.progress((i + 1) / max(len(lista), 1), text=f"Analisando {i + 1}/{len(lista)}")
+        barra.empty()
+        cache.clear()
+        cache[chave] = dados
+        st.rerun()
+    if not dados:
+        return
+
+    ativo = any(f.get(k) for k, _ in _FIL_METRICAS) or f["perfil"] or f["peso"] != (None, None) or f["conf_min"] > 0
+    if not ativo:
+        st.info("Defina pelo menos um filtro para ver as corridas.")
+        return
+    achadas, total = 0, 0
+    blocos = []
+    for c, p, rk in sorted(dados.values(), key=lambda x: (x[0]["hora"], x[0]["pista"])):
+        bons = [d for d in sorted(p["ds"], key=lambda d: d["trap"]) if _passa_filtro(d, rk.get(d["trap"], {}), f)]
+        if not bons:
+            continue
+        achadas += 1
+        total += len(bons)
+        linhas = []
+        for d in bons:
+            r = rk[d["trap"]]
+            linhas.append([dib.trap_label(d), dib.nome_marcado(d) + dib.brt_html(d),
+                           f"{r.get('overall', '-')}º", dib.perfil_pilula(d["perfil"]), dib.peso_txt(d),
+                           *[(f"{r[k]}º · {d[k]:.2f}" if r.get(k) and d.get(k) is not None else "-")
+                             for k in ("split", "time", "msplit", "mtime", "tadj", "metrica", "rec")],
+                           f"{d['conf']:.0f}%"])
+        tab = dib.tbl(["Trap", "Galgo", "Overall", "Perfil", "Peso", "Melhor<br>Split", "Melhor<br>Time",
+                       "Média<br>Split", "Média<br>Time", "Tadj", "Métrica", "Recup.<br>Média", "Conf."],
+                      linhas, sticky=2, w1=64, w2=125)
+        blocos.append((c, p, tab))
+    st.success(f"{total} galgos em {achadas} corridas (de {len(dados)} analisadas).")
+    for c, p, tab in blocos:
+        st.markdown(f"**{c['pista']} {c['hora']} (BR {hora_br(c['hora'], True)}) · Race {c.get('num', '')} · "
+                    f"{p['classe']} · {int(p['dist'])}m**")
+        st.markdown(tab, unsafe_allow_html=True)
+    fixar_colunas()
+
+
 def main():
     dib_ui.aplicar_tema()
     dib.mostrar_logo()  # logo: fundo branco no tema claro, fundo preto no tema escuro (assets/logo_*.jpg)
 
     st.markdown(_CSS_SIDEBAR, unsafe_allow_html=True)
     with st.sidebar:
-        modo_txt = st.radio("Ver", ["🏁 Corridas", "📊 Resultados", "🧪 Coleta"], horizontal=True, label_visibility="collapsed")
-        modo = "col" if "Coleta" in modo_txt else ("res" if "Resultados" in modo_txt else "ana")
+        modo_txt = st.radio("Ver", ["🏁 Corridas", "📊 Resultados", "🔎 Filtro", "🧪 Coleta"], horizontal=True, label_visibility="collapsed")
+        modo = "col" if "Coleta" in modo_txt else ("res" if "Resultados" in modo_txt else ("fil" if "Filtro" in modo_txt else "ana"))
         data = st.date_input("Data", value=agora_uk().date())
         data_str = data.strftime("%Y-%m-%d")
         ocultar = st.checkbox("Ocultar corridas já realizadas", value=True) if modo == "ana" else False
@@ -1498,7 +1623,7 @@ def main():
                 if hoje: lista = [c for c in lista if c["hora"] < limite]
                 lista = sorted(lista, key=lambda c: (c["hora"], c["pista"]), reverse=True)
             st.caption(f"{len(lista)} corridas · horário da pista (Brasil = −3h)")
-            for c in lista:
+            for c in ([] if modo == "fil" else lista):
                 ativo = bool(sel and sel.get("id") == c["id"] and sel.get("modo") == modo)
                 rotulo = f"{'▶ ' if ativo else ''}{c['hora']} (BR {hora_br(c['hora'], True)}) · {c['pista']} R{c['num'] or '?'} · " \
                          f"{c['grade'] or '?'} · {c['dist'] or '?'}m"
@@ -1530,6 +1655,9 @@ def main():
 
     if modo == "col":
         painel_coleta(url_custom)
+        return
+    if modo == "fil":
+        painel_filtro(lista if corridas else [], data_str, classe_in, dist_in, pp_in)
         return
 
     sel = st.session_state.get("sel")
