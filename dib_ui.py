@@ -162,6 +162,11 @@ def cabecalho(c, p, badge, hora_br):
               f"<div class='dib-strip-pp'><span>Post Pick do site</span>{pp_html}</div></div>")
 
 
+def cabecalho_curto(c, p, hora_br):
+    """Mesmo cabeçalho do topo (pista, horário, BR e chips), sem a classificação geral."""
+    return cabecalho(c, p, lambda t: "", hora_br).split("<div class='dib-sec'>")[0]
+
+
 # ------------------------------------------------------------------ Top 3
 def cards_top3(rank, badge, n=3):
     mx = max([d.get("p_vit") or 0.0 for d in rank] + [1.0])
