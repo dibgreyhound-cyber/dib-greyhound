@@ -63,9 +63,11 @@ div[data-testid="stExpander"] summary{font-weight:600}
 .dib-top.p1{border-color:var(--dib-acc);box-shadow:0 0 0 1px var(--dib-acc) inset,var(--dib-sh)}
 .dib-name{font-size:1.08rem;font-weight:800;line-height:1.25;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .dib-brt{font-size:.78rem;color:var(--dib-mute);margin:3px 0 0 0}
-.dib-nums{display:flex;gap:18px;align-items:flex-end;margin:12px 0 8px}
+.dib-nums{display:grid;grid-template-columns:1.15fr .8fr 1fr 1fr .9fr;gap:6px;align-items:start;margin:12px 0 8px}
+.dib-top .dib-num .v{font-size:1.18rem;font-weight:800}
 .dib-num .v{font-size:1.75rem;font-weight:800;line-height:1;color:var(--dib-tx)}
 .dib-num .v.acc{color:var(--dib-acc)}
+.dib-top .dib-num .l{font-size:.58rem;letter-spacing:.3px;line-height:1.15}
 .dib-num .l{font-size:.7rem;text-transform:uppercase;letter-spacing:.6px;color:var(--dib-mute);margin-top:4px}
 .dib-bar{height:9px;border-radius:999px;background:var(--dib-track);overflow:hidden}
 .dib-bar>i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--dib-acc),var(--dib-acc2))}
@@ -183,7 +185,9 @@ def cards_top3(rank, badge, n=3):
             f"<div class='dib-name'>{dib.MEDALS.get(i, '')}{badge(d['trap'])}<span>{dib.nome_marcado(d)}</span></div>"
             f"<div class='dib-brt'>{_e(brt) if brt else '&nbsp;'}</div>"
             f"<div class='dib-nums'><div class='dib-num'><div class='v acc'>{_fmt(pv, 0, '%')}</div><div class='l'>chance de vencer</div></div>"
-            f"<div class='dib-num'><div class='v'>{dib._fmt_ov(d['overall'])}</div><div class='l'>Overall (corpos)</div></div>"
+            f"<div class='dib-num'><div class='v'>{dib._fmt_ov(d['overall'])}</div><div class='l'>Overall</div></div>"
+            f"<div class='dib-num'><div class='v'>{_fmt(d.get('msplit'), 2)}</div><div class='l'>Média Split</div></div>"
+            f"<div class='dib-num'><div class='v'>{_fmt(d.get('mtime'), 2)}</div><div class='l'>Média Time</div></div>"
             f"<div class='dib-num'><div class='v'>{_fmt(d.get('tadj'), 2)}</div><div class='l'>Tadj</div></div></div>"
             f"<div class='dib-bar'><i style='width:{w:.0f}%'></i></div>"
             f"<div class='dib-chips'>{''.join(chips)}</div></div>")
