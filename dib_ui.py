@@ -233,7 +233,8 @@ def cards_avb(lista, badge):
         meta = dib.AVB_META.get((V["name"], D["name"])) or ("AVB", 0, False, 1)
         crit, calib, nivel = meta[1], bool(meta[2]), meta[3]
         tag = chip("★ Principal", "acc") if nivel == 1 else (chip("🔥 Trombador × Limpo", "acc") if nivel == 3 else chip("🔹 Alternativo", ""))
-        linhas = []
+        _pf = lambda d: {"Limpo": "✅ Limpo", "Irregular": "⚠️ Irregular", "Trombador": "🔴 Trombador"}.get(d.get("perfil"), "-")
+        linhas = [f"<tr><td>Perfil</td><td>{_pf(V)}</td><td>{_pf(D)}</td></tr>"]
         for rot, a, b, menor, nd, suf in (("Overall", V.get("overall"), D.get("overall"), False, 1, ""),
                                           ("Média Split", V.get("msplit"), D.get("msplit"), True, 2, ""),
                                           ("Média Time", V.get("mtime"), D.get("mtime"), True, 2, ""),
