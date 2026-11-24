@@ -1429,8 +1429,7 @@ _CSS_SIDEBAR = """<style>
 section[data-testid="stSidebar"]{width:21rem !important;min-width:21rem !important;max-width:21rem !important;}
 section[data-testid="stSidebar"] .stButton > button{padding:.35rem .4rem;min-height:0;}
 span[data-baseweb="tag"]{background-color:#2F6BFF !important;color:#fff !important;}
-div[data-baseweb="slider"] div[role="slider"]{background-color:#2F6BFF !important;}
-div[data-baseweb="slider"] [data-testid="stSliderThumbValue"]{color:#2F6BFF !important;}
+div[data-baseweb="slider"]{filter:hue-rotate(228deg) saturate(1.15);}
 section[data-testid="stSidebar"] .stButton > button p{font-size:.85rem;line-height:1.25;}
 </style>"""
 
