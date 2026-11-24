@@ -168,6 +168,8 @@ CFG = {
             "apoio_min": 1,          # mínimo de critérios de apoio (categoria, largada) de 2
             "exige_fator_medido": True,  # galgo com corrida convertida SEM fator de distancia medido nao entra em AvB
             # ---- Nível ALTERNATIVO (regras relaxadas; aparece com 🔹 e é validado à parte do principal) ----
+            "bloquear_v_trombador": False,     # False = Trombador PODE ser o escolhido (dados: Trombador de tempo parecido vence mais)
+            "tromb_limpo": {"ativo": True, "perfis_v": ("Trombador",), "tol_mtime": 0.10, "conf_min": 60.0},  # tipo 🔥: Trombador (V) x Limpo (D) com tempo igual/melhor/até +tol
             "overall_dif_min": 1.0,            # Overall do escolhido precisa ser >= Overall do adversário + 1
             "respeitar_classificacao": True,   # AvB só se o escolhido está à frente do adversário na classificação
         "alt": {"ativo": True, "prob_min": 58.0, "conf_min_v": 40.0, "conf_min_d": 0.0, "apoio_min": 0,
@@ -1238,7 +1240,7 @@ def _avaliar_confronto(V, D, prob, ctx):
     rv, rd = V.get("rec"), D.get("rec")
     c_rec = (rv is None or rv >= -10.0) and (rv is None or rd is None or rv >= rd)  # só reprova sinal ruim conhecido
     c_larg = _vantagem_largada(V, D, ctx)
-    c_perfil = V.get("perfil") != "Trombador"
+    c_perfil = (V.get("perfil") != "Trombador") or (not A.get("bloquear_v_trombador", True))
 
     apoio = sum([c_cat, c_larg])
     obrig = c_tadj and c_mtime and c_rec and c_perfil
@@ -1259,7 +1261,8 @@ def _aprovado_alt(V, D, prob, flags):
     A = CFG["AVB"]["alt"]
     conf_ok = V.get("conf", 0) >= A["conf_min_v"] and D.get("conf", 0) >= A["conf_min_d"]
     tempos = (flags["c_tadj"] or flags["c_mtime"]) if A.get("um_tempo_basta", True) else (flags["c_tadj"] and flags["c_mtime"])
-    if A.get("perfil_relativo", True): perfil = not (V.get("perfil") == "Trombador" and D.get("perfil") != "Trombador")
+    if not CFG["AVB"].get("bloquear_v_trombador", True): perfil = True
+    elif A.get("perfil_relativo", True): perfil = not (V.get("perfil") == "Trombador" and D.get("perfil") != "Trombador")
     else: perfil = flags["c_perfil"]
     apoio = int(bool(flags["c_cat"])) + int(bool(flags["c_larg"]))
     return bool(prob >= A["prob_min"] and conf_ok and tempos and flags["c_rec"] and perfil and apoio >= A["apoio_min"] and flags["r_conv"])
@@ -1662,6 +1665,30 @@ def montar_avbs(rank, ctx):
                       or V["overall"] - D["overall"] >= dif_min - 1e-9)
             if not dif_ok: nivel, principal = 0, False
             if not ordem_ok: nivel, principal = 0, False
+            # ---- Tipo 🔥 Trombador (V) x Limpo (D): tempo igual/melhor/pouco pior => o Trombador tem grande chance (corre limpo = tempo ainda melhor)
+            TL = CFG["AVB"].get("tromb_limpo", {})
+            tl = None
+            if TL.get("ativo"):
+                for X, Y in ((A, B), (B, A)):
+                    if (X.get("perfil") in TL.get("perfis_v", ("Trombador",)) and Y.get("perfil") == "Limpo" and not (X.get("alvo") or X.get("bloqueado"))
+                            and X.get("mtime") is not None and Y.get("mtime") is not None
+                            and X["mtime"] <= Y["mtime"] + TL.get("tol_mtime", 0.10)
+                            and X.get("conf", 0) >= TL.get("conf_min", 60.0) and Y.get("conf", 0) >= TL.get("conf_min", 60.0)
+                            and X.get("conv_ok", True)):
+                        tl = (X, Y)
+            if tl is not None:
+                Vt, Dt = tl
+                if Vt is V:
+                    if nivel == 0: nivel = 3
+                else:
+                    nivel = 0  # a mesma dupla com os papéis invertidos (Limpo vence) contradiz a regra: sai
+                    prob_t = 100.0 - prob
+                    _a, crit_t, flags_t = _avaliar_confronto(Vt, Dt, prob_t, ctx)
+                    flags_t["nivel"] = 3
+                    s1.append((Vt, Dt, prob_t, crit_t, 3))
+                    diag["n_tl"] = diag.get("n_tl", 0) + 1
+                    linhas_log.append((Vt, Dt, prob_t, None, False, crit_t, flags_t))
+                    continue
             flags["nivel"] = nivel
             motivos = [nome for nome, ok in (("probabilidade abaixo do mínimo", flags["r_prob"]), ("confiança baixa", flags["r_conf"]),
                                              ("não é melhor nos dois tempos (Time Ajust. e Méd. Time)", flags["r_tempos"]),
@@ -1675,6 +1702,7 @@ def montar_avbs(rank, ctx):
             if len(motivos) == 1: diag["unico"][motivos[0]] = diag["unico"].get(motivos[0], 0) + 1
             if nivel == 1: diag["n_p"] += 1
             elif nivel == 2: diag["n_alt"] += 1
+            elif nivel == 3: diag["n_tl"] = diag.get("n_tl", 0) + 1
             if nivel: s1.append((V, D, prob, crit, nivel))
             linhas_log.append((V, D, prob_raw, (prob if params else None), principal, crit, flags))
 
@@ -1848,6 +1876,7 @@ def tabela_avb(lista, titulo):
 
     badge = "<span style='color:#FFD700;font-weight:bold;margin-right:6px;' title='AvB principal'>★</span>"
     badge_alt = "<span style='margin-right:6px;' title='AvB alternativo (regras relaxadas)'>🔹</span>"
+    badge_tl = "<span style='margin-right:6px;' title='Trombador x Limpo (tempo parecido)'>🔥</span>"
 
     rows = []
     for i, item in enumerate(lista):
@@ -1877,7 +1906,7 @@ def tabela_avb(lista, titulo):
         )
 
         rows.append([
-            f"{badge if nivel == 1 else badge_alt}{trap_label(V)} - {nome_marcado(V)}{brt_html(V)}",
+            f"{badge if nivel == 1 else (badge_tl if nivel == 3 else badge_alt)}{trap_label(V)} - {nome_marcado(V)}{brt_html(V)}",
             ov_v, cat_v, V['perfil'], grades_txt(V),
             peso_txt(V), f"{V['dias']}", sp_v, t_v, ms_v, mt_v, ta_v, me_v, rec_v, f"{V['conf']:.0f}%",
             prob_cell
@@ -1892,7 +1921,7 @@ def tabela_avb(lista, titulo):
     heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Melhor<br>Split", "Melhor<br>Time", "Média<br>Split", "Média<br>Time", "Tadj", "Métrica", "Recup.", "Conf.", "Probabilidade"]
     st.markdown(tbl(heads, rows, sticky=1, w1=190), unsafe_allow_html=True)
     if any((AVB_META.get((it[0]["name"], it[1]["name"])) or (0, 0, 0, 1))[3] == 2 for it in lista):
-        st.caption("★ principal (regras completas) · 🔹 alternativo (regras relaxadas, em validação à parte)")
+        st.caption("★ principal (regras completas) · 🔹 alternativo (regras relaxadas) · 🔥 Trombador × Limpo (tempo parecido), validados à parte")
 
 
 # =====================================================================
@@ -1904,7 +1933,7 @@ def painel_diagnostico_avb(rank, ctx):
     try: cid = corrida_id(rank, ctx)
     except Exception: return
     if not dg or dg.get("cid") != cid: return
-    with st.expander(f"🧭 AvBs desta corrida: {dg['n_p']} principal(is), {dg['n_alt']} alternativo(s)"):
+    with st.expander(f"🧭 AvBs desta corrida: {dg['n_p']} principal(is), {dg['n_alt']} alternativo(s), {dg.get('n_tl', 0)} 🔥"):
         st.markdown(f"{dg['pares']} confrontos avaliados.")
         if dg["bloqueados"]: st.markdown("Confiança baixa (🚫), só como adversário: " + ", ".join(html.escape(n) for n in dg["bloqueados"]))
         if dg["alvos"]: st.markdown("Marcados como **alvo (🎯)**: " + ", ".join(html.escape(n) for n in dg["alvos"]) + " (nunca como escolhido; só como adversário).")
@@ -2091,9 +2120,11 @@ def _leitura_tatica(rank, avbs, ctx):
     # ---- AvBs
     if avbs:
         def pct(p): return p * 100 if p <= 1 else p
-        princ = [t for t in avbs if len(t) > 3 and t[3]]
-        alt = [t for t in avbs if not (len(t) > 3 and t[3])]
-        for nome, lst in (("⭐ AvB principal", princ), ("🔹 AvB alternativo", alt)):
+        nv = lambda t: (AVB_META.get((t[0]["name"], t[1]["name"])) or ("AVB", 0, False, 1))[3]
+        princ = [t for t in avbs if nv(t) == 1]
+        alt = [t for t in avbs if nv(t) == 2]
+        tl_ = [t for t in avbs if nv(t) == 3]
+        for nome, lst in (("⭐ AvB principal", princ), ("🔹 AvB alternativo", alt), ("🔥 Trombador × Limpo (tempo parecido)", tl_)):
             if lst: L.append(f"**{nome}:** " + " · ".join(f"{E(t[0])} vence {E(t[1])} ({pct(t[2]):.0f}%)" for t in lst))
         alvos_d = [t[1] for t in avbs]
         rep = max(set(d["trap"] for d in alvos_d), key=lambda x: sum(1 for d in alvos_d if d["trap"] == x))
@@ -2225,4 +2256,4 @@ def _mostrar_logo(largura=None):
     maxw = f"max-width:{int(largura)}px;" if largura else ""
     st.markdown(f"<div style='margin:-6px 0 -2px 0;line-height:0'><img src='data:image/{mc};base64,{c}' style='display:block;width:100%;{maxw}height:auto'></div>",
                 unsafe_allow_html=True)
-          
+               
