@@ -170,10 +170,14 @@ def cabecalho_curto(c, p, hora_br):
 
 
 # ------------------------------------------------------------------ Top 3
-def cards_top3(rank, badge, n=3):
+def _medalha(i):
+    return dib.MEDALS.get(i) or "<span class='dib-pos'>" + str(i) + "º</span>"
+
+
+def cards_top3(rank, badge, n=None):
     mx = max([d.get("p_vit") or 0.0 for d in rank] + [1.0])
     cards = []
-    for i, d in enumerate(rank[:n], 1):
+    for i, d in enumerate(rank[:n] if n else rank, 1):
         pv = d.get("p_vit")
         w = 0 if pv is None else max(4.0, min(100.0, pv / mx * 100.0))
         brt = d.get("brt_txt") or (f"BRT: {d['brt_raw']:.2f}" if d.get("brt_raw") else "")
@@ -182,7 +186,7 @@ def cards_top3(rank, badge, n=3):
             chips.append(chip(f"Recup. {d['rec']:+.0f}%", "ok" if d["rec"] >= 0 else "bad"))
         cards.append(
             f"<div class='dib-card dib-top p{i}'><div class='rk'>{i}º</div>"
-            f"<div class='dib-name'>{dib.MEDALS.get(i, '')}{badge(d['trap'])}<span>{dib.nome_marcado(d)}</span></div>"
+            f"<div class='dib-name'>{_medalha(i)}{badge(d['trap'])}<span>{dib.nome_marcado(d)}</span></div>"
             f"<div class='dib-brt'>{_e(brt) if brt else '&nbsp;'}</div>"
             f"<div class='dib-nums'><div class='dib-num'><div class='v acc'>{_fmt(pv, 0, '%')}</div><div class='l'>chance de vencer</div></div>"
             f"<div class='dib-num'><div class='v'>{dib._fmt_ov(d['overall'])}</div><div class='l'>Overall</div></div>"
@@ -191,7 +195,7 @@ def cards_top3(rank, badge, n=3):
             f"<div class='dib-num'><div class='v'>{_fmt(d.get('tadj'), 2)}</div><div class='l'>Tadj</div></div></div>"
             f"<div class='dib-bar'><i style='width:{w:.0f}%'></i></div>"
             f"<div class='dib-chips'>{''.join(chips)}</div></div>")
-    return secao("Top 3", "quem mais provavelmente vence") + f"<div class='dib-grid'>{''.join(cards)}</div>"
+    return secao("GALGOS", f"{len(rank)} na corrida · ordem de classificação") + f"<div class='dib-grid'>{''.join(cards)}</div>"
 
 
 # ------------------------------------------------------------------ AvB
