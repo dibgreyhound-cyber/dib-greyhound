@@ -167,6 +167,7 @@ CFG = {
             "apoio_min": 1,          # mínimo de critérios de apoio (categoria, largada) de 2
             "exige_fator_medido": True,  # galgo com corrida convertida SEM fator de distancia medido nao entra em AvB
             # ---- Nível ALTERNATIVO (regras relaxadas; aparece com 🔹 e é validado à parte do principal) ----
+            "overall_dif_min": 1.0,            # Overall do escolhido precisa ser >= Overall do adversário + 1
             "respeitar_classificacao": True,   # AvB só se o escolhido está à frente do adversário na classificação
         "alt": {"ativo": True, "prob_min": 58.0, "conf_min_v": 40.0, "conf_min_d": 0.0, "apoio_min": 0,
                     "um_tempo_basta": True,         # V precisa ser melhor em Time Ajust. OU Méd. Time (e não nos dois)
@@ -1655,6 +1656,10 @@ def montar_avbs(rank, ctx):
                 if alvo_ok and _aprovado_alt(V, D, prob, flags): nivel = 2
             # Coerência com a classificação: o escolhido (V) TEM que estar à frente do adversário (D) na classificação/Predictor
             ordem_ok = not (CFG["AVB"].get("respeitar_classificacao", True) and V.get("pos") and D.get("pos") and V["pos"] > D["pos"])
+            dif_min = CFG["AVB"].get("overall_dif_min", 0.0)
+            dif_ok = (V.get("overall") is None or D.get("overall") is None
+                      or V["overall"] - D["overall"] >= dif_min - 1e-9)
+            if not dif_ok: nivel, principal = 0, False
             if not ordem_ok: nivel, principal = 0, False
             flags["nivel"] = nivel
             motivos = [nome for nome, ok in (("probabilidade abaixo do mínimo", flags["r_prob"]), ("confiança baixa", flags["r_conf"]),
@@ -1663,6 +1668,7 @@ def montar_avbs(rank, ctx):
                                              ("sem apoio de categoria/largada", flags["r_apoio"]),
                                              ("distância convertida sem fator medido 📏", flags["r_conv"])) if not ok]
             if tem_alvo: motivos.append("escolhido seria alvo 🎯/bloqueado 🚫 (só pode ser adversário)")
+            if not dif_ok: motivos.append("Overall do escolhido menos de 1 acima do adversário")
             if not ordem_ok: motivos.append("contraria a classificação (escolhido está atrás do adversário)")
             for m in motivos: diag["motivos"][m] = diag["motivos"].get(m, 0) + 1
             if len(motivos) == 1: diag["unico"][motivos[0]] = diag["unico"].get(motivos[0], 0) + 1
@@ -2160,4 +2166,4 @@ def _mostrar_logo(largura=None):
     maxw = f"max-width:{int(largura)}px;" if largura else ""
     st.markdown(f"<div style='margin:-6px 0 -2px 0;line-height:0'><img src='data:image/{mc};base64,{c}' style='display:block;width:100%;{maxw}height:auto'></div>",
                 unsafe_allow_html=True)
-      
+  
