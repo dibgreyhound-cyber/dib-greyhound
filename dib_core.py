@@ -169,7 +169,7 @@ CFG = {
             "exige_fator_medido": True,  # galgo com corrida convertida SEM fator de distancia medido nao entra em AvB
             # ---- Nível ALTERNATIVO (regras relaxadas; aparece com 🔹 e é validado à parte do principal) ----
             "bloquear_v_trombador": False,     # False = Trombador PODE ser o escolhido (dados: Trombador de tempo parecido vence mais)
-            "tromb_limpo": {"ativo": True, "perfis_v": ("Trombador",), "tol_mtime": 0.10, "conf_min": 60.0},  # tipo 🔥: Trombador (V) x Limpo (D) com tempo igual/melhor/até +tol
+            "tromb_limpo": {"ativo": False, "perfis_v": ("Trombador",), "tol_mtime": 0.10, "conf_min": 60.0},  # tipo 🔥: Trombador (V) x Limpo (D) com tempo igual/melhor/até +tol
             "overall_dif_min": 1.0,            # Overall do escolhido precisa ser >= Overall do adversário + 1
             "respeitar_classificacao": True,   # AvB só se o escolhido está à frente do adversário na classificação
         "alt": {"ativo": True, "prob_min": 58.0, "conf_min_v": 40.0, "conf_min_d": 0.0, "apoio_min": 0,
@@ -2256,4 +2256,5 @@ def _mostrar_logo(largura=None):
     maxw = f"max-width:{int(largura)}px;" if largura else ""
     st.markdown(f"<div style='margin:-6px 0 -2px 0;line-height:0'><img src='data:image/{mc};base64,{c}' style='display:block;width:100%;{maxw}height:auto'></div>",
                 unsafe_allow_html=True)
-               
+      
+ 
