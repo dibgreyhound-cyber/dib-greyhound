@@ -35,10 +35,14 @@ _CSS = """<style>
   }
 }
 .stApp{background:var(--dib-bg) !important}
+.block-container{padding-top:2.6rem !important;padding-bottom:2rem !important}
+div[data-testid="stTabs"] [role="tablist"]{margin-top:-4px}
+img{max-width:100%}
+div[data-testid="stVerticalBlock"]{gap:.7rem !important}
 header[data-testid="stHeader"]{background:transparent !important}
 div[data-testid="stExpander"]{background:transparent !important;border:1px solid var(--dib-bd) !important;border-radius:14px !important;overflow:hidden}
 div[data-testid="stExpander"] summary{font-weight:600}
-.dib-sec{display:flex;align-items:center;gap:10px;font-size:1.15rem;font-weight:800;letter-spacing:.2px;margin:26px 0 12px;color:var(--dib-tx)}
+.dib-sec{display:flex;align-items:center;gap:10px;font-size:1.15rem;font-weight:800;letter-spacing:.2px;margin:18px 0 10px;color:var(--dib-tx)}
 .dib-sec::before{content:"";width:5px;height:1.2em;border-radius:3px;background:linear-gradient(var(--dib-acc),var(--dib-acc2))}
 .dib-sec small{font-weight:500;color:var(--dib-mute);font-size:.8rem;margin-left:4px}
 .dib-hero{margin:6px 0 4px}
