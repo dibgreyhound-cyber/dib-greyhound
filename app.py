@@ -1255,11 +1255,11 @@ def analisar(c, classe_in, dist_in, pp_in):
         return
     st.markdown(dib_ui.cabecalho(c, p, badge_g, hora_br), unsafe_allow_html=True)
     st.markdown(dib_ui.cards_top3(p["rank"], badge), unsafe_allow_html=True)
+    st.markdown(dib_ui.cabecalho_curto(c, p, hora_br), unsafe_allow_html=True)
     st.markdown(dib_ui.cards_avb(p["s1"], badge), unsafe_allow_html=True)
     st.markdown(grafico_predictor(p["ds"]), unsafe_allow_html=True)
     with st.expander("📊 Planilha de Projeção (completa)"):
         st.markdown(dib.tabela_projecao(p["ds"]), unsafe_allow_html=True)
-    st.markdown(titulo_corrida(c, p))
     if not p["pp"]:
         st.caption("Post Pick não encontrado automaticamente. Você pode digitar em ⚙️ Ajustes (ex: 1-2-5).")
         with st.expander("🔎 Diagnóstico do Post Pick (copie e cole no chat)", expanded=True):
