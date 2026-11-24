@@ -1196,22 +1196,21 @@ _JS_TRAVAR = """<script>
     '.dib-table.sticky-2 td:nth-child(1)' + NOT + ',' +
     '.dib-table.sticky-1 th:nth-child(1),' +
     '.dib-table.sticky-2 th:nth-child(1)' +
-    '{ position: sticky !important; left: 0 !important; z-index: 2 !important;' +
-    '  box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45) !important; }' +
+    '{ position: sticky !important; left: 0 !important; z-index: 2 !important; }' +
     '.dib-table.sticky-2 td:nth-child(2)' + NOT + ',' +
     '.dib-table.sticky-2 th:nth-child(2)' +
     '{ position: sticky !important; left: var(--dib-left2, 0px) !important; z-index: 2 !important;' +
-    '  box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45), 3px 0 4px -2px rgba(0,0,0,.35) !important; }' +
+    '  box-shadow: 8px 0 10px -8px rgba(0,0,0,.3) !important; }' +
     '.dib-table.sticky-1 td:nth-child(1)' + NOT + ',' +
     '.dib-table.sticky-2 td:nth-child(1)' + NOT + ',' +
     '.dib-table.sticky-2 td:nth-child(2)' + NOT +
-    '{ background-color: var(--dib-bg, #fff) !important; }' +
+    '{ background-color: var(--dib-card, #fff) !important; }' +
+    '.dib-table.sticky-1 td:nth-child(1)' + NOT + '{ box-shadow: 8px 0 10px -8px rgba(0,0,0,.3) !important; }' +
     '.dib-table.sticky-1 th:nth-child(1),' +
     '.dib-table.sticky-2 th:nth-child(1),' +
     '.dib-table.sticky-2 th:nth-child(2)' +
-    '{ background-color: var(--dib-bg-head, #f0f2f6) !important; z-index: 3 !important; }' +
-    '.dib-table.sticky-1 td:nth-child(1)' + NOT + '{ box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45), 3px 0 4px -2px rgba(0,0,0,.35) !important; }' +
-    '.dib-table.sticky-1 th:nth-child(1){ box-shadow: inset 0 -1px 0 rgba(128,128,128,.35), inset -1px 0 0 rgba(128,128,128,.45), 3px 0 4px -2px rgba(0,0,0,.35) !important; }';
+    '{ background-color: var(--dib-head, #f0f2f6) !important; z-index: 3 !important; }' +
+    '.dib-table.sticky-1 th:nth-child(1){ box-shadow: 8px 0 10px -8px rgba(0,0,0,.3) !important; }';
 
   var styleId = 'dib-sticky-style-v2';
   var estilo = doc.getElementById(styleId);
@@ -1221,19 +1220,6 @@ _JS_TRAVAR = """<script>
     doc.head.appendChild(estilo);
   }
   estilo.innerHTML = CSS;
-
-  function cores() {
-    var app = doc.querySelector('.stApp') || doc.body;
-    var m = win.getComputedStyle(app).backgroundColor.match(/[\\d.]+/g);
-    if (!m || m.length < 3 || (m.length > 3 && parseFloat(m[3]) === 0)) return;
-    var r = +m[0], g = +m[1], b = +m[2];
-    function mix(c) { return Math.round(c * 0.9 + 128 * 0.1); }
-    var raiz = doc.documentElement;
-    raiz.style.setProperty('--dib-bg', 'rgb(' + r + ',' + g + ',' + b + ')');
-    raiz.style.setProperty('--dib-bg-head', 'rgb(' + mix(r) + ',' + mix(g) + ',' + mix(b) + ')');
-  }
-  cores();
-  setInterval(cores, 400);
 
   function aplicar() {
     Array.prototype.forEach.call(doc.querySelectorAll('table.dib-table'), function (t) {
