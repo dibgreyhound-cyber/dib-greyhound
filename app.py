@@ -831,18 +831,18 @@ def grafico_predictor(ds):
             w = 100.0 if mx <= 0 else max(11.0, min(100.0, d["p_vit"] / mx * 100.0))
             tip = f"{d['name']} · {d['p_vit']:.1f}% de vencer"
             fill = (f"<div title=\"{tip}\" style='position:relative;width:{w:.1f}%;height:100%;"
-                    f"border-radius:8px;{estilo}'>"
+                    f"border-radius:8px;box-shadow:inset 0 0 0 1px rgba(128,128,128,.35);{estilo}'>"
                     f"<span style='position:absolute;right:4px;top:50%;transform:translateY(-50%);"
                     f"line-height:0;'>{greyhound_svg(t)}</span></div>")
-            pct = (f"<span style='color:#fff;font-size:11px;min-width:34px;text-align:right'>"
+            pct = (f"<span style='color:var(--dib-tx,#14181F);font-size:12px;font-weight:800;min-width:36px;text-align:right'>"
                    f"{d['p_vit']:.0f}%</span>")
         linhas.append(f"<div style='display:flex;align-items:center;gap:6px;margin:4px 0'>{badge_p(t)}"
-                      f"<div style='flex:1;height:15px;background:#0a2a52;border-radius:8px;overflow:hidden'>"
+                      f"<div style='flex:1;height:15px;background:var(--dib-track,#E8ECF2);border-radius:8px;overflow:hidden'>"
                       f"{fill}</div>{pct}</div>")
-    return ("<div style='background:#143f6f;border-radius:16px;padding:12px 10px 5px;max-width:640px;margin:6px 0;"
-            "position:relative'>"
-            "<div style='position:absolute;top:-1px;left:10px;background:#d32f2f;color:#fff;font-weight:700;"
-            "font-size:11px;padding:2px 12px;border-radius:0 0 10px 10px'>Predictor · chance de vencer</div>"
+    return ("<div style='background:var(--dib-card,#fff);border:1px solid var(--dib-bd,#E3E8EF);box-shadow:var(--dib-sh,none);"
+            "border-radius:16px;padding:14px 12px 7px;margin:18px 0 6px;position:relative'>"
+            "<div style='position:absolute;top:-1px;left:12px;background:var(--dib-acc,#2F6BFF);color:#fff;font-weight:700;"
+            "font-size:11px;padding:3px 12px;border-radius:0 0 10px 10px'>Predictor · chance de vencer</div>"
             "<div style='height:6px'></div>" + "".join(linhas) + "</div>")
 
 
@@ -1256,7 +1256,7 @@ def analisar(c, classe_in, dist_in, pp_in):
     st.markdown(dib_ui.cabecalho(c, p, badge_g, hora_br), unsafe_allow_html=True)
     st.markdown(dib_ui.cards_top3(p["rank"], badge), unsafe_allow_html=True)
     st.markdown(dib_ui.cards_avb(p["s1"], badge), unsafe_allow_html=True)
-    st.markdown(dib_ui.predictor(p["ds"], badge), unsafe_allow_html=True)
+    st.markdown(grafico_predictor(p["ds"]), unsafe_allow_html=True)
     with st.expander("📊 Planilha de Projeção (completa)"):
         st.markdown(dib.tabela_projecao(p["ds"]), unsafe_allow_html=True)
     st.markdown(titulo_corrida(c, p))
