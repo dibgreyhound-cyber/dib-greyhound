@@ -16,6 +16,7 @@ import csv
 from urllib.parse import quote
 from datetime import datetime, timedelta
 
+import numpy as np
 import pandas as pd
 from curl_cffi import requests as curl_requests
 import streamlit as st
@@ -1174,6 +1175,21 @@ def gerar_texto_analise(c, p):
     splits_ord = sorted(all_splits)
     # [CORRIGIDO] só alerta se o split mais rápido for um ponto fora da curva (>0,15s abaixo do 2º)
     split_outlier = len(splits_ord) >= 3 and (splits_ord[1] - splits_ord[0]) > 0.15
+    # Checagem por pista: se os splits da pista/distancia (todas as corridas de todos os galgos) sao tipicamente baixos,
+    # o split baixo e caracteristica da pista (ponto de medicao antes da caixa) e NAO erro de dados.
+    if split_outlier and top_split:
+        D_ = p["ctx"]["dist"]
+        pista_ = str(p["ctx"].get("pista") or "").strip().lower()
+        ref = []
+        for dg_ in p["rank"]:
+            for r_ in dg_.get("runs", []):
+                if r_.get("split") and r_["split"] > 0 and abs((r_.get("dist") or 0) - D_) < 1 \
+                        and (not pista_ or pista_ in str(r_.get("track", "")).lower() or str(r_.get("track", "")).lower() in pista_):
+                    ref.append(r_["split"])
+        if len(ref) >= 8:
+            med = float(np.median(ref))
+            if top_split["msplit"] >= med - 0.20:   # perto da mediana da pista = normal
+                split_outlier = False
 
     if top_split and split_outlier and not is_irish_metric:
         s_name = top_split['name']
