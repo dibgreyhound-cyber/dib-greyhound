@@ -111,6 +111,7 @@ _ORD = {"first": "1", "second": "2", "third": "3", "fourth": "4"}
 # CONFIGURACAO GLOBAL
 # =====================================================================
 CFG = {
+    "IGNORAR_CONV_SEM_FATOR": True,
     "N_RUNS": 5, "N_CORREDORES": 6, "CAT_BONUS": 2.0,
 
     # ---- Janela de distancia ----
@@ -162,7 +163,8 @@ CFG = {
             "postpick_sec": 0.0,     # 0.0 = o Post Pick (palpite de tipster) NAO entra no tempo projetado
             "trap_sec": {1: -0.02, 2: -0.01, 3: 0.0, 4: 0.0, 5: 0.01, 6: 0.02},
             # ---- Regra ÚNICA de aprovação do AvB ----
-            "prob_min": 62.0,        # probabilidade mínima (RECALIBRAR: o modelo mudou)
+            "prob_min": 65.0,        # probabilidade mínima (acima de 65%)
+            "tempo_dif_min": 0.15,   # V precisa ter Média Time E Tadj >= 0,15 s mais baixos que o desafiante (principal e alternativo)
             "conf_min_v": 60.0,      # confiança mínima do galgo escolhido (V)
             "conf_min_d": 0.0,       # confiança mínima do adversário (D): alvo/bloqueado podem ser adversário
             "apoio_min": 1,          # mínimo de critérios de apoio (categoria, largada) de 2
@@ -172,8 +174,8 @@ CFG = {
             "tromb_limpo": {"ativo": False, "perfis_v": ("Trombador",), "tol_mtime": 0.10, "conf_min": 60.0},  # tipo 🔥: Trombador (V) x Limpo (D) com tempo igual/melhor/até +tol
             "overall_dif_min": 1.0,            # Overall do escolhido precisa ser >= Overall do adversário + 1
             "respeitar_classificacao": True,   # AvB só se o escolhido está à frente do adversário na classificação
-        "alt": {"ativo": True, "prob_min": 58.0, "conf_min_v": 40.0, "conf_min_d": 0.0, "apoio_min": 0,
-                    "um_tempo_basta": True,         # V precisa ser melhor em Time Ajust. OU Méd. Time (e não nos dois)
+        "alt": {"ativo": True, "prob_min": 65.0, "conf_min_v": 40.0, "conf_min_d": 0.0, "apoio_min": 0,
+                    "um_tempo_basta": False,        # V precisa ser melhor em Time Ajust. OU Méd. Time (e não nos dois)
                     "perfil_relativo": True,        # só reprova se V é Trombador e D não é
                     "alvo_como_adversario": True},  # galgo marcado 🎯 pode ser o ADVERSÁRIO (nunca o escolhido)
             # ---- Calibração logística (ativa só com amostra suficiente) ----
@@ -789,6 +791,16 @@ def analisar_galgo(dog, ctx):
     oficiais = [r for r in todas if oficial(r, ctx)]
     validas = [r for r in oficiais if not analisar_remarks(r["remarks"])["excluir"]]
     R = (validas or oficiais)[:CFG["N_RUNS"]]
+    # Corridas † (distancia diferente, SEM fator medido = so proporcao) sao ignoradas no calculo
+    sem_fator_ign = 0
+    if CFG.get("IGNORAR_CONV_SEM_FATOR", True):
+        def _dagger(r): return abs(r["dist"] - D) >= 1 and _slope_para(r["track"]) is None
+        pool = [r for r in (validas or oficiais) if not _dagger(r)]
+        sem_fator_ign = len([r for r in (validas or oficiais)[:CFG["N_RUNS"]] if _dagger(r)])
+        if pool:
+            R = pool[:CFG["N_RUNS"]]
+        else:
+            sem_fator_ign = -1  # so ha corridas † : mantem, mas o galgo fica barrado (conv_ok False)
 
     d = {"name": dog["name"], "trap": dog["trap"], "runs": runs, "val": R, "nd": not R, "n_val": len(R),
          "conf": _conf_dados(R, ctx) if R else 0.0, "bloqueado": False, "alvo": False, "pos": 0, "elegivel": False,
@@ -831,6 +843,9 @@ def analisar_galgo(dog, ctx):
     incerto_dist = len(conv) >= CFG["N_FORA_INCERTO"]  # 1-2 corridas fora da distância NÃO tornam o galgo incerto
     d["incerto_dist"] = incerto_dist
     d["conv_ok"] = (d["n_conv_sem_fator"] == 0) or not incerto_dist
+    d["n_dagger_ign"] = max(sem_fator_ign, 0)
+    if sem_fator_ign == -1:
+        d["conv_ok"] = False          # base so de corridas † : nunca Top1 nem vencedor de AvB
     # incerteza extra por diferença de distância (entra na variância do tempo projetado)
     sd_m, sd_s = CFG["DIST_SD_100M_MEDIDO"], CFG["DIST_SD_100M_SEM_FATOR"]
     d["dist_var"] = (float(np.mean([((sd_m if b is not None else sd_s) * abs(r["dist"] - D) / 100.0) ** 2
@@ -1234,8 +1249,9 @@ def _vantagem_largada(V, D, ctx):
 def _avaliar_confronto(V, D, prob, ctx):
     A = CFG["AVB"]
     # Adversario (D) incerto pode desafiar: se ele nao tem o tempo (poucos dados), basta o escolhido (V) ter e ser conhecido
-    c_tadj = (V.get("tadj") is not None and (D.get("tadj") is None or V["tadj"] < D["tadj"]))
-    c_mtime = (V.get("mtime") is not None and (D.get("mtime") is None or V["mtime"] < D["mtime"]))
+    TD = A.get("tempo_dif_min", 0.0)
+    c_tadj = (V.get("tadj") is not None and (D.get("tadj") is None or V["tadj"] <= D["tadj"] - TD + 1e-9))
+    c_mtime = (V.get("mtime") is not None and (D.get("mtime") is None or V["mtime"] <= D["mtime"] - TD + 1e-9))
     c_cat = (V.get("cat", 0) >= D.get("cat", 0))
     rv, rd = V.get("rec"), D.get("rec")
     c_rec = (rv is None or rv >= -10.0) and (rv is None or rd is None or rv >= rd)  # só reprova sinal ruim conhecido
@@ -1246,12 +1262,12 @@ def _avaliar_confronto(V, D, prob, ctx):
     obrig = c_tadj and c_mtime and c_rec and c_perfil
     conf_ok = V.get("conf", 0) >= A["conf_min_v"] and D.get("conf", 0) >= A["conf_min_d"]
     conv_ok = V.get("conv_ok", True) or not A.get("exige_fator_medido", True)  # só o escolhido precisa de distância medida
-    aprovado = bool(prob >= A["prob_min"] and conf_ok and obrig and apoio >= A["apoio_min"] and conv_ok)
+    aprovado = bool(prob > A["prob_min"] and conf_ok and obrig and apoio >= A["apoio_min"] and conv_ok)
     score = sum([c_tadj, c_mtime, c_rec, c_perfil]) + apoio  # 0..6
     flags = {"c_tadj": c_tadj, "c_mtime": c_mtime, "c_cat": c_cat,
              "c_rec": c_rec, "c_larg": c_larg, "c_perfil": c_perfil,
              # resultado de cada regra do nível principal (para o diagnóstico "por que não há AvB")
-             "r_prob": prob >= A["prob_min"], "r_conf": conf_ok, "r_tempos": bool(c_tadj and c_mtime), "r_rec": c_rec,
+             "r_prob": prob > A["prob_min"], "r_conf": conf_ok, "r_tempos": bool(c_tadj and c_mtime), "r_rec": c_rec,
              "r_perfil": c_perfil, "r_apoio": apoio >= A["apoio_min"], "r_conv": conv_ok}
     return aprovado, score, flags
 
@@ -1265,7 +1281,7 @@ def _aprovado_alt(V, D, prob, flags):
     elif A.get("perfil_relativo", True): perfil = not (V.get("perfil") == "Trombador" and D.get("perfil") != "Trombador")
     else: perfil = flags["c_perfil"]
     apoio = int(bool(flags["c_cat"])) + int(bool(flags["c_larg"]))
-    return bool(prob >= A["prob_min"] and conf_ok and tempos and flags["c_rec"] and perfil and apoio >= A["apoio_min"] and flags["r_conv"])
+    return bool(prob > A["prob_min"] and conf_ok and tempos and flags["c_rec"] and perfil and apoio >= A["apoio_min"] and flags["r_conv"])
 
 
 # (nome_V, nome_D) -> ("AVB", nº de critérios 0-6, calibrada?)
@@ -1691,7 +1707,7 @@ def montar_avbs(rank, ctx):
                     continue
             flags["nivel"] = nivel
             motivos = [nome for nome, ok in (("probabilidade abaixo do mínimo", flags["r_prob"]), ("confiança baixa", flags["r_conf"]),
-                                             ("não é melhor nos dois tempos (Time Ajust. e Méd. Time)", flags["r_tempos"]),
+                                             ("vantagem < 0,15s em Time Ajust. e/ou Méd. Time", flags["r_tempos"]),
                                              ("recuperação ruim", flags["r_rec"]), ("escolhido é Trombador", flags["r_perfil"]),
                                              ("sem apoio de categoria/largada", flags["r_apoio"]),
                                              ("distância convertida sem fator medido 📏", flags["r_conv"])) if not ok]
@@ -1977,7 +1993,7 @@ def painel_validacao():
         try:
             pend, resolv = contar_pendentes()
             st.markdown(f"Resultados: **{resolv} confrontos resolvidos** e {pend} pendentes. "
-                        "Os resultados são preenchidos sozinhos quando os galgos aparecem em análises seguintes; "
+                       "Os resultados são preenchidos sozinhos quando os galgos aparecem em análises seguintes; "
                         "a digitação manual é opcional.")
         except Exception: pass
         params = _params_calibracao()
@@ -2256,5 +2272,4 @@ def _mostrar_logo(largura=None):
     maxw = f"max-width:{int(largura)}px;" if largura else ""
     st.markdown(f"<div style='margin:-6px 0 -2px 0;line-height:0'><img src='data:image/{mc};base64,{c}' style='display:block;width:100%;{maxw}height:auto'></div>",
                 unsafe_allow_html=True)
-      
- 
+          
