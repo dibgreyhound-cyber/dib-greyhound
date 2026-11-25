@@ -1456,9 +1456,22 @@ def _ranks_corrida(ds):
     return out
 
 
-def _passa_filtro(d, rk, f):
+_PP_OPCOES = ["1º do Post Pick", "2º do Post Pick", "3º do Post Pick", "Fora do Post Pick"]
+
+
+def _passa_filtro(d, rk, f, pp=()):
     if d.get("nd"):
         return False
+    sel_pp = f.get("pp")
+    if sel_pp:
+        if not pp:
+            return False  # corrida sem Post Pick conhecido: não dá para afirmar
+        if d["trap"] in pp:
+            rot = f"{pp.index(d['trap']) + 1}º do Post Pick"
+            if rot not in sel_pp:
+                return False
+        elif "Fora do Post Pick" not in sel_pp:
+            return False
     for k, _ in _FIL_METRICAS:
         sel_ = f.get(k)
         if sel_ and rk.get(k) not in sel_:
@@ -1498,6 +1511,9 @@ def painel_filtro(lista, data_str, classe_in, dist_in, pp_in):
                              help="Recuperação média em % (positivo = ganha posições na corrida). "
                                   "Nas pontas (-50 / 50) não há limite.")
     f["rec_faixa"] = (rmin_ if rmin_ > -50 else None, rmax_ if rmax_ < 50 else None)
+    f["pp"] = st.multiselect("Post Pick", _PP_OPCOES, key="fil_pp",
+                             help="Escolha 'Fora do Post Pick' para galgos que o mercado não colocou. "
+                                  "Corridas sem Post Pick conhecido ficam de fora quando este filtro está ativo.")
     c1, c2, c3 = st.columns(3)
     with c1:
         f["perfil"] = st.multiselect("Perfil", ["Limpo", "Irregular", "Trombador"], key="fil_perfil")
@@ -1539,14 +1555,15 @@ def painel_filtro(lista, data_str, classe_in, dist_in, pp_in):
     if not dados:
         return
 
-    ativo = any(f.get(k) for k, _ in _FIL_METRICAS) or f["perfil"] or f["peso"] != (None, None) or f["rec_faixa"] != (None, None) or f["conf_min"] > 0
+    ativo = any(f.get(k) for k, _ in _FIL_METRICAS) or f["perfil"] or f["pp"] or f["peso"] != (None, None) or f["rec_faixa"] != (None, None) or f["conf_min"] > 0
     if not ativo:
         st.info("Defina pelo menos um filtro para ver as corridas.")
         return
     achadas, total = 0, 0
     blocos = []
     for c, p, rk in sorted(dados.values(), key=lambda x: (x[0]["hora"], x[0]["pista"])):
-        bons = [d for d in sorted(p["ds"], key=lambda d: d["trap"]) if _passa_filtro(d, rk.get(d["trap"], {}), f)]
+        pp_l = [int(x) for x in re.findall(r"[1-6]", str(p.get("pp") or ""))]
+        bons = [d for d in sorted(p["ds"], key=lambda d: d["trap"]) if _passa_filtro(d, rk.get(d["trap"], {}), f, pp_l)]
         if not bons:
             continue
         achadas += 1
@@ -1555,11 +1572,12 @@ def painel_filtro(lista, data_str, classe_in, dist_in, pp_in):
         for d in bons:
             r = rk[d["trap"]]
             linhas.append([dib.trap_label(d), dib.nome_marcado(d) + dib.brt_html(d),
-                           f"{r.get('overall', '-')}º", dib.perfil_pilula(d["perfil"]), dib.peso_txt(d),
+                           f"{r.get('overall', '-')}º", dib.perfil_pilula(d["perfil"]),
+                           (f"{pp_l.index(d['trap']) + 1}º" if d["trap"] in pp_l else ("fora" if pp_l else "-")), dib.peso_txt(d),
                            *[(f"{r[k]}º · {d[k]:.2f}" if r.get(k) and d.get(k) is not None else "-")
                              for k in ("split", "time", "msplit", "mtime", "tadj", "metrica", "rec")],
                            f"{d['conf']:.0f}%"])
-        tab = dib.tbl(["Trap", "Galgo", "Overall", "Perfil", "Peso", "Melhor<br>Split", "Melhor<br>Time",
+        tab = dib.tbl(["Trap", "Galgo", "Overall", "Perfil", "Post<br>Pick", "Peso", "Melhor<br>Split", "Melhor<br>Time",
                        "Média<br>Split", "Média<br>Time", "Tadj", "Métrica", "Recup.<br>Média", "Conf."],
                       linhas, sticky=2, w1=64, w2=125)
         blocos.append((c, p, tab))
