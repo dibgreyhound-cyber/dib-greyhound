@@ -2059,7 +2059,7 @@ def cenario_corrida(rank, avbs, ctx):
     """Cenario narrativo da corrida (largada -> meio -> reta final -> personagens), 100% derivado dos numeros."""
     ativos = [d for d in rank if not d.get("nd")]
     if not ativos: return ""
-    R = lambda d: f"T{d['trap']} ({d['name']})"
+    R = lambda d: f"{trap_label(d)} {d['name']}"
     eleg = [d for d in ativos if not d.get("bloqueado")]
     if not eleg: return "**🏁 O Cenário da Corrida**\n\nTodos os cães estão bloqueados ou sem dados suficientes."
     fav = eleg[0]
