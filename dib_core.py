@@ -2055,17 +2055,22 @@ def _via(t):
     return "no trilho" if t == 1 else ("por dentro" if t in (2, 3) else ("pelo meio" if t == 4 else "por fora"))
 
 
-def cenario_corrida(rank, avbs, ctx):
+def cenario_corrida(rank, avbs, ctx, plano=False):
     """Cenario narrativo da corrida (largada -> meio -> reta final -> personagens), 100% derivado dos numeros."""
     ativos = [d for d in rank if not d.get("nd")]
     if not ativos: return ""
-    R = lambda d: f"{trap_label(d)} {d['name']}"
+    R = (lambda d: f"{TRAP_EMOJI.get(d['trap'], '')} {d['trap']} {d['name']}") if plano else (lambda d: f"{trap_label(d)} {d['name']}")
+    D = float(ctx.get("dist") or 0)
+    curto, longo = (0 < D <= 320), D >= 600           # sprint (1 curva) / prova longa
+    a_m, b_m = int(round(0.21 * D, -1)), int(round(0.65 * D, -1))   # limites das fases proporcionais a distancia
+    c1 = "curva" if curto else "1ª curva"
     eleg = [d for d in ativos if not d.get("bloqueado")]
     if not eleg: return "**🏁 O Cenário da Corrida**\n\nTodos os cães estão bloqueados ou sem dados suficientes."
     fav = eleg[0]
     top3 = [d for d in ativos if d.get("pos") and d["pos"] <= 3]
     rc = lambda d: (f"{d['rec']:+.1f}%" if d.get("rec") is not None else "sem dado")
     ms = sorted([d for d in ativos if d.get("msplit") is not None], key=lambda x: x["msplit"])
+    if len(ms) < 3: ms = []                           # split so de 1-2 galgos nao descreve a largada
     lider = ms[0] if ms else None
     grupo = [d for d in ms if lider and d["msplit"] - lider["msplit"] <= 0.05]
     conflito = len(grupo) >= 3
@@ -2073,6 +2078,8 @@ def cenario_corrida(rank, avbs, ctx):
     melhor_t = com_tadj[0] if com_tadj else None
     gap_fav = (fav["overall"] - eleg[1]["overall"]) if len(eleg) > 1 else 9
     if conflito: titulo = "O Caos na Largada e a Disputa pelo Trilho"
+    elif curto: titulo = f"Sprint de {int(D)}m: a Trap e a Saída da Curva Decidem"
+    elif longo: titulo = f"Prova Longa de {int(D)}m: Fôlego e Recuperação Decidem"
     elif gap_fav >= 1.5: titulo = "Favorito com Pista Livre"
     else: titulo = "Corrida Aberta, Decidida na Reta"
     L = [f"**🏁 O Cenário da Corrida: {titulo}**", ""]
@@ -2082,9 +2089,9 @@ def cenario_corrida(rank, avbs, ctx):
     if lider:
         if conflito:
             B.append(f"Largadas muito parecidas: {len(grupo)} cães entre {grupo[0]['msplit']:.2f} e {grupo[-1]['msplit']:.2f} de Média Split. "
-                     "A briga pela 1ª curva tende a ser feia, com risco real de contato.")
+                     f"A briga pela {c1} tende a ser feia, com risco real de contato.")
         elif len(ms) > 1:
-            B.append(f"Sem briga declarada: {R(lider)} abre {ms[1]['msplit'] - lider['msplit']:.2f}s de Média Split sobre o 2º e deve liderar a 1ª curva.")
+            B.append(f"Sem briga declarada: {R(lider)} abre {ms[1]['msplit'] - lider['msplit']:.2f}s de Média Split sobre o 2º e deve liderar a {c1}.")
         B.append(f"{R(lider)} tem a melhor Média Split da prova ({lider['msplit']:.2f}) e sai {_via(lider['trap'])}.")
         bs = sorted([d for d in ativos if d.get("split")], key=lambda x: x["split"])
         if bs and bs[0] is not lider and lider.get("split") and lider["split"] - bs[0]["split"] >= 0.05:
@@ -2094,22 +2101,29 @@ def cenario_corrida(rank, avbs, ctx):
         t1 = next((d for d in ativos if d["trap"] == 1 and d is not lider and d.get("msplit") is not None and d["msplit"] - lider["msplit"] <= 0.08), None)
         if t1: B.append(f"{R(t1)} tem Split competitivo e larga no trilho (Trap 1): caminho mais curto na curva.")
     else:
-        B.append("Sem Split na distância exata para a maioria: largada neutra, difícil prever quem sai na frente.")
+        B.append(f"Sem Split na distância exata ({int(D)}m) para a maioria: não dá para medir quem sai na frente. A largada se lê pela trap, pelo perfil e pelo ritmo.")
+        dentro = [d for d in ativos if d["trap"] <= 2]
+        if dentro: B.append("Por dentro: " + ", ".join(f"{R(d)} ({d.get('perfil')})" for d in dentro) + f". Quem tiver o trilho livre faz o caminho mais curto até a {c1}.")
+        tr = [d for d in ativos if d.get("perfil") == "Trombador" and d["trap"] <= 4]
+        if len(tr) >= 2: B.append("Risco de contato: " + " e ".join(R(d) for d in tr) + f" são Trombadores e saem das traps internas; a briga pela {c1} pode ser feia.")
+        vel = sorted([d for d in ativos if d.get("mtime") is not None], key=lambda x: x["mtime"])[:2]
+        if vel: B.append("Pelo ritmo (Média Time), os mais rápidos: " + ", ".join(f"{R(d)} ({d['mtime']:.2f})" for d in vel) + ".")
     pesos = [d["peso"] for d in ativos if d.get("peso")]
     exp = [d for d in ativos if (d.get("rec") is not None and d["rec"] <= -10) or d.get("alvo")]
     if exp:
         v = sorted(exp, key=lambda x: (x.get("rec") if x.get("rec") is not None else 0))[0]
         pesado = (f", é o mais pesado ({v['peso']:.1f})" if v.get("peso") and pesos and v["peso"] >= max(pesos) and v["peso"] - sorted(pesos)[-2 if len(pesos) > 1 else -1] >= 1.0 else "")
         B.append(f"{R(v)} é o mais exposto se houver contato: recuperação {rc(v)}{pesado}; se tomar um toque, tende a não se recuperar.")
-    L += ["**1. A Largada (0 a 100m)**"] + [f"- {x}" for x in B] + [""]
+    L += [f"**1. A Largada (0 a {a_m}m)**"] + [f"- {x}" for x in B] + [""]
 
     # ---------- 2. Meio
     M = []
     if lider and lider.get("rec") is not None:
         if lider["rec"] <= 0:
-            M.append(f"{R(lider)}, que larga mais rápido, tende a perder fôlego na reta (recuperação {rc(lider)}): pode fazer o papel de 'lebre' e ser ultrapassado.")
+            if curto: M.append(f"{R(lider)} larga mais rápido; em prova curta há pouca distância para ser ultrapassado, mesmo com recuperação {rc(lider)}.")
+            else: M.append(f"{R(lider)}, que larga mais rápido, tende a perder fôlego na reta (recuperação {rc(lider)}): pode fazer o papel de 'lebre' e ser ultrapassado.")
         else:
-            M.append(f"{R(lider)} tem recuperação positiva ({rc(lider)}) e pode segurar a ponta depois da curva.")
+            M.append(f"{R(lider)} tem recuperação positiva ({rc(lider)}) e pode segurar a ponta depois da curva" + (", e o fôlego pesa nesta distância longa." if longo else "."))
     if melhor_t and melhor_t is not lider:
         t = f"{R(melhor_t)} tem o melhor Tadj da prova ({melhor_t['tadj']:.2f}) e tende a assumir a liderança"
         if melhor_t.get("perfil") != "Limpo": t += f", mas é {melhor_t['perfil']} (recuperação {rc(melhor_t)}): se for trancado na curva, perde o ritmo"
@@ -2119,7 +2133,8 @@ def cenario_corrida(rank, avbs, ctx):
     limpos3 = [d for d in top3 if d.get("perfil") == "Limpo"]
     if len(limpos3) == 1 and len(top3) >= 2:
         M.append(f"{R(limpos3[0])} é o único Limpo do Top 3: tende a evitar a confusão e pode vir de trás.")
-    if M: L += ["**2. O Meio da Prova (100m a 300m)**"] + [f"- {x}" for x in M] + [""]
+    if longo: M.append("Prova longa: o fôlego e a recuperação pesam mais, e quem gastou na largada tende a pagar no fim.")
+    if M: L += [f"**2. O Meio da Prova ({a_m}m a {b_m}m)**"] + [f"- {x}" for x in M] + [""]
 
     # ---------- 3. Reta final
     outros = [d for d in eleg[1:3]]
@@ -2131,12 +2146,13 @@ def cenario_corrida(rank, avbs, ctx):
             F.append(f"Se {R(fav)}, {motivo}, for atrapalhado na curva, {R(cand)} ({cand.get('perfil')}, {_via(cand['trap'])}) herda a corrida.")
         else:
             F.append(f"Com pista livre, {R(fav)} deve confirmar o favoritismo.")
-        L += ["**3. A Reta Final (300m ao fim)**"] + [f"- {x}" for x in F] + [""]
+        if curto: F.append("Prova curta (uma curva): pouco espaço para recuperar; a trap e a saída da curva pesam mais que a recuperação.")
+        L += [f"**3. A Reta Final ({b_m}m ao fim, {int(D)}m)**"] + [f"- {x}" for x in F] + [""]
 
     # ---------- Personagens
     P = []
     pv = lambda d: (f" ({d['p_vit']:.1f}% de chance)" if d.get("p_vit") is not None else "")
-    cond = (f" Precisa cruzar para o trilho na 1ª curva sem trombar." if fav["trap"] >= 5 else f" Larga {_via(fav['trap'])}: caminho natural.")
+    cond = (f" Precisa cruzar para o trilho na {c1} sem trombar." if fav["trap"] >= 5 else f" Larga {_via(fav['trap'])}: caminho natural.")
     P.append(f"**O Favorito Matemático – {R(fav)}:** lidera o Overall ({_fmt_ov(fav['overall'])}){pv(fav)}.{cond}")
     sombra = next((d for d in eleg[1:3] if d is not cand), None) or (cand if cand else None)
     if sombra:
@@ -2171,7 +2187,7 @@ def cenario_corrida(rank, avbs, ctx):
         if not (len(ref) >= 8 and lider["msplit"] >= float(np.median(ref)) - 0.20):
             N.append(f"⚠️ Alerta de Dados: {R(lider)} tem Média Split ({lider['msplit']:.2f}) muito abaixo do resto do campo. Pode ser erro na base.")
     sem = [R(d) for d in ativos if d.get("msplit") is None]
-    if sem: N.append(f"ℹ️ Sem Split na distância exata (largada neutra): {', '.join(sem)}.")
+    if sem and len(sem) < len(ativos): N.append(f"ℹ️ Sem Split na distância exata (largada neutra): {', '.join(sem)}.")
     hoje = ctx.get("classe_n")
     def _ult(d):
         r0 = (d.get("val") or [None])[0]          # corrida válida mais recente
@@ -2294,4 +2310,4 @@ def _mostrar_logo(largura=None):
     maxw = f"max-width:{int(largura)}px;" if largura else ""
     st.markdown(f"<div style='margin:-6px 0 -2px 0;line-height:0'><img src='data:image/{mc};base64,{c}' style='display:block;width:100%;{maxw}height:auto'></div>",
                 unsafe_allow_html=True)
-      
+  
