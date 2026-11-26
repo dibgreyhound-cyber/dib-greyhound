@@ -83,14 +83,14 @@ div[data-testid="stExpander"] summary{font-weight:600}
 .dib-vs .row.d{font-weight:500;color:var(--dib-mute)}
 .dib-pos{font-size:.78rem;font-weight:800;color:var(--dib-acc);margin-right:6px}
 .dib-prob{font-size:2rem;font-weight:900;color:var(--dib-ok);line-height:1}
-.dib-mini{width:100%;border-collapse:collapse;margin-top:6px;font-size:.84rem;color:var(--dib-tx)}
-.dib-det summary{cursor:pointer;margin-top:10px;font-size:.82rem;font-weight:600;color:var(--dib-acc);list-style:none}
+.dib-mini{width:100%;border-collapse:collapse;margin-top:6px;font-size:17px;font-variant-numeric:tabular-nums;color:var(--dib-tx)}
+.dib-det summary{cursor:pointer;margin-top:10px;font-size:.95rem;font-weight:600;color:var(--dib-acc);list-style:none}
 .dib-det summary::-webkit-details-marker{display:none}
 .dib-det summary::before{content:'▸ '}
 .dib-det[open] summary::before{content:'▾ '}
-.dib-mini td,.dib-mini th{padding:5px 2px;border:0 !important;border-top:1px solid var(--dib-bd) !important;text-align:center;background:transparent !important}
+.dib-mini td,.dib-mini th{padding:11px 4px;border:0 !important;border-top:1px solid var(--dib-bd) !important;text-align:center;background:transparent !important}
 .dib-mini tr:first-child td{border-top:0 !important}
-.dib-mini .df{font-size:.7em;font-weight:500;color:var(--dib-mute);margin-left:2px;opacity:.85}
+.dib-mini .df{font-size:.72em;font-weight:500;color:var(--dib-mute);margin-left:2px;opacity:.85}
 .dib-mini td:first-child{text-align:left;color:var(--dib-mute)}
 .dib-mini .w{color:var(--dib-ok);font-weight:800}
 .dib-mini .l{color:var(--dib-bad)}
@@ -255,8 +255,8 @@ def cards_avb(lista, badge):
             f"<div class='dib-bar' style='margin-top:10px'><i style='width:{max(4.0, min(100.0, prob)):.0f}%;"
             f"background:linear-gradient(90deg,var(--dib-ok),#5BD68A)'></i></div>"
             f"<details class='dib-det'><summary>Comparar números</summary><table class='dib-mini'><tr><td></td><td>{badge(V['trap'])}<div class='dib-nm'>{_e(V['name'])}</div></td><td>{badge(D['trap'])}<div class='dib-nm'>{_e(D['name'])}</div></td></tr>{''.join(linhas)}</table></details></div>")
-    leg = ("<div style='color:var(--dib-mute);font-size:.8rem;margin-top:8px'>★ principal (regras completas) · "
-           "🔹 alternativo (regras relaxadas) · 🔥 Trombador × Limpo (tempo parecido), validado à parte</div>")
+    leg = ("<div style='color:var(--dib-mute);font-size:.8rem;margin-top:8px'>★ principal (com apoio de categoria/largada) · "
+           "🔹 alternativo (sem apoio de categoria/largada) · 🔥 Trombador × Limpo (tempo parecido), validado à parte</div>")
     return secao("AvBs", f"{len(lista)} confronto(s) · maior probabilidade primeiro") + f"<div class='dib-grid'>{''.join(cards)}</div>" + leg
 
 
