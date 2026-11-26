@@ -42,14 +42,14 @@ div[data-testid="stVerticalBlock"]{gap:.7rem !important}
 header[data-testid="stHeader"]{background:transparent !important}
 div[data-testid="stExpander"]{background:transparent !important;border:1px solid var(--dib-bd) !important;border-radius:14px !important;overflow:hidden}
 div[data-testid="stExpander"] summary{font-weight:600}
-.dib-sec{display:flex;align-items:center;gap:10px;font-size:1.15rem;font-weight:800;letter-spacing:.2px;margin:18px 0 10px;color:var(--dib-tx)}
+.dib-sec{display:flex;align-items:center;gap:10px;font-size:1.288rem;font-weight:800;letter-spacing:.2px;margin:18px 0 10px;color:var(--dib-tx)}
 .dib-sec::before{content:"";width:5px;height:1.2em;border-radius:3px;background:linear-gradient(var(--dib-acc),var(--dib-acc2))}
-.dib-sec small{font-weight:500;color:var(--dib-mute);font-size:.8rem;margin-left:4px}
+.dib-sec small{font-weight:500;color:var(--dib-mute);font-size:0.896rem;margin-left:4px}
 .dib-hero{margin:6px 0 4px}
 .dib-hero .t{font-size:1.9rem;font-weight:800;line-height:1.15;color:var(--dib-tx)}
-.dib-hero .t span{font-weight:500;font-size:1.05rem;color:var(--dib-mute);margin-left:6px}
+.dib-hero .t span{font-weight:500;font-size:1.176rem;color:var(--dib-mute);margin-left:6px}
 .dib-chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 4px}
-.dib-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:999px;font-size:.86rem;font-weight:600;
+.dib-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:999px;font-size:0.963rem;font-weight:600;
   background:var(--dib-card);border:1px solid var(--dib-bd);color:var(--dib-tx);white-space:nowrap}
 .dib-chip.acc{background:var(--dib-acc);border-color:var(--dib-acc);color:#fff}
 .dib-chip.ok{color:var(--dib-ok);border-color:rgba(22,163,74,.45);background:rgba(22,163,74,.10)}
@@ -59,29 +59,29 @@ div[data-testid="stExpander"] summary{font-weight:600}
 .dib-chip.mute{color:var(--dib-mute);font-weight:500}
 .dib-card{background:var(--dib-card);border:1px solid var(--dib-bd);border-radius:14px;padding:14px 16px;box-shadow:var(--dib-sh);color:var(--dib-tx)}
 .dib-strip{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-.dib-strip .arr{color:var(--dib-silver);font-size:.9rem}
-.dib-strip-pp{margin-top:12px;padding-top:10px;border-top:1px dashed var(--dib-bd);font-size:.92rem;color:var(--dib-mute);display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.dib-strip .arr{color:var(--dib-silver);font-size:1.008rem}
+.dib-strip-pp{margin-top:12px;padding-top:10px;border-top:1px dashed var(--dib-bd);font-size:1.03rem;color:var(--dib-mute);display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .dib-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
 .dib-top{position:relative;overflow:hidden}
 .dib-top .rk{position:absolute;right:12px;top:6px;font-size:2.6rem;font-weight:900;color:var(--dib-silver);opacity:.22;line-height:1}
 .dib-top.p1{border-color:var(--dib-acc);box-shadow:0 0 0 1px var(--dib-acc) inset,var(--dib-sh)}
-.dib-name{font-size:1.08rem;font-weight:800;line-height:1.25;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.dib-brt{font-size:.78rem;color:var(--dib-mute);margin:3px 0 0 0}
+.dib-name{font-size:1.21rem;font-weight:800;line-height:1.25;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dib-brt{font-size:0.874rem;color:var(--dib-mute);margin:3px 0 0 0}
 .dib-nums{display:grid;grid-template-columns:1.15fr .8fr 1fr 1fr .9fr;gap:6px;align-items:start;margin:12px 0 8px}
-.dib-top .dib-num .v{font-size:1.18rem;font-weight:800}
+.dib-top .dib-num .v{font-size:1.322rem;font-weight:800}
 .dib-num .v{font-size:1.75rem;font-weight:800;line-height:1;color:var(--dib-tx)}
 .dib-num .v.acc{color:var(--dib-acc)}
-.dib-top .dib-num .l{font-size:.58rem;letter-spacing:.3px;line-height:1.15}
-.dib-num .l{font-size:.7rem;text-transform:uppercase;letter-spacing:.6px;color:var(--dib-mute);margin-top:4px}
+.dib-top .dib-num .l{font-size:0.65rem;letter-spacing:.3px;line-height:1.15}
+.dib-num .l{font-size:0.784rem;text-transform:uppercase;letter-spacing:.6px;color:var(--dib-mute);margin-top:4px}
 .dib-bar{height:9px;border-radius:999px;background:var(--dib-track);overflow:hidden}
 .dib-bar>i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--dib-acc),var(--dib-acc2))}
 .dib-card .dib-chips{margin:10px 0 0}
 .dib-avb-h{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
-.dib-nm{font-size:.72rem;font-weight:600;color:var(--dib-mute);margin-top:3px;line-height:1.15}
+.dib-nm{font-size:0.806rem;font-weight:600;color:var(--dib-mute);margin-top:3px;line-height:1.15}
 .dib-vs{display:flex;flex-direction:column;gap:6px}
 .dib-vs .row{display:flex;align-items:center;gap:8px;font-weight:700;flex-wrap:wrap}
 .dib-vs .row.d{font-weight:500;color:var(--dib-mute)}
-.dib-pos{font-size:.78rem;font-weight:800;color:var(--dib-acc);margin-right:6px}
+.dib-pos{font-size:0.874rem;font-weight:800;color:var(--dib-acc);margin-right:6px}
 .dib-prob{font-size:2rem;font-weight:900;color:var(--dib-ok);line-height:1}
 .dib-mini{width:100%;border-collapse:collapse;margin-top:6px;font-size:17px;font-variant-numeric:tabular-nums;color:var(--dib-tx)}
 .dib-det summary{cursor:pointer;margin-top:10px;font-size:.95rem;font-weight:600;color:var(--dib-acc);list-style:none}
@@ -95,9 +95,9 @@ div[data-testid="stExpander"] summary{font-weight:600}
 .dib-mini .w{color:var(--dib-ok);font-weight:800}
 .dib-mini .l{color:var(--dib-bad)}
 .dib-pred .row{display:flex;align-items:center;gap:10px;margin:7px 0}
-.dib-pred .nm{flex:0 0 28%;min-width:0;font-size:.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dib-pred .nm{flex:0 0 28%;min-width:0;font-size:0.952rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dib-pred .bar{flex:1}
-.dib-pred .pc{flex:0 0 44px;text-align:right;font-weight:800;font-size:.9rem}
+.dib-pred .pc{flex:0 0 44px;text-align:right;font-weight:800;font-size:1.008rem}
 .dib-empty{color:var(--dib-mute);text-align:center;padding:18px}
 </style>"""
 
@@ -255,7 +255,7 @@ def cards_avb(lista, badge):
             f"<div class='dib-bar' style='margin-top:10px'><i style='width:{max(4.0, min(100.0, prob)):.0f}%;"
             f"background:linear-gradient(90deg,var(--dib-ok),#5BD68A)'></i></div>"
             f"<details class='dib-det'><summary>Comparar números</summary><table class='dib-mini'><tr><td></td><td>{badge(V['trap'])}<div class='dib-nm'>{_e(V['name'])}</div></td><td>{badge(D['trap'])}<div class='dib-nm'>{_e(D['name'])}</div></td></tr>{''.join(linhas)}</table></details></div>")
-    leg = ("<div style='color:var(--dib-mute);font-size:.8rem;margin-top:8px'>★ principal (com apoio de categoria/largada) · "
+    leg = ("<div style='color:var(--dib-mute);font-size:0.896rem;margin-top:8px'>★ principal (com apoio de categoria/largada) · "
            "🔹 alternativo (sem apoio de categoria/largada) · 🔥 Trombador × Limpo (tempo parecido), validado à parte</div>")
     return secao("AvBs", f"{len(lista)} confronto(s) · maior probabilidade primeiro") + f"<div class='dib-grid'>{''.join(cards)}</div>" + leg
 
