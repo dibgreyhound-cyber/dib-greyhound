@@ -164,7 +164,7 @@ CFG = {
             "trap_sec": {1: -0.02, 2: -0.01, 3: 0.0, 4: 0.0, 5: 0.01, 6: 0.02},
             # ---- Regra ÚNICA de aprovação do AvB ----
             "prob_min": 65.0,        # probabilidade mínima (acima de 65%)
-            "tempo_dif_min": 0.15,   # V precisa ter Média Time E Tadj >= 0,15 s mais baixos que o desafiante (principal e alternativo)
+            "tempo_dif_min": 0.20,   # V precisa ter Média Time E Tadj >= 0,20 s mais baixos que o desafiante (principal e alternativo)
             "conf_min_v": 60.0,      # confiança mínima do galgo escolhido (V)
             "conf_min_d": 0.0,       # confiança mínima do adversário (D): alvo/bloqueado podem ser adversário
             "apoio_min": 1,          # mínimo de critérios de apoio (categoria, largada) de 2
@@ -1712,7 +1712,7 @@ def montar_avbs(rank, ctx):
                     continue
             flags["nivel"] = nivel
             motivos = [nome for nome, ok in (("probabilidade abaixo do mínimo", flags["r_prob"]), ("confiança baixa", flags["r_conf"]),
-                                             ("vantagem < 0,15s em Time Ajust. e/ou Méd. Time", flags["r_tempos"]),
+                                             ("vantagem < 0,20s em Time Ajust. e/ou Méd. Time", flags["r_tempos"]),
                                              ("recuperação ruim", flags["r_rec"]), ("Média Split pior sem recuperação melhor que o adversário", flags["c_splrec"]), ("escolhido é Trombador", flags["r_perfil"]),
                                              ("sem apoio de categoria/largada", flags["r_apoio"]),
                                              ("distância convertida sem fator medido 📏", flags["r_conv"])) if not ok]
