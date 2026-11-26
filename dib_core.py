@@ -2172,8 +2172,12 @@ def cenario_corrida(rank, avbs, ctx):
             N.append(f"⚠️ Alerta de Dados: {R(lider)} tem Média Split ({lider['msplit']:.2f}) muito abaixo do resto do campo. Pode ser erro na base.")
     sem = [R(d) for d in ativos if d.get("msplit") is None]
     if sem: N.append(f"ℹ️ Sem Split na distância exata (largada neutra): {', '.join(sem)}.")
-    queda = [R(d) for d in ativos if d.get("cat_mod", 0) > 0]
-    if queda: N.append(f"📉 Queda de Classe: {', '.join(queda)}.")
+    hoje = ctx.get("classe_n")
+    def _ult(d):
+        r0 = (d.get("val") or [None])[0]          # corrida válida mais recente
+        return grade_num(r0["grade"]) if r0 else None
+    queda = [R(d) for d in ativos if hoje and _ult(d) is not None and hoje > _ult(d)]   # classe de hoje pior que a da ÚLTIMA corrida
+    if queda: N.append(f"📉 Queda de Classe (desceu em relação à última corrida): {', '.join(queda)}.")
     if N: L += ["**Notas:**"] + [f"- {x}" for x in N]
     return "\n".join(L).rstrip()
 
@@ -2290,4 +2294,4 @@ def _mostrar_logo(largura=None):
     maxw = f"max-width:{int(largura)}px;" if largura else ""
     st.markdown(f"<div style='margin:-6px 0 -2px 0;line-height:0'><img src='data:image/{mc};base64,{c}' style='display:block;width:100%;{maxw}height:auto'></div>",
                 unsafe_allow_html=True)
-  
+      
