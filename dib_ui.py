@@ -255,9 +255,7 @@ def cards_avb(lista, badge):
             f"<div class='dib-bar' style='margin-top:10px'><i style='width:{max(4.0, min(100.0, prob)):.0f}%;"
             f"background:linear-gradient(90deg,var(--dib-ok),#5BD68A)'></i></div>"
             f"<details class='dib-det'><summary>Comparar números</summary><table class='dib-mini'><tr><td></td><td>{badge(V['trap'])}<div class='dib-nm'>{_e(V['name'])}</div></td><td>{badge(D['trap'])}<div class='dib-nm'>{_e(D['name'])}</div></td></tr>{''.join(linhas)}</table></details></div>")
-    leg = ("<div style='color:var(--dib-mute);font-size:0.896rem;margin-top:8px'>★ principal (com apoio de categoria/largada) · "
-           "🔹 alternativo (sem apoio de categoria/largada) · 🔥 Trombador × Limpo (tempo parecido), validado à parte</div>")
-    return secao("AvBs", f"{len(lista)} confronto(s) · maior probabilidade primeiro") + f"<div class='dib-grid'>{''.join(cards)}</div>" + leg
+    return secao("AvBs", f"{len(lista)} confronto(s) · maior probabilidade primeiro") + f"<div class='dib-grid'>{''.join(cards)}</div>"
 
 
 # ------------------------------------------------------------------ Predictor
