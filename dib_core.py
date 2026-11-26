@@ -2169,10 +2169,10 @@ def cenario_corrida(rank, avbs, ctx):
         ref = [r_["split"] for d in ativos for r_ in d.get("runs", [])
                if r_.get("split") and r_["split"] > 0 and abs((r_.get("dist") or 0) - ctx.get("dist", 0)) < 1]
         if not (len(ref) >= 8 and lider["msplit"] >= float(np.median(ref)) - 0.20):
-            N.append(f"⚠️ Alerta de Dados: {lider['name']} tem Média Split ({lider['msplit']:.2f}) muito abaixo do resto do campo. Pode ser erro na base.")
-    sem = [d["name"] for d in ativos if d.get("msplit") is None]
+            N.append(f"⚠️ Alerta de Dados: {R(lider)} tem Média Split ({lider['msplit']:.2f}) muito abaixo do resto do campo. Pode ser erro na base.")
+    sem = [R(d) for d in ativos if d.get("msplit") is None]
     if sem: N.append(f"ℹ️ Sem Split na distância exata (largada neutra): {', '.join(sem)}.")
-    queda = [d["name"] for d in ativos if d.get("cat_mod", 0) > 0]
+    queda = [R(d) for d in ativos if d.get("cat_mod", 0) > 0]
     if queda: N.append(f"📉 Queda de Classe: {', '.join(queda)}.")
     if N: L += ["**Notas:**"] + [f"- {x}" for x in N]
     return "\n".join(L).rstrip()
