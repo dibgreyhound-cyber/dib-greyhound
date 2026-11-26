@@ -1258,14 +1258,19 @@ def _avaliar_confronto(V, D, prob, ctx):
     c_larg = _vantagem_largada(V, D, ctx)
     c_perfil = (V.get("perfil") != "Trombador") or (not A.get("bloquear_v_trombador", True))
 
+    # V com Média Split PIOR que a do desafiante precisa compensar com recuperação MELHOR (sem dado de rec = não reprova)
+    if V.get("msplit") is not None and D.get("msplit") is not None and V["msplit"] > D["msplit"]:
+        c_splrec = (V.get("rec") is None or D.get("rec") is None or V["rec"] > D["rec"])
+    else:
+        c_splrec = True
     apoio = sum([c_cat, c_larg])
-    obrig = c_tadj and c_mtime and c_rec and c_perfil
+    obrig = c_tadj and c_mtime and c_rec and c_perfil and c_splrec
     conf_ok = V.get("conf", 0) >= A["conf_min_v"] and D.get("conf", 0) >= A["conf_min_d"]
     conv_ok = V.get("conv_ok", True) or not A.get("exige_fator_medido", True)  # só o escolhido precisa de distância medida
     aprovado = bool(prob > A["prob_min"] and conf_ok and obrig and apoio >= A["apoio_min"] and conv_ok)
     score = sum([c_tadj, c_mtime, c_rec, c_perfil]) + apoio  # 0..6
     flags = {"c_tadj": c_tadj, "c_mtime": c_mtime, "c_cat": c_cat,
-             "c_rec": c_rec, "c_larg": c_larg, "c_perfil": c_perfil,
+             "c_rec": c_rec, "c_larg": c_larg, "c_perfil": c_perfil, "c_splrec": c_splrec,
              # resultado de cada regra do nível principal (para o diagnóstico "por que não há AvB")
              "r_prob": prob > A["prob_min"], "r_conf": conf_ok, "r_tempos": bool(c_tadj and c_mtime), "r_rec": c_rec,
              "r_perfil": c_perfil, "r_apoio": apoio >= A["apoio_min"], "r_conv": conv_ok}
@@ -1281,7 +1286,7 @@ def _aprovado_alt(V, D, prob, flags):
     elif A.get("perfil_relativo", True): perfil = not (V.get("perfil") == "Trombador" and D.get("perfil") != "Trombador")
     else: perfil = flags["c_perfil"]
     apoio = int(bool(flags["c_cat"])) + int(bool(flags["c_larg"]))
-    return bool(prob > A["prob_min"] and conf_ok and tempos and flags["c_rec"] and perfil and apoio >= A["apoio_min"] and flags["r_conv"])
+    return bool(prob > A["prob_min"] and conf_ok and tempos and flags["c_rec"] and flags.get("c_splrec", True) and perfil and apoio >= A["apoio_min"] and flags["r_conv"])
 
 
 # (nome_V, nome_D) -> ("AVB", nº de critérios 0-6, calibrada?)
@@ -1708,7 +1713,7 @@ def montar_avbs(rank, ctx):
             flags["nivel"] = nivel
             motivos = [nome for nome, ok in (("probabilidade abaixo do mínimo", flags["r_prob"]), ("confiança baixa", flags["r_conf"]),
                                              ("vantagem < 0,15s em Time Ajust. e/ou Méd. Time", flags["r_tempos"]),
-                                             ("recuperação ruim", flags["r_rec"]), ("escolhido é Trombador", flags["r_perfil"]),
+                                             ("recuperação ruim", flags["r_rec"]), ("Média Split pior sem recuperação melhor que o adversário", flags["c_splrec"]), ("escolhido é Trombador", flags["r_perfil"]),
                                              ("sem apoio de categoria/largada", flags["r_apoio"]),
                                              ("distância convertida sem fator medido 📏", flags["r_conv"])) if not ok]
             if tem_alvo: motivos.append("escolhido seria alvo 🎯/bloqueado 🚫 (só pode ser adversário)")
@@ -1819,7 +1824,7 @@ def grades_txt(d):
     """Grades das corridas usadas. '*' = convertida de outra distancia COM fator medido; '†' = convertida so por proporcao."""
     D = d.get("dist_alvo")
     out = []
-    for r in d.get("val", []):
+    for r in (d.get("runs") or d.get("val", [])):   # as 5 ultimas corridas, oficiais ou nao
         g = r["grade"] or "?"
         if D and r.get("dist") is not None and abs(r["dist"] - D) >= 1:
             g += "*" if _slope_para(r.get("track", "")) is not None else "†"
@@ -2310,4 +2315,3 @@ def _mostrar_logo(largura=None):
     maxw = f"max-width:{int(largura)}px;" if largura else ""
     st.markdown(f"<div style='margin:-6px 0 -2px 0;line-height:0'><img src='data:image/{mc};base64,{c}' style='display:block;width:100%;{maxw}height:auto'></div>",
                 unsafe_allow_html=True)
-  
