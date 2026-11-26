@@ -1752,7 +1752,7 @@ def tbl(headers, rows, sticky=1, w1=None, w2=None):
 .dib-container{overflow-x:auto;width:100%;margin-bottom:20px;border-radius:16px;border:1px solid var(--dib-bd,rgba(128,128,128,.25));background:var(--dib-card,transparent);box-shadow:var(--dib-sh,none)}
 .dib-table{width:100%;border-collapse:separate;border-spacing:0;text-align:center;font-size:15px;table-layout:auto}
 .dib-table th,.dib-table td{padding:12px 12px;border-bottom:1px solid var(--dib-bd,rgba(128,128,128,.2));white-space:nowrap;line-height:1.3;font-variant-numeric:tabular-nums}
-.dib-table th{background-color:var(--dib-head,rgba(128,128,128,.1));color:var(--dib-mute,inherit);font-weight:700;font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;line-height:1.15;padding:10px 12px 8px;border-bottom:2px solid var(--dib-bd,rgba(128,128,128,.3))}
+.dib-table th{background-color:var(--dib-head,rgba(128,128,128,.1));color:var(--dib-mute,inherit);font-weight:700;font-size:12px;letter-spacing:.4px;text-transform:uppercase;line-height:1.15;padding:10px 12px 8px;border-bottom:2px solid var(--dib-bd,rgba(128,128,128,.3))}
 .dib-table tr:last-child td{border-bottom:none}
 .dib-table td.sep{padding:0;height:2px;background-color:var(--dib-bd,rgba(128,128,128,0.4))}
 .dib-table td.sep-avb{padding:0;height:1px;background-color:var(--dib-bd,rgba(128,128,128,0.15))}"""
@@ -1993,7 +1993,7 @@ def painel_validacao():
         try:
             pend, resolv = contar_pendentes()
             st.markdown(f"Resultados: **{resolv} confrontos resolvidos** e {pend} pendentes. "
-                       "Os resultados são preenchidos sozinhos quando os galgos aparecem em análises seguintes; "
+                        "Os resultados são preenchidos sozinhos quando os galgos aparecem em análises seguintes; "
                         "a digitação manual é opcional.")
         except Exception: pass
         params = _params_calibracao()
@@ -2272,4 +2272,4 @@ def _mostrar_logo(largura=None):
     maxw = f"max-width:{int(largura)}px;" if largura else ""
     st.markdown(f"<div style='margin:-6px 0 -2px 0;line-height:0'><img src='data:image/{mc};base64,{c}' style='display:block;width:100%;{maxw}height:auto'></div>",
                 unsafe_allow_html=True)
-          
+  
