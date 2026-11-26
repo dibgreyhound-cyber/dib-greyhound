@@ -1263,14 +1263,16 @@ def _avaliar_confronto(V, D, prob, ctx):
         c_splrec = (V.get("rec") is None or D.get("rec") is None or V["rec"] > D["rec"])
     else:
         c_splrec = True
+    # Desafiante Trombador com Média Split no Top 3 da prova sai na frente e atrapalha: o AvB não vale
+    c_tsplit = not (D.get("perfil") == "Trombador" and D.get("name") in ctx.get("top3_ms", set()) and D.get("msplit") is not None)
     apoio = sum([c_cat, c_larg])
-    obrig = c_tadj and c_mtime and c_rec and c_perfil and c_splrec
+    obrig = c_tadj and c_mtime and c_rec and c_perfil and c_splrec and c_tsplit
     conf_ok = V.get("conf", 0) >= A["conf_min_v"] and D.get("conf", 0) >= A["conf_min_d"]
     conv_ok = V.get("conv_ok", True) or not A.get("exige_fator_medido", True)  # só o escolhido precisa de distância medida
     aprovado = bool(prob > A["prob_min"] and conf_ok and obrig and apoio >= A["apoio_min"] and conv_ok)
     score = sum([c_tadj, c_mtime, c_rec, c_perfil]) + apoio  # 0..6
     flags = {"c_tadj": c_tadj, "c_mtime": c_mtime, "c_cat": c_cat,
-             "c_rec": c_rec, "c_larg": c_larg, "c_perfil": c_perfil, "c_splrec": c_splrec,
+             "c_rec": c_rec, "c_larg": c_larg, "c_perfil": c_perfil, "c_splrec": c_splrec, "c_tsplit": c_tsplit,
              # resultado de cada regra do nível principal (para o diagnóstico "por que não há AvB")
              "r_prob": prob > A["prob_min"], "r_conf": conf_ok, "r_tempos": bool(c_tadj and c_mtime), "r_rec": c_rec,
              "r_perfil": c_perfil, "r_apoio": apoio >= A["apoio_min"], "r_conv": conv_ok}
@@ -1286,7 +1288,7 @@ def _aprovado_alt(V, D, prob, flags):
     elif A.get("perfil_relativo", True): perfil = not (V.get("perfil") == "Trombador" and D.get("perfil") != "Trombador")
     else: perfil = flags["c_perfil"]
     apoio = int(bool(flags["c_cat"])) + int(bool(flags["c_larg"]))
-    return bool(prob > A["prob_min"] and conf_ok and tempos and flags["c_rec"] and flags.get("c_splrec", True) and perfil and apoio >= A["apoio_min"] and flags["r_conv"])
+    return bool(prob > A["prob_min"] and conf_ok and tempos and flags["c_rec"] and flags.get("c_splrec", True) and flags.get("c_tsplit", True) and perfil and apoio >= A["apoio_min"] and flags["r_conv"])
 
 
 # (nome_V, nome_D) -> ("AVB", nº de critérios 0-6, calibrada?)
@@ -1713,7 +1715,8 @@ def montar_avbs(rank, ctx):
             flags["nivel"] = nivel
             motivos = [nome for nome, ok in (("probabilidade abaixo do mínimo", flags["r_prob"]), ("confiança baixa", flags["r_conf"]),
                                              ("vantagem < 0,20s em Time Ajust. e/ou Méd. Time", flags["r_tempos"]),
-                                             ("recuperação ruim", flags["r_rec"]), ("Média Split pior sem recuperação melhor que o adversário", flags["c_splrec"]), ("escolhido é Trombador", flags["r_perfil"]),
+                                             ("recuperação ruim", flags["r_rec"]), ("Média Split pior sem recuperação melhor que o adversário", flags["c_splrec"]),
+                                             ("adversário Trombador com Média Split no Top 3", flags["c_tsplit"]), ("escolhido é Trombador", flags["r_perfil"]),
                                              ("sem apoio de categoria/largada", flags["r_apoio"]),
                                              ("distância convertida sem fator medido 📏", flags["r_conv"])) if not ok]
             if tem_alvo: motivos.append("escolhido seria alvo 🎯/bloqueado 🚫 (só pode ser adversário)")
