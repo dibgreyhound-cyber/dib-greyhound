@@ -1134,7 +1134,7 @@ def gerar_texto_analise(c, p):
 
     txt.append("")
 
-    txt.append(dib.cenario_corrida(p["rank"], p["s1"], p["ctx"]))
+    txt.append(dib.cenario_corrida(p["rank"], p["s1"], p["ctx"], plano=True))
 
     return "\n".join(txt)
 
