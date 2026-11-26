@@ -175,7 +175,7 @@ def badge(t):
     try: t = int(t)
     except Exception: return ""
     return (f"<span style='display:inline-block;min-width:24px;height:24px;line-height:24px;text-align:center;"
-            f"border-radius:4px;font-weight:700;font-size:14px;vertical-align:middle;{BADGE_STYLE.get(t, '')}'>{t}</span>")
+            f"border-radius:4px;font-weight:700;font-size:16px;vertical-align:middle;{BADGE_STYLE.get(t, '')}'>{t}</span>")
 
 
 class _St:
@@ -860,7 +860,7 @@ def greyhound_svg(trap):
 
 def badge_p(t):
     return (badge(t).replace("min-width:24px;height:24px;line-height:24px", "min-width:16px;height:16px;line-height:16px")
-            .replace("font-size:14px", "font-size:11px"))
+            .replace("font-size:16px", "font-size:13px"))
 
 
 def grafico_predictor(ds):
@@ -883,7 +883,7 @@ def grafico_predictor(ds):
                     f"border-radius:8px;box-shadow:inset 0 0 0 1px rgba(128,128,128,.35);{estilo}'>"
                     f"<span style='position:absolute;right:4px;top:50%;transform:translateY(-50%);"
                     f"line-height:0;'>{greyhound_svg(t)}</span></div>")
-            pct = (f"<span style='color:var(--dib-tx,#14181F);font-size:12px;font-weight:800;min-width:36px;text-align:right'>"
+            pct = (f"<span style='color:var(--dib-tx,#14181F);font-size:14px;font-weight:800;min-width:36px;text-align:right'>"
                    f"{d['p_vit']:.0f}%</span>")
         linhas.append(f"<div style='display:flex;align-items:center;gap:6px;margin:4px 0'>{badge_p(t)}"
                       f"<div style='flex:1;height:15px;background:var(--dib-track,#E8ECF2);border-radius:8px;overflow:hidden'>"
@@ -891,7 +891,7 @@ def grafico_predictor(ds):
     return ("<div style='background:var(--dib-card,#fff);border:1px solid var(--dib-bd,#E3E8EF);box-shadow:var(--dib-sh,none);"
             "border-radius:16px;padding:14px 12px 7px;margin:18px 0 6px;position:relative'>"
             "<div style='position:absolute;top:-1px;left:12px;background:var(--dib-acc,#2F6BFF);color:#fff;font-weight:700;"
-            "font-size:11px;padding:3px 12px;border-radius:0 0 10px 10px'>Predictor · chance de vencer</div>"
+            "font-size:13px;padding:3px 12px;border-radius:0 0 10px 10px'>Predictor · chance de vencer</div>"
             "<div style='height:6px'></div>" + "".join(linhas) + "</div>")
 
 
@@ -1219,7 +1219,7 @@ def gerar_texto_analise(c, p):
 
 def badge_g(t):
     return (badge(t).replace("min-width:24px;height:24px;line-height:24px", "min-width:30px;height:30px;line-height:30px")
-            .replace("font-size:14px", "font-size:17px"))
+            .replace("font-size:16px", "font-size:17px"))
 
 
 def cabecalho_corrida(c, p):
@@ -1446,7 +1446,7 @@ section[data-testid="stSidebar"]{width:21rem !important;min-width:21rem !importa
 section[data-testid="stSidebar"] .stButton > button{padding:.35rem .4rem;min-height:0;}
 span[data-baseweb="tag"]{background-color:#2F6BFF !important;color:#fff !important;}
 div[data-baseweb="slider"]{filter:hue-rotate(228deg) saturate(1.15);}
-section[data-testid="stSidebar"] .stButton > button p{font-size:.85rem;line-height:1.25;}
+section[data-testid="stSidebar"] .stButton > button p{font-size:.95rem;line-height:1.25;}
 </style>"""
 
 
