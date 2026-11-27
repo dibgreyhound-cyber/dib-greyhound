@@ -1018,6 +1018,12 @@ def finalizar(ds, ctx):
 
     calcular_pontos(ok)
     calcular_chance(ok)
+    # posição (1 = melhor) de cada galgo em cada métrica dentro da corrida (sobrescrito nas tabelas/cards)
+    for k in ("split", "time", "msplit", "mtime", "tadj", "metrica", "rec"):
+        vs = sorted([(d[k], id(d)) for d in ok if d.get(k) is not None], key=lambda x: x[0], reverse=(k == "rec"))
+        for r, (_, i_) in enumerate(vs, 1):
+            for d in ok:
+                if id(d) == i_: d.setdefault("rk", {})[k] = (r, len(vs))
     # classificação: mais pontos; empate = menor Tadj (sem Tadj fica atrás); depois maior Categoria
     ok.sort(key=lambda x: (-x["overall"], x["tadj"] if x.get("tadj") is not None else 99.0, -x.get("cat", 0.0), x["trap"]))
     for i, d in enumerate(ok, 1):
