@@ -194,7 +194,7 @@ def cards_top3(rank, badge, n=None):
             f"<div class='dib-name'>{_medalha(i)}{badge(d['trap'])}<span>{dib.nome_marcado(d)}</span></div>"
             f"<div class='dib-brt'>{_e(brt) if brt else '&nbsp;'}</div>"
             f"<div class='dib-nums'><div class='dib-num'><div class='v acc'>{_fmt(pv, 0, '%')}</div><div class='l'>chance de vencer</div></div>"
-            f"<div class='dib-num'><div class='v'>{dib._fmt_ov(d['overall'])}</div><div class='l'>Overall</div></div>"
+            f"<div class='dib-num'><div class='v'>{dib._fmt_ov(d['overall'])}</div><div class='l'>Overall (pts)</div></div>"
             f"<div class='dib-num'><div class='v'>{_fmt(d.get('msplit'), 2)}</div><div class='l'>Média Split</div></div>"
             f"<div class='dib-num'><div class='v'>{_fmt(d.get('mtime'), 2)}</div><div class='l'>Média Time</div></div>"
             f"<div class='dib-num'><div class='v'>{_fmt(d.get('tadj'), 2)}</div><div class='l'>Tadj</div></div></div>"
@@ -232,11 +232,10 @@ def cards_avb(lista, badge):
     for it in lista:
         V, D, prob = it[0], it[1], it[2]
         meta = dib.AVB_META.get((V["name"], D["name"])) or ("AVB", 0, False, 1)
-        crit, calib, nivel = meta[1], bool(meta[2]), meta[3]
-        tag = chip("★ Principal", "acc") if nivel == 1 else (chip("🔥 Trombador × Limpo", "acc") if nivel == 3 else chip("🔹 Alternativo", ""))
+        crit = prob          # 3º item da tupla = nº de critérios cumpridos (de 9)
         _pf = lambda d: {"Limpo": "✅ Limpo", "Irregular": "⚠️ Irregular", "Trombador": "🔴 Trombador"}.get(d.get("perfil"), "-")
         linhas = [f"<tr><td>Perfil</td><td>{_pf(V)}</td><td>{_pf(D)}</td></tr>"]
-        for rot, a, b, menor, nd, suf in (("Overall", V.get("overall"), D.get("overall"), False, 1, ""),
+        for rot, a, b, menor, nd, suf in (("Overall", V.get("overall"), D.get("overall"), False, 0, ""),
                                           ("Média Split", V.get("msplit"), D.get("msplit"), True, 2, ""),
                                           ("Média Time", V.get("mtime"), D.get("mtime"), True, 2, ""),
                                           ("Tadj", V.get("tadj"), D.get("tadj"), True, 2, ""),
@@ -245,17 +244,17 @@ def cards_avb(lista, badge):
             hv, hd = _par(a, b, menor, nd, suf)
             linhas.append(f"<tr><td>{rot}</td><td>{hv}</td><td>{hd}</td></tr>")
         cards.append(
-            f"<div class='dib-card'><div class='dib-avb-h'>{tag}"
-            f"<span class='dib-chip mute'>{crit}/6 crit. · {'calibrada' if calib else 'bruta'}</span></div>"
+            f"<div class='dib-card'><div class='dib-avb-h'>"
+            f"<span class='dib-chip mute'>{crit} de 9 critérios cumpridos</span></div>"
             f"<div style='display:flex;justify-content:space-between;align-items:center;gap:10px'>"
             f"<div class='dib-vs'><div class='row'>{badge(V['trap'])}<span>{_e(V['name'])} {_pos(V)}{_marcas(V)}</span></div>"
             f"<div class='row d'>vence {badge(D['trap'])}<span>{_e(D['name'])} {_pos(D)}{_marcas(D)}</span></div></div>"
-            f"<div style='text-align:right'><div class='dib-prob'>{prob:.0f}%</div>"
-            f"<div class='dib-num'><div class='l'>probabilidade</div></div></div></div>"
-            f"<div class='dib-bar' style='margin-top:10px'><i style='width:{max(4.0, min(100.0, prob)):.0f}%;"
+            f"<div style='text-align:right'><div class='dib-prob'>{crit}/9</div>"
+            f"<div class='dib-num'><div class='l'>critérios</div></div></div></div>"
+            f"<div class='dib-bar' style='margin-top:10px'><i style='width:{max(4.0, min(100.0, crit / 9.0 * 100.0)):.0f}%;"
             f"background:linear-gradient(90deg,var(--dib-ok),#5BD68A)'></i></div>"
             f"<details class='dib-det'><summary>Comparar números</summary><table class='dib-mini'><tr><td></td><td>{badge(V['trap'])}<div class='dib-nm'>{_e(V['name'])}</div></td><td>{badge(D['trap'])}<div class='dib-nm'>{_e(D['name'])}</div></td></tr>{''.join(linhas)}</table></details></div>")
-    return secao("AvBs", f"{len(lista)} confronto(s) · maior probabilidade primeiro") + f"<div class='dib-grid'>{''.join(cards)}</div>"
+    return secao("AvBs", f"{len(lista)} confronto(s) · mais critérios primeiro") + f"<div class='dib-grid'>{''.join(cards)}</div>"
 
 
 # ------------------------------------------------------------------ Predictor
