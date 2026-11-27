@@ -1091,46 +1091,57 @@ def gerar_texto_analise(c, p):
     txt = []
     txt.append(titulo_corrida(c, p).replace("### ", ""))
     txt.append("")
+    txt.append("(Modelo por pontos: 8 critérios x 10..5 pts = máx. 80 · AvB = 9 critérios, aprovado com 7/9 ou mais)")
+    txt.append("")
 
     txt.append("**Planilha de Projeção**")
-    txt.append("| Trp | Galgo | Overall | P. Vit. | Cat | Perfil | Grades | Peso | Dias | Split | Time | Méd. Split | Méd. Time | Time Ajust. | Recup. Média | Conf. |")
-    txt.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    txt.append("| Trp | Galgo | Overall (pts) | Chance Vit. | Cat | Perfil | Grades | Peso | Dias | Melhor Split | Melhor Time | Méd. Split | Méd. Time | Tadj | Métrica | Recup. Média | Conf. |")
+    txt.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 
-    for d in p["ds"]:
+    fx = lambda v, f="{:.2f}": f.format(v) if v is not None else "-"
+    marca = lambda d: " ".join(x for x in (d["name"], "🚫" if d.get("bloqueado") else "", "🎯" if d.get("alvo") else "") if x)
+    for d in sorted(p["ds"], key=lambda x: x["trap"]):
         if d["nd"]:
-            txt.append(f"| {d['trap']} | {d['name']} | " + " | ".join(["-"] * 14) + " |")
+            if d["name"] == "vacant":
+                txt.append(f"| {d['trap']} | vacant | " + " | ".join(["-"] * 15) + " |")
+            else:
+                txt.append(f"| {d['trap']} | {d['name']} 🚫 | {d['overall']:.0f} | - | " + " | ".join(["-"] * 13) + " |")
             continue
-
-        nome = f"{d['name']} {'🚫' if d.get('bloqueado') else ''} {'🎯' if d.get('alvo') else ''}".strip()
-        grades = dib.grades_txt(d)
-
-        f_split = f"{d['split']:.2f}" if d.get("split") else "-"
-        f_time = f"{d['time']:.2f}" if d.get("time") else "-"
-        f_msplit = f"{d['msplit']:.2f}" if d.get("msplit") else "-"
-        f_mtime = f"{d['mtime']:.2f}" if d.get("mtime") else "-"
-        f_tadj = f"{d['tadj']:.2f}" if d.get("tadj") else "-"
+        f_pv = f"{d['p_vit']:.1f}%" if d.get("p_vit") is not None else "-"
         f_rec = f"{d['rec']:+.2f}%" if d.get("rec") is not None else "-"
         f_peso = f"{d['peso']:.1f}" if d.get("peso") else "-"
-        f_pv = f"{d['p_vit']:.1f}%" if d.get("p_vit") is not None else "-"
-
-        txt.append(f"| {d['trap']} | {nome} | {_ov(d['overall'])} | {f_pv} | {d['cat']:.1f} | {d['perfil']} | {grades} | {f_peso} | {d['dias']} | {f_split} | {f_time} | {f_msplit} | {f_mtime} | {f_tadj} | {f_rec} | {d['conf']:.0f}% |")
+        txt.append(f"| {d['trap']} | {marca(d)} | {_ov(d['overall'])} | {f_pv} | {d['cat']:.1f} | {d['perfil']} | {dib.grades_txt(d)} | {f_peso} | {d['dias']} | "
+                   f"{fx(d.get('split'))} | {fx(d.get('time'))} | {fx(d.get('msplit'))} | {fx(d.get('mtime'))} | {fx(d.get('tadj'))} | {fx(d.get('metrica'))} | {f_rec} | {d['conf']:.0f}% |")
 
     txt.append("")
-    txt.append(f"(Overall em corpos: vantagem sobre {_ref_txt()}. * = corrida de outra distância convertida com fator medido; † = convertida só por proporção, sem fator medido.)")
+    txt.append("**Pontos por critério** (10 ao melhor, -1 por galgo; sem dado = 5; empate = valor mais alto)")
+    heads = ["Trp", "Galgo"] + [c_[2] for c_ in dib.PONTOS_CRIT] + ["Total"]
+    txt.append("| " + " | ".join(heads) + " |")
+    txt.append("|" + "---|" * len(heads))
+    for d in sorted(p["rank"], key=lambda x: x["pos"]):
+        pts = d.get("pts") or {}
+        txt.append(f"| {d['trap']} | {d['name']} | " + " | ".join(str(pts.get(c_[0], "-")) for c_ in dib.PONTOS_CRIT) + f" | {d['overall']:.0f} |")
+    txt.append("")
+    txt.append("(Melhor Split/Time = só corridas válidas na distância exata. Média Time, Tadj e Métrica usam corridas convertidas com fator medido; † ignoradas. "
+               "* = convertida com fator medido. Sem recência: todas as corridas pesam igual. Desempate na classificação = menor Tadj. 🚫 = confiança < 40% ou sem dados.)")
     txt.append("")
 
-    classif = " > ".join(f"{d['pos']}º [T{d['trap']}]" for d in p["rank"])
+    classif = " > ".join(f"{d['pos']}º [T{d['trap']}] {d['overall']:.0f}pts" for d in p["rank"])
     txt.append(f"**Classificação:** {classif}")
     txt.append("")
 
-    txt.append("**AVBs Principais (≥ 60%)**")
+    txt.append("**AVBs (≥ 7/9 critérios)**")
     if not p["s1"]:
-        txt.append("Nenhum confronto atingiu os critérios do AvB.")
+        txt.append("Nenhum confronto atingiu 7/9 critérios.")
     else:
-        txt.append("| Vencedor (Trap/Nome) | Perdedor (Trap/Nome) | Probabilidade |")
-        txt.append("|---|---|---|")
-        for (V, D, prob, star) in p["s1"]:
-            txt.append(f"| {V['trap']} - {V['name']} | {D['trap']} - {D['name']} | {prob:.1f}% |")
+        rot = {k: v for k, v in dib.AVB_CRIT}
+        txt.append("| Vencedor (Trap/Nome) | Perdedor (Trap/Nome) | Critérios | Cumpridos | Não cumpridos |")
+        txt.append("|---|---|---|---|---|")
+        for (V, D, n, _star) in p["s1"]:
+            fl = (dib.AVB_META.get((V["name"], D["name"])) or (0, 0, 0, 0, {}))[4]
+            ok_ = ", ".join(rot[k] for k, _ in dib.AVB_CRIT if fl.get(k)) or "-"
+            no_ = ", ".join(rot[k] for k, _ in dib.AVB_CRIT if not fl.get(k)) or "-"
+            txt.append(f"| {V['trap']} - {V['name']} | {D['trap']} - {D['name']} | {n}/9 | {ok_} | {no_} |")
 
     txt.append("")
 
@@ -1260,7 +1271,7 @@ def analisar(c, classe_in, dist_in, pp_in):
             st.dataframe(pd.DataFrame([{k: v for k, v in d_.items() if k != "Pistas"} for d_ in diag]),
                          use_container_width=True, hide_index=True)
     with st.expander("⚔️ Planilha de AvB (completa)"):
-        dib.tabela_avb(p["s1"], "AvBs — ★ principal · 🔹 alternativo · 🔥 Trombador × Limpo")
+        dib.tabela_avb(p["s1"], "AvBs — 9 critérios (aprovado com 7/9 ou mais)")
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
 
@@ -1330,7 +1341,7 @@ def _comparar_previsto_real(c, linhas, classe_in, dist_in, pp_in):
             pv, pd_ = real.get(V["trap"]), real.get(D["trap"])
             ok = ("✅" if pv < pd_ else "❌") if (pv and pd_) else ("✅" if pv else ("❌" if pd_ else "—"))
             st.markdown(f"- {ok} {badge(V['trap'])} {V['name']} ({pv or '-'}º) vence "
-                        f"{badge(D['trap'])} {D['name']} ({pd_ or '-'}º) · {prob:.1f}%", unsafe_allow_html=True)
+                        f"{badge(D['trap'])} {D['name']} ({pd_ or '-'}º) · {prob}/9", unsafe_allow_html=True)
     else:
         st.markdown("- Nenhum AVB aprovado nesta corrida.")
 
