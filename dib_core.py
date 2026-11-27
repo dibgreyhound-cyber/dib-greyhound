@@ -1157,7 +1157,7 @@ def calcular_prob_vitoria(rank, ctx, n_sim=6000):
 #   1 Overall V >= D + 10 pontos | 2 Melhor Split V <= D | 3 Melhor Time V <= D | 4 Média Split V <= D |
 #   5 Média Time V >= 0,20 s mais baixa | 6 Tadj V >= 0,20 s mais baixo | 7 Métrica V menor | 8 Recuperação V >= D |
 #   9 Confiança dos DOIS >= 40% (eliminatório: se um dos dois tiver menos, o AvB é reprovado).
-#   ELIMINATÓRIOS: Confiança, Média Time e Tadj (V precisa ser >= 0,20 s mais rápido nos dois); o restante: 4 dos outros 6.
+#   ELIMINATÓRIOS: Confiança, Overall (+10 pts), Média Time e Tadj (>= 0,20 s mais rápido); o restante: 3 dos outros 5.
 #   Regra extra: se a Média Split do V é PIOR que a do D, a Recuperação do V precisa ser ESTRITAMENTE melhor.
 #   Dado ausente: no V = critério não cumprido; só no D = V cumpre. Recuperação ausente = 0%.
 #   Alvo 🎯 nunca é o escolhido (V).
@@ -1181,7 +1181,7 @@ def _lt(v, d):
 
 def _aprova_flags(f):
     n = sum(1 for k, _ in AVB_CRIT if f.get(k))
-    return bool(f.get("c_conf") and f.get("c_mtime") and f.get("c_tadj") and f.get("rec_obrig", True) and n >= CFG["AVB"]["min_criterios"]), n
+    return bool(f.get("c_conf") and f.get("c_ov") and f.get("c_mtime") and f.get("c_tadj") and f.get("rec_obrig", True) and n >= CFG["AVB"]["min_criterios"]), n
 
 
 def _avaliar_confronto(V, D, ctx=None):
