@@ -233,6 +233,9 @@ def cards_avb(lista, badge):
         V, D, prob = it[0], it[1], it[2]
         meta = dib.AVB_META.get((V["name"], D["name"])) or ("AVB", 0, False, 1)
         crit = prob          # 3º item da tupla = nº de critérios cumpridos (de 9)
+        fl = meta[4] if len(meta) > 4 else {}
+        falhou = [nome for k, nome in dib.AVB_CRIT if not fl.get(k)]
+        txt_falha = ("✅ Todos os critérios cumpridos" if not falhou else "Não cumpriu: " + ", ".join(falhou))
         _pf = lambda d: {"Limpo": "✅ Limpo", "Irregular": "⚠️ Irregular", "Trombador": "🔴 Trombador"}.get(d.get("perfil"), "-")
         linhas = [f"<tr><td>Perfil</td><td>{_pf(V)}</td><td>{_pf(D)}</td></tr>"]
         for rot, a, b, menor, nd, suf in (("Overall", V.get("overall"), D.get("overall"), False, 0, ""),
@@ -245,7 +248,7 @@ def cards_avb(lista, badge):
             linhas.append(f"<tr><td>{rot}</td><td>{hv}</td><td>{hd}</td></tr>")
         cards.append(
             f"<div class='dib-card'><div class='dib-avb-h'>"
-            f"<span class='dib-chip mute'>{crit} de 9 critérios cumpridos</span></div>"
+            f"<span class='dib-chip mute'>{_e(txt_falha)}</span></div>"
             f"<div style='display:flex;justify-content:space-between;align-items:center;gap:10px'>"
             f"<div class='dib-vs'><div class='row'>{badge(V['trap'])}<span>{_e(V['name'])} {_pos(V)}{_marcas(V)}</span></div>"
             f"<div class='row d'>vence {badge(D['trap'])}<span>{_e(D['name'])} {_pos(D)}{_marcas(D)}</span></div></div>"
