@@ -208,17 +208,17 @@ _SUP = {1: "¹", 2: "²", 3: "³", 4: "⁴", 5: "⁵", 6: "⁶"}
 
 
 def _cel(d, key, outro, menor_melhor=True, nd=2, suf="", mostrar_dif=False):
-    """Valor com a POSIÇÃO NA CORRIDA sobrescrita (¹ = melhor), como na Planilha de Projeção: 1º em pílula verde, último em vermelho."""
+    """Valor como no 'Comparar números' original (melhor do par em verde, pior em vermelho, sem fundo),
+    com a POSIÇÃO NA CORRIDA sobrescrita (¹ = melhor), como na Planilha de Projeção."""
     v, o = d.get(key), outro.get(key)
     if v is None: return "-"
     rk = (d.get("rk") or {}).get(key)
     txt = f"{v:.{nd}f}{suf}" + (_SUP.get(rk[0], "") if rk else "")
-    if rk and rk[0] == 1:
-        h = f"<span style='color:#16A34A;font-weight:800;background:rgba(22,163,74,.14);padding:3px 9px;border-radius:8px'>{txt}</span>"
-    elif rk and rk[0] == rk[1] and rk[1] > 1:
-        h = f"<span style='color:#E5484D'>{txt}</span>"
-    else:
-        h = txt
+    cls = ""
+    if o is not None and round(v, 4) != round(o, 4):
+        melhor = (v < o) if menor_melhor else (v > o)
+        cls = "w" if melhor else "l"
+    h = f"<span class='{cls}'>{txt}</span>"
     if mostrar_dif and o is not None:
         h += f" <small class='df'>({v - o:+.{nd}f}{suf})</small>"
     return h
@@ -255,7 +255,8 @@ def cards_avb(lista, badge):
                 hv = f"<span class='{'w' if a_ > b_ else 'l' if a_ < b_ else ''}'>{a_:.0f}</span> <small class='df'>({a_ - b_:+.0f})</small>"
                 hd = f"<span class='{'w' if b_ > a_ else 'l' if b_ < a_ else ''}'>{b_:.0f}</span>"
             else:
-                hv, hd = _cel(V, k, D, mostrar_dif=True, nd=nd, suf=suf), _cel(D, k, V, nd=nd, suf=suf)
+                mm = (k != "rec")
+                hv, hd = _cel(V, k, D, mm, nd, suf, True), _cel(D, k, V, mm, nd, suf)
             linhas.append(f"<tr><td>{rot}</td><td>{hv}</td><td>{hd}</td></tr>")
         cards.append(
             f"<div class='dib-card'><div class='dib-avb-h'>"
