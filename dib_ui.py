@@ -204,15 +204,24 @@ def cards_top3(rank, badge, n=None):
 
 
 # ------------------------------------------------------------------ AvB
-def _par(vv, dv, menor_melhor=True, nd=2, suf=""):
-    """Linha de comparação: destaca o melhor e mostra, discreta e entre parênteses, a diferença só no galgo escolhido (V). Retorna (html_V, html_D)."""
-    if vv is None or dv is None:
-        return _fmt(vv, nd, suf), _fmt(dv, nd, suf)
-    v_melhor = (vv < dv) if menor_melhor else (vv > dv)
-    d_melhor = (dv < vv) if menor_melhor else (dv > vv)
-    dif = lambda x, y: f"<small class='df'>({x - y:+.{nd}f}{suf})</small>"
-    return (f"<span class='{'w' if v_melhor else 'l' if d_melhor else ''}'>{vv:.{nd}f}{suf}</span> {dif(vv, dv)}",
-            f"<span class='{'w' if d_melhor else 'l' if v_melhor else ''}'>{dv:.{nd}f}{suf}</span>")
+_SUP = {1: "¹", 2: "²", 3: "³", 4: "⁴", 5: "⁵", 6: "⁶"}
+
+
+def _cel(d, key, outro, menor_melhor=True, nd=2, suf="", mostrar_dif=False):
+    """Valor com a POSIÇÃO NA CORRIDA sobrescrita (¹ = melhor), como na Planilha de Projeção: 1º em pílula verde, último em vermelho."""
+    v, o = d.get(key), outro.get(key)
+    if v is None: return "-"
+    rk = (d.get("rk") or {}).get(key)
+    txt = f"{v:.{nd}f}{suf}" + (_SUP.get(rk[0], "") if rk else "")
+    if rk and rk[0] == 1:
+        h = f"<span style='color:#16A34A;font-weight:800;background:rgba(22,163,74,.14);padding:3px 9px;border-radius:8px'>{txt}</span>"
+    elif rk and rk[0] == rk[1] and rk[1] > 1:
+        h = f"<span style='color:#E5484D'>{txt}</span>"
+    else:
+        h = txt
+    if mostrar_dif and o is not None:
+        h += f" <small class='df'>({v - o:+.{nd}f}{suf})</small>"
+    return h
 
 
 def _marcas(d):
@@ -236,15 +245,17 @@ def cards_avb(lista, badge):
         fl = meta[4] if len(meta) > 4 else {}
         falhou = [nome for k, nome in dib.AVB_CRIT if not fl.get(k)]
         txt_falha = ("✅ Todos os critérios cumpridos" if not falhou else "Não cumpriu: " + ", ".join(falhou))
-        _pf = lambda d: {"Limpo": "✅ Limpo", "Irregular": "⚠️ Irregular", "Trombador": "🔴 Trombador"}.get(d.get("perfil"), "-")
+        _pf = lambda d: _perfil_chip(d)
         linhas = [f"<tr><td>Perfil</td><td>{_pf(V)}</td><td>{_pf(D)}</td></tr>"]
-        for rot, a, b, menor, nd, suf in (("Overall", V.get("overall"), D.get("overall"), False, 0, ""),
-                                          ("Média Split", V.get("msplit"), D.get("msplit"), True, 2, ""),
-                                          ("Média Time", V.get("mtime"), D.get("mtime"), True, 2, ""),
-                                          ("Tadj", V.get("tadj"), D.get("tadj"), True, 2, ""),
-                                          ("Métrica", V.get("metrica"), D.get("metrica"), True, 2, ""),
-                                          ("Recup.", V.get("rec"), D.get("rec"), False, 0, "%")):
-            hv, hd = _par(a, b, menor, nd, suf)
+        for rot, k, nd, suf in (("Overall", "overall", 0, ""), ("Melhor Split", "split", 2, ""), ("Melhor Time", "time", 2, ""),
+                                ("Média Split", "msplit", 2, ""), ("Média Time", "mtime", 2, ""), ("Tadj", "tadj", 2, ""),
+                                ("Métrica", "metrica", 2, ""), ("Recup.", "rec", 0, "%")):
+            if k == "overall":
+                a_, b_ = V.get(k), D.get(k)
+                hv = f"<span class='{'w' if a_ > b_ else 'l' if a_ < b_ else ''}'>{a_:.0f}</span> <small class='df'>({a_ - b_:+.0f})</small>"
+                hd = f"<span class='{'w' if b_ > a_ else 'l' if b_ < a_ else ''}'>{b_:.0f}</span>"
+            else:
+                hv, hd = _cel(V, k, D, mostrar_dif=True, nd=nd, suf=suf), _cel(D, k, V, nd=nd, suf=suf)
             linhas.append(f"<tr><td>{rot}</td><td>{hv}</td><td>{hd}</td></tr>")
         cards.append(
             f"<div class='dib-card'><div class='dib-avb-h'>"
