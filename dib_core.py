@@ -1168,7 +1168,7 @@ def calcular_prob_vitoria(rank, ctx, n_sim=6000):
 #   1 Overall V >= D + 10 pontos | 1b Categoria V >= D | 2 Melhor Split V <= D | 3 Melhor Time V <= D | 4 Média Split V <= D |
 #   5 Média Time V >= 0,15 s mais baixa | 6 Tadj V >= 0,15 s mais baixo | 7 Métrica V menor | 8 Recuperação V >= D |
 #   10 Confiança dos DOIS >= 40% (eliminatório: se um dos dois tiver menos, o AvB é reprovado).
-#   ELIMINATÓRIOS: Confiança, Overall (+10 pts), Média Time e Tadj (>= 0,15 s mais rápido); o restante: 3 dos outros 5.
+#   ELIMINATÓRIOS: Confiança, Overall (+10 pts), Recuperação do V >= 0%, Média Time e Tadj (>= 0,15 s mais rápido); o restante: 3 dos outros 5.
 #   Regra extra: se a Média Split do V é PIOR que a do D, a Recuperação do V precisa ser ESTRITAMENTE melhor.
 #   Dado ausente: no V = critério não cumprido; só no D = V cumpre. Recuperação ausente = 0%.
 #   Alvo 🎯 nunca é o escolhido (V).
@@ -1198,7 +1198,7 @@ def avb_chance(V, D):
 
 def _aprova_flags(f):
     n = sum(1 for k, _ in AVB_CRIT if f.get(k))
-    return bool(f.get("c_conf") and f.get("c_ov") and f.get("c_mtime") and f.get("c_tadj") and f.get("rec_obrig", True) and n >= CFG["AVB"]["min_criterios"]), n
+    return bool(f.get("c_conf") and f.get("c_ov") and f.get("c_mtime") and f.get("c_tadj") and f.get("rec_obrig", True) and f.get("rec_min", True) and n >= CFG["AVB"]["min_criterios"]), n
 
 
 def _avaliar_confronto(V, D, ctx=None):
@@ -1217,6 +1217,7 @@ def _avaliar_confronto(V, D, ctx=None):
          "c_conf": V.get("conf", 0) >= CFG["CONF_MIN_VENCEDOR"] and D.get("conf", 0) >= CFG["CONF_MIN_VENCEDOR"]}
     split_pior = (V.get("msplit") is not None and D.get("msplit") is not None and _v4(V["msplit"]) > _v4(D["msplit"]))
     f["rec_obrig"] = (not split_pior) or (rv > rd)
+    f["rec_min"] = rv >= 0.0          # ELIMINATÓRIO: o vencedor não pode ter Recuperação negativa (sem dado = 0%)
     aprovado, n = _aprova_flags(f)
     return aprovado, n, f
 
@@ -1226,7 +1227,7 @@ AVB_META = {}
 
 _FLAGS = [k for k, _ in AVB_CRIT]
 _AVB_COLS = (["corrida_id", "registrado_em", "data", "pista", "hora", "race", "race_id", "classe", "dist",
-              "galgo_V", "trap_V", "galgo_D", "trap_D", "n_crit", "prob", "aprovado", "nivel", "exibido"] + _FLAGS + ["rec_obrig"] +
+              "galgo_V", "trap_V", "galgo_D", "trap_D", "n_crit", "prob", "aprovado", "nivel", "exibido"] + _FLAGS + ["rec_obrig", "rec_min"] +
              ["ov_V", "ov_D", "cat_V", "cat_D", "split_V", "split_D", "time_V", "time_D", "msplit_V", "msplit_D", "mtime_V", "mtime_D",
               "tadj_V", "tadj_D", "metrica_V", "metrica_D", "rec_V", "rec_D", "conf_V", "conf_D",
               "pos_V", "pos_D", "acertou", "versao"])
@@ -1294,7 +1295,7 @@ def registrar_previsoes(dogs, linhas, ctx):
                 "classe": ctx.get("classe", ""), "dist": ctx.get("dist", ""),
                 "galgo_V": V["name"], "trap_V": V["trap"], "galgo_D": D["name"], "trap_D": D["trap"],
                 "n_crit": n, "prob": round(avb_chance(V, D), 1), "aprovado": int(aprovado), "nivel": 1 if aprovado else 0, "exibido": int(aprovado),
-                "rec_obrig": int(bool(flags.get("rec_obrig", True))),
+                "rec_obrig": int(bool(flags.get("rec_obrig", True))), "rec_min": int(bool(flags.get("rec_min", True))),
                 "pos_V": "", "pos_D": "", "acertou": "", "versao": CFG["VERSAO"]}
         for k in _FLAGS: novo[k] = int(bool(flags.get(k)))
         for k in ("cat", "split", "time", "msplit", "mtime", "tadj", "metrica", "rec", "conf"):
@@ -1587,12 +1588,14 @@ def montar_avbs(rank, ctx):
             if not aprovado:
                 faltam = [k for k, _ in AVB_CRIT if not fl.get(k)]
                 if not fl.get("rec_obrig", True): faltam.append("rec_obrig")
+                if not fl.get("rec_min", True): faltam.append("rec_min")
                 for k in faltam:
-                    nome = rot.get(k, "Média Split pior ⇒ Recuperação precisa ser melhor")
+                    nome = rot.get(k) or {"rec_min": "Recuperação do vencedor negativa (eliminatório)"}.get(k, "Média Split pior ⇒ Recuperação precisa ser melhor")
                     diag["motivos"][nome] = diag["motivos"].get(nome, 0) + 1
                     f2 = dict(fl); f2[k] = True
                     if k == "c_rec": f2["rec_obrig"] = True
                     if k == "rec_obrig": f2["rec_obrig"] = True
+                    if k == "rec_min": f2["rec_min"] = True
                     if _aprova_flags(f2)[0] and not proibido:
                         diag["unico"][nome] = diag["unico"].get(nome, 0) + 1
                 if proibido and n >= CFG["AVB"]["min_criterios"]:
