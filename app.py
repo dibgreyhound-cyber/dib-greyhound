@@ -1135,13 +1135,13 @@ def gerar_texto_analise(c, p):
         txt.append("Nenhum confronto atingiu 7/9 critérios.")
     else:
         rot = {k: v for k, v in dib.AVB_CRIT}
-        txt.append("| Vencedor (Trap/Nome) | Perdedor (Trap/Nome) | Critérios | Cumpridos | Não cumpridos |")
-        txt.append("|---|---|---|---|---|")
+        txt.append("| Vencedor (Trap/Nome) | Perdedor (Trap/Nome) | Chance | Critérios | Cumpridos | Não cumpridos |")
+        txt.append("|---|---|---|---|---|---|")
         for (V, D, n, _star) in p["s1"]:
             fl = (dib.AVB_META.get((V["name"], D["name"])) or (0, 0, 0, 0, {}))[4]
             ok_ = ", ".join(rot[k] for k, _ in dib.AVB_CRIT if fl.get(k)) or "-"
             no_ = ", ".join(rot[k] for k, _ in dib.AVB_CRIT if not fl.get(k)) or "-"
-            txt.append(f"| {V['trap']} - {V['name']} | {D['trap']} - {D['name']} | {n}/9 | {ok_} | {no_} |")
+            txt.append(f"| {V['trap']} - {V['name']} | {D['trap']} - {D['name']} | {dib.avb_chance(V, D):.0f}% | {n}/9 | {ok_} | {no_} |")
 
     txt.append("")
 
@@ -1341,7 +1341,7 @@ def _comparar_previsto_real(c, linhas, classe_in, dist_in, pp_in):
             pv, pd_ = real.get(V["trap"]), real.get(D["trap"])
             ok = ("✅" if pv < pd_ else "❌") if (pv and pd_) else ("✅" if pv else ("❌" if pd_ else "—"))
             st.markdown(f"- {ok} {badge(V['trap'])} {V['name']} ({pv or '-'}º) vence "
-                        f"{badge(D['trap'])} {D['name']} ({pd_ or '-'}º) · {prob}/9", unsafe_allow_html=True)
+                        f"{badge(D['trap'])} {D['name']} ({pd_ or '-'}º) · {dib.avb_chance(V, D):.0f}%", unsafe_allow_html=True)
     else:
         st.markdown("- Nenhum AVB aprovado nesta corrida.")
 
