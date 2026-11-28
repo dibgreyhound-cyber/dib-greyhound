@@ -1091,7 +1091,7 @@ def gerar_texto_analise(c, p):
     txt = []
     txt.append(titulo_corrida(c, p).replace("### ", ""))
     txt.append("")
-    txt.append("(Modelo por pontos: 8 critérios x 10..5 pts = máx. 80 · AvB = 10 critérios (inclui Categoria V ≥ D), aprovado com 8/10 ou mais (máx. 2 reprovados); Overall (V ≥ D+10 pts), Recuperação do V ≥ 0%, Média Time, Tadj (≥0,15 s) e Confiança são eliminatórios)")
+    txt.append("(Modelo por pontos: 8 critérios x 10..5 pts = máx. 80 · AvB = 10 critérios (inclui Categoria V ≥ D), aprovado com 8/10 ou mais (máx. 2 reprovados); Overall (V ≥ D+10 pts), Recuperação do V ≥ 0% e ≥ a do desafiante, Média Time, Tadj (≥0,15 s) e Confiança são eliminatórios)")
     txt.append("")
 
     txt.append("**Planilha de Projeção**")
