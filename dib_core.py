@@ -155,7 +155,7 @@ CFG = {
             "first_bend_mult": 1.5, "cap_total": 0.60, "split_loss_cap": 0.35},
     "CALIB_FILE": "calibracao_corridas.csv",
 
-    "AVB": {"min_criterios": 7,       # V precisa cumprir 7 (ou mais) dos 10 critérios (Confiança >= 40% é eliminatória)
+    "AVB": {"min_criterios": 8,       # no máximo 2 critérios reprovados: V cumpre 8 (ou mais) dos 10 critérios (Confiança >= 40% é eliminatória)
             "overall_dif_min": 10.0,  # Overall: V precisa ter >= 10 pontos a mais que o desafiante
             "tempo_dif_min": 0.15,    # Média Time e Tadj: V precisa ser >= 0,15 s mais baixo que o desafiante
             # --- usados só no tempo projetado antigo (mantido apenas como referência técnica; NÃO entra no Overall nem no AvB) ---
@@ -1164,7 +1164,7 @@ def calcular_prob_vitoria(rank, ctx, n_sim=6000):
 
 # ---------------------------------------------------------------------
 # AVB POR 10 CRITÉRIOS (substitui todas as regras antigas)
-#   V (vencedor) x D (desafiante). V precisa cumprir >= AVB["min_criterios"] (7) de 10:
+#   V (vencedor) x D (desafiante). V precisa cumprir >= AVB["min_criterios"] (8) de 10 (máx. 2 reprovados):
 #   1 Overall V >= D + 10 pontos | 1b Categoria V >= D | 2 Melhor Split V <= D | 3 Melhor Time V <= D | 4 Média Split V <= D |
 #   5 Média Time V >= 0,15 s mais baixa | 6 Tadj V >= 0,15 s mais baixo | 7 Métrica V menor | 8 Recuperação V >= D |
 #   10 Confiança dos DOIS >= 40% (eliminatório: se um dos dois tiver menos, o AvB é reprovado).
@@ -1493,7 +1493,7 @@ def _wilson(k, n, z=1.96):
 
 
 def avaliar_previsoes(path=None, so_exibidos=False, versao="atual", nivel=None):
-    """Acerto real por nº de critérios cumpridos (com intervalo de 95%). Só os pares aprovados (7/10 ou mais) são exibidos."""
+    """Acerto real por nº de critérios cumpridos (com intervalo de 95%). Só os pares aprovados (8/10 ou mais) são exibidos."""
     df = _df_resolvidos(path, versao)
     if df is None or df.empty: return None, {}
     if so_exibidos:
@@ -1840,7 +1840,7 @@ def painel_validacao():
         else:
             st.markdown(f"**{met['n']} confrontos resolvidos em {met['corridas']} corridas** · acerto geral **{100*met['acerto']:.1f}%**")
             st.dataframe(tab, hide_index=True)
-            st.caption("Todos os pares são registrados (inclusive os de 6/10 ou menos): compare 10/10, 9/10, 8/10, 7/10 e os reprovados. A odd_segura usa o limite inferior do intervalo de 95%.")
+            st.caption("Todos os pares são registrados (inclusive os de 7/10 ou menos): compare 10/10, 9/10, 8/10 e os reprovados. A odd_segura usa o limite inferior do intervalo de 95%.")
         try:
             pend, resolv = contar_pendentes()
             st.markdown(f"Resultados: **{resolv} confrontos resolvidos** e {pend} pendentes (preenchidos sozinhos quando os galgos aparecem em análises seguintes).")
