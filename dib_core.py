@@ -155,7 +155,7 @@ CFG = {
             "first_bend_mult": 1.5, "cap_total": 0.60, "split_loss_cap": 0.35},
     "CALIB_FILE": "calibracao_corridas.csv",
 
-    "AVB": {"min_criterios": 7,       # V precisa cumprir 7 (ou mais) dos 9 critérios (Confiança >= 40% é eliminatória)
+    "AVB": {"min_criterios": 7,       # V precisa cumprir 7 (ou mais) dos 10 critérios (Confiança >= 40% é eliminatória)
             "overall_dif_min": 10.0,  # Overall: V precisa ter >= 10 pontos a mais que o desafiante
             "tempo_dif_min": 0.15,    # Média Time e Tadj: V precisa ser >= 0,15 s mais baixo que o desafiante
             # --- usados só no tempo projetado antigo (mantido apenas como referência técnica; NÃO entra no Overall nem no AvB) ---
@@ -1028,11 +1028,14 @@ def finalizar(ds, ctx):
     calcular_pontos(ok)
     calcular_chance(ok)
     # posição (1 = melhor) de cada galgo em cada métrica dentro da corrida (sobrescrito nas tabelas/cards)
-    for k in ("split", "time", "msplit", "mtime", "tadj", "metrica", "rec"):
-        vs = sorted([(d[k], id(d)) for d in ok if d.get(k) is not None], key=lambda x: x[0], reverse=(k == "rec"))
-        for r, (_, i_) in enumerate(vs, 1):
-            for d in ok:
-                if id(d) == i_: d.setdefault("rk", {})[k] = (r, len(vs))
+    for k in ("cat", "split", "time", "msplit", "mtime", "tadj", "metrica", "rec"):
+        vals = {id(d): _v4(d[k]) for d in ok if d.get(k) is not None}
+        maior = k in ("rec", "cat")
+        for d in ok:
+            if id(d) in vals:
+                v = vals[id(d)]
+                r = 1 + sum(1 for x in vals.values() if (x > v if maior else x < v))   # empate = mesma posição
+                d.setdefault("rk", {})[k] = (r, len(vals))
     # classificação: mais pontos; empate = menor Tadj (sem Tadj fica atrás); depois maior Categoria
     ok.sort(key=lambda x: (-x["overall"], x["tadj"] if x.get("tadj") is not None else 99.0, -x.get("cat", 0.0), x["trap"]))
     for i, d in enumerate(ok, 1):
@@ -1160,17 +1163,17 @@ def calcular_prob_vitoria(rank, ctx, n_sim=6000):
 
 
 # ---------------------------------------------------------------------
-# AVB POR 9 CRITÉRIOS (substitui todas as regras antigas)
-#   V (vencedor) x D (desafiante). V precisa cumprir >= AVB["min_criterios"] (7) de 9:
-#   1 Overall V >= D + 10 pontos | 2 Melhor Split V <= D | 3 Melhor Time V <= D | 4 Média Split V <= D |
+# AVB POR 10 CRITÉRIOS (substitui todas as regras antigas)
+#   V (vencedor) x D (desafiante). V precisa cumprir >= AVB["min_criterios"] (7) de 10:
+#   1 Overall V >= D + 10 pontos | 1b Categoria V >= D | 2 Melhor Split V <= D | 3 Melhor Time V <= D | 4 Média Split V <= D |
 #   5 Média Time V >= 0,15 s mais baixa | 6 Tadj V >= 0,15 s mais baixo | 7 Métrica V menor | 8 Recuperação V >= D |
-#   9 Confiança dos DOIS >= 40% (eliminatório: se um dos dois tiver menos, o AvB é reprovado).
+#   10 Confiança dos DOIS >= 40% (eliminatório: se um dos dois tiver menos, o AvB é reprovado).
 #   ELIMINATÓRIOS: Confiança, Overall (+10 pts), Média Time e Tadj (>= 0,15 s mais rápido); o restante: 3 dos outros 5.
 #   Regra extra: se a Média Split do V é PIOR que a do D, a Recuperação do V precisa ser ESTRITAMENTE melhor.
 #   Dado ausente: no V = critério não cumprido; só no D = V cumpre. Recuperação ausente = 0%.
 #   Alvo 🎯 nunca é o escolhido (V).
 # ---------------------------------------------------------------------
-AVB_CRIT = [("c_ov", "Overall"), ("c_split", "Melhor Split"), ("c_time", "Melhor Time"), ("c_msplit", "Média Split"),
+AVB_CRIT = [("c_ov", "Overall"), ("c_cat", "Categoria"), ("c_split", "Melhor Split"), ("c_time", "Melhor Time"), ("c_msplit", "Média Split"),
             ("c_mtime", "Média Time"), ("c_tadj", "Tadj"), ("c_metrica", "Métrica"), ("c_rec", "Recuperação"), ("c_conf", "Confiança")]
 
 
@@ -1203,6 +1206,7 @@ def _avaliar_confronto(V, D, ctx=None):
     m = A["tempo_dif_min"]
     rv, rd = _v4(V.get("rec") or 0.0), _v4(D.get("rec") or 0.0)
     f = {"c_ov": (V.get("overall") or 0.0) >= (D.get("overall") or 0.0) + A["overall_dif_min"] - 1e-9,
+         "c_cat": (V.get("cat") is not None and (D.get("cat") is None or _v4(V["cat"]) >= _v4(D["cat"]))),
          "c_split": _le(V.get("split"), D.get("split")),
          "c_time": _le(V.get("time"), D.get("time")),
          "c_msplit": _le(V.get("msplit"), D.get("msplit")),
@@ -1223,7 +1227,7 @@ AVB_META = {}
 _FLAGS = [k for k, _ in AVB_CRIT]
 _AVB_COLS = (["corrida_id", "registrado_em", "data", "pista", "hora", "race", "race_id", "classe", "dist",
               "galgo_V", "trap_V", "galgo_D", "trap_D", "n_crit", "prob", "aprovado", "nivel", "exibido"] + _FLAGS + ["rec_obrig"] +
-             ["ov_V", "ov_D", "split_V", "split_D", "time_V", "time_D", "msplit_V", "msplit_D", "mtime_V", "mtime_D",
+             ["ov_V", "ov_D", "cat_V", "cat_D", "split_V", "split_D", "time_V", "time_D", "msplit_V", "msplit_D", "mtime_V", "mtime_D",
               "tadj_V", "tadj_D", "metrica_V", "metrica_D", "rec_V", "rec_D", "conf_V", "conf_D",
               "pos_V", "pos_D", "acertou", "versao"])
 
@@ -1293,7 +1297,7 @@ def registrar_previsoes(dogs, linhas, ctx):
                 "rec_obrig": int(bool(flags.get("rec_obrig", True))),
                 "pos_V": "", "pos_D": "", "acertou": "", "versao": CFG["VERSAO"]}
         for k in _FLAGS: novo[k] = int(bool(flags.get(k)))
-        for k in ("split", "time", "msplit", "mtime", "tadj", "metrica", "rec", "conf"):
+        for k in ("cat", "split", "time", "msplit", "mtime", "tadj", "metrica", "rec", "conf"):
             novo[f"{k}_V"], novo[f"{k}_D"] = fmt(V.get(k)), fmt(D.get(k))
         novo["ov_V"], novo["ov_D"] = fmt(V.get("overall")), fmt(D.get("overall"))
         if antigo: antigo.update(novo)
@@ -1488,7 +1492,7 @@ def _wilson(k, n, z=1.96):
 
 
 def avaliar_previsoes(path=None, so_exibidos=False, versao="atual", nivel=None):
-    """Acerto real por nº de critérios cumpridos (com intervalo de 95%). Só os pares aprovados (7/9 ou mais) são exibidos."""
+    """Acerto real por nº de critérios cumpridos (com intervalo de 95%). Só os pares aprovados (7/10 ou mais) são exibidos."""
     df = _df_resolvidos(path, versao)
     if df is None or df.empty: return None, {}
     if so_exibidos:
@@ -1498,7 +1502,7 @@ def avaliar_previsoes(path=None, so_exibidos=False, versao="atual", nivel=None):
     linhas = []
     for n_c, g in df.groupby("n_crit"):
         n = len(g); k = int(g["acertou"].sum()); lo, hi = _wilson(k, n)
-        linhas.append({"critérios": f"{int(n_c)}/9", "n": n, "acertos": k, "acerto_%": round(100 * k / n, 1),
+        linhas.append({"critérios": f"{int(n_c)}/10", "n": n, "acertos": k, "acerto_%": round(100 * k / n, 1),
                        "ic95_inf_%": round(100 * lo, 1), "ic95_sup_%": round(100 * hi, 1),
                        "odd_justa": round(n / k, 2) if k else None, "odd_segura": round(1 / lo, 2) if lo > 0 else None})
     tab = pd.DataFrame(linhas).sort_values("critérios", ascending=False)
@@ -1557,7 +1561,7 @@ AVB_DIAG = {}  # diagnóstico da última corrida montada (usado na caixa "AvBs d
 
 
 def montar_avbs(rank, ctx):
-    """AvBs pelos 9 critérios. Cada par é avaliado nas duas orientações (A vence B / B vence A); fica a aprovada com mais critérios.
+    """AvBs pelos 10 critérios. Cada par é avaliado nas duas orientações (A vence B / B vence A); fica a aprovada com mais critérios.
     Retorna lista de (V, D, n_criterios, True), ordenada pela chance do V (avb_chance) e, depois, pelo nº de critérios."""
     AVB_DIAG.clear()
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd")]
@@ -1833,7 +1837,7 @@ def painel_validacao():
         else:
             st.markdown(f"**{met['n']} confrontos resolvidos em {met['corridas']} corridas** · acerto geral **{100*met['acerto']:.1f}%**")
             st.dataframe(tab, hide_index=True)
-            st.caption("Todos os pares são registrados (inclusive os de 6/9 ou menos): compare 9/9, 8/9, 7/9 e os reprovados. A odd_segura usa o limite inferior do intervalo de 95%.")
+            st.caption("Todos os pares são registrados (inclusive os de 6/10 ou menos): compare 10/10, 9/10, 8/10, 7/10 e os reprovados. A odd_segura usa o limite inferior do intervalo de 95%.")
         try:
             pend, resolv = contar_pendentes()
             st.markdown(f"Resultados: **{resolv} confrontos resolvidos** e {pend} pendentes (preenchidos sozinhos quando os galgos aparecem em análises seguintes).")
