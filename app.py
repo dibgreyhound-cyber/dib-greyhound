@@ -1091,7 +1091,7 @@ def gerar_texto_analise(c, p):
     txt = []
     txt.append(titulo_corrida(c, p).replace("### ", ""))
     txt.append("")
-    txt.append("(Modelo por pontos: 8 critérios x 10..5 pts = máx. 80 · AvB = 10 critérios (inclui Categoria V ≥ D), aprovado com 7/10 ou mais; Overall (V ≥ D+10 pts), Recuperação do V ≥ 0%, Média Time, Tadj (≥0,15 s) e Confiança são eliminatórios)")
+    txt.append("(Modelo por pontos: 8 critérios x 10..5 pts = máx. 80 · AvB = 10 critérios (inclui Categoria V ≥ D), aprovado com 8/10 ou mais (máx. 2 reprovados); Overall (V ≥ D+10 pts), Recuperação do V ≥ 0%, Média Time, Tadj (≥0,15 s) e Confiança são eliminatórios)")
     txt.append("")
 
     txt.append("**Planilha de Projeção**")
@@ -1132,9 +1132,9 @@ def gerar_texto_analise(c, p):
     txt.append(f"**Classificação:** {classif}")
     txt.append("")
 
-    txt.append("**AVBs (≥ 7/10 critérios)**")
+    txt.append("**AVBs (≥ 8/10 critérios)**")
     if not p["s1"]:
-        txt.append("Nenhum confronto atingiu 7/10 critérios.")
+        txt.append("Nenhum confronto atingiu 8/10 critérios.")
     else:
         rot = {k: v for k, v in dib.AVB_CRIT}
         txt.append("| Vencedor (Trap/Nome) | Perdedor (Trap/Nome) | Chance | Critérios | Cumpridos | Não cumpridos |")
@@ -1273,7 +1273,7 @@ def analisar(c, classe_in, dist_in, pp_in):
             st.dataframe(pd.DataFrame([{k: v for k, v in d_.items() if k != "Pistas"} for d_ in diag]),
                          use_container_width=True, hide_index=True)
     with st.expander("⚔️ Planilha de AvB (completa)"):
-        dib.tabela_avb(p["s1"], "AvBs — 10 critérios (aprovado com 7/10 ou mais)")
+        dib.tabela_avb(p["s1"], "AvBs — 10 critérios (aprovado com 8/10 ou mais (máx. 2 reprovados))")
     if hasattr(dib, "gerar_observacoes"):
         dib.gerar_observacoes(p["rank"], p["s1"], p["ctx"])
 
