@@ -247,7 +247,7 @@ def cards_avb(lista, badge):
         txt_falha = ("✅ Todos os critérios cumpridos" if not falhou else "Não cumpriu: " + ", ".join(falhou))
         _pf = lambda d: _perfil_chip(d)
         linhas = [f"<tr><td>Perfil</td><td>{_pf(V)}</td><td>{_pf(D)}</td></tr>"]
-        for rot, k, nd, suf in (("Overall", "overall", 0, ""), ("Melhor Split", "split", 2, ""), ("Melhor Time", "time", 2, ""),
+        for rot, k, nd, suf in (("Overall", "overall", 0, ""), ("Categoria", "cat", 1, ""), ("Melhor Split", "split", 2, ""), ("Melhor Time", "time", 2, ""),
                                 ("Média Split", "msplit", 2, ""), ("Média Time", "mtime", 2, ""), ("Tadj", "tadj", 2, ""),
                                 ("Métrica", "metrica", 2, ""), ("Recup.", "rec", 0, "%")):
             if k == "overall":
@@ -255,7 +255,7 @@ def cards_avb(lista, badge):
                 hv = f"<span class='{'w' if a_ > b_ else 'l' if a_ < b_ else ''}'>{a_:.0f}</span> <small class='df'>({a_ - b_:+.0f})</small>"
                 hd = f"<span class='{'w' if b_ > a_ else 'l' if b_ < a_ else ''}'>{b_:.0f}</span>"
             else:
-                mm = (k != "rec")
+                mm = (k not in ("rec", "cat"))
                 hv, hd = _cel(V, k, D, mm, nd, suf, True), _cel(D, k, V, mm, nd, suf)
             linhas.append(f"<tr><td>{rot}</td><td>{hv}</td><td>{hd}</td></tr>")
         cards.append(
