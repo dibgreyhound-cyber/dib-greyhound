@@ -157,7 +157,7 @@ CFG = {
 
     "AVB": {"min_criterios": 7,       # V precisa cumprir 7 (ou mais) dos 9 critérios (Confiança >= 40% é eliminatória)
             "overall_dif_min": 10.0,  # Overall: V precisa ter >= 10 pontos a mais que o desafiante
-            "tempo_dif_min": 0.20,    # Média Time e Tadj: V precisa ser >= 0,20 s mais baixo que o desafiante
+            "tempo_dif_min": 0.15,    # Média Time e Tadj: V precisa ser >= 0,15 s mais baixo que o desafiante
             # --- usados só no tempo projetado antigo (mantido apenas como referência técnica; NÃO entra no Overall nem no AvB) ---
             "w_tadj": 0.45, "w_mtime": 0.35, "w_brt": 0.20, "risk_k": 0.5,
             "brt_max_dias": 90, "brt_grade_gap": 2,
@@ -1163,9 +1163,9 @@ def calcular_prob_vitoria(rank, ctx, n_sim=6000):
 # AVB POR 9 CRITÉRIOS (substitui todas as regras antigas)
 #   V (vencedor) x D (desafiante). V precisa cumprir >= AVB["min_criterios"] (7) de 9:
 #   1 Overall V >= D + 10 pontos | 2 Melhor Split V <= D | 3 Melhor Time V <= D | 4 Média Split V <= D |
-#   5 Média Time V >= 0,20 s mais baixa | 6 Tadj V >= 0,20 s mais baixo | 7 Métrica V menor | 8 Recuperação V >= D |
+#   5 Média Time V >= 0,15 s mais baixa | 6 Tadj V >= 0,15 s mais baixo | 7 Métrica V menor | 8 Recuperação V >= D |
 #   9 Confiança dos DOIS >= 40% (eliminatório: se um dos dois tiver menos, o AvB é reprovado).
-#   ELIMINATÓRIOS: Confiança, Overall (+10 pts), Média Time e Tadj (>= 0,20 s mais rápido); o restante: 3 dos outros 5.
+#   ELIMINATÓRIOS: Confiança, Overall (+10 pts), Média Time e Tadj (>= 0,15 s mais rápido); o restante: 3 dos outros 5.
 #   Regra extra: se a Média Split do V é PIOR que a do D, a Recuperação do V precisa ser ESTRITAMENTE melhor.
 #   Dado ausente: no V = critério não cumprido; só no D = V cumpre. Recuperação ausente = 0%.
 #   Alvo 🎯 nunca é o escolhido (V).
