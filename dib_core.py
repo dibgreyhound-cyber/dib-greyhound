@@ -1179,6 +1179,12 @@ def _lt(v, d):
     return round(float(v), 4) < round(float(d), 4)
 
 
+def avb_chance(V, D):
+    """Chance (%) do V vencer o D = mesma conta do Predictor aplicada ao par: 1/(1+exp(-(Overall V - Overall D)/tau))."""
+    dif = (V.get("overall") or 0.0) - (D.get("overall") or 0.0)
+    return 100.0 / (1.0 + math.exp(-dif / CFG["PONTOS"]["tau"]))
+
+
 def _aprova_flags(f):
     n = sum(1 for k, _ in AVB_CRIT if f.get(k))
     return bool(f.get("c_conf") and f.get("c_ov") and f.get("c_mtime") and f.get("c_tadj") and f.get("rec_obrig", True) and n >= CFG["AVB"]["min_criterios"]), n
@@ -1208,7 +1214,7 @@ AVB_META = {}
 
 _FLAGS = [k for k, _ in AVB_CRIT]
 _AVB_COLS = (["corrida_id", "registrado_em", "data", "pista", "hora", "race", "race_id", "classe", "dist",
-              "galgo_V", "trap_V", "galgo_D", "trap_D", "n_crit", "aprovado", "nivel", "exibido"] + _FLAGS + ["rec_obrig"] +
+              "galgo_V", "trap_V", "galgo_D", "trap_D", "n_crit", "prob", "aprovado", "nivel", "exibido"] + _FLAGS + ["rec_obrig"] +
              ["ov_V", "ov_D", "split_V", "split_D", "time_V", "time_D", "msplit_V", "msplit_D", "mtime_V", "mtime_D",
               "tadj_V", "tadj_D", "metrica_V", "metrica_D", "rec_V", "rec_D", "conf_V", "conf_D",
               "pos_V", "pos_D", "acertou", "versao"])
@@ -1275,7 +1281,7 @@ def registrar_previsoes(dogs, linhas, ctx):
                 "pista": ctx.get("pista", ""), "hora": ctx.get("hora", ""), "race": ctx.get("race", ""), "race_id": ctx.get("race_id", ""),
                 "classe": ctx.get("classe", ""), "dist": ctx.get("dist", ""),
                 "galgo_V": V["name"], "trap_V": V["trap"], "galgo_D": D["name"], "trap_D": D["trap"],
-                "n_crit": n, "aprovado": int(aprovado), "nivel": 1 if aprovado else 0, "exibido": int(aprovado),
+                "n_crit": n, "prob": round(avb_chance(V, D), 1), "aprovado": int(aprovado), "nivel": 1 if aprovado else 0, "exibido": int(aprovado),
                 "rec_obrig": int(bool(flags.get("rec_obrig", True))),
                 "pos_V": "", "pos_D": "", "acertou": "", "versao": CFG["VERSAO"]}
         for k in _FLAGS: novo[k] = int(bool(flags.get(k)))
@@ -1544,7 +1550,7 @@ AVB_DIAG = {}  # diagnóstico da última corrida montada (usado na caixa "AvBs d
 
 def montar_avbs(rank, ctx):
     """AvBs pelos 9 critérios. Cada par é avaliado nas duas orientações (A vence B / B vence A); fica a aprovada com mais critérios.
-    Retorna lista de (V, D, n_criterios, True), ordenada por nº de critérios e, depois, pela maior diferença de pontos do Overall."""
+    Retorna lista de (V, D, n_criterios, True), ordenada pela chance do V (avb_chance) e, depois, pelo nº de critérios."""
     AVB_DIAG.clear()
     elig = [d for d in rank if d.get("name") != "vacant" and not d.get("nd")]
     if len(elig) < 2: return []
@@ -1584,7 +1590,7 @@ def montar_avbs(rank, ctx):
                 s1.append((V, D, n, True))
             linhas_log.append((V, D, aprovado, n, fl))
 
-    s1.sort(key=lambda x: (-x[2], -((x[0].get("overall") or 0) - (x[1].get("overall") or 0)), x[0].get("pos") or 99))
+    s1.sort(key=lambda x: (-avb_chance(x[0], x[1]), -x[2], x[0].get("pos") or 99))
     try: registrar_previsoes(rank, linhas_log, ctx)
     except Exception: pass
     AVB_DIAG.update(diag)
@@ -1768,8 +1774,8 @@ def tabela_avb(lista, titulo):
 
         prob_cell = (
             f"<td rowspan='2' style='vertical-align:middle;font-weight:bold;font-size:18px;'>"
-            f"<span style='color:#12873a'>{n_crit}/9</span><br>"
-            f"<small style='color:#aaa;font-weight:normal'>critérios</small></td>"
+            f"<span style='color:#12873a'>{avb_chance(V, D):.0f}%</span><br>"
+            f"<small style='color:#aaa;font-weight:normal'>chance</small></td>"
         )
 
         rows.append([
@@ -1785,7 +1791,7 @@ def tabela_avb(lista, titulo):
             peso_txt(D), f"{D['dias']}", sp_d, t_d, ms_d, mt_d, ta_d, me_d, rec_d, f"{D['conf']:.0f}%"
         ])
 
-    heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Melhor<br>Split", "Melhor<br>Time", "Média<br>Split", "Média<br>Time", "Tadj", "Métrica", "Recup.", "Conf.", "Critérios"]
+    heads = ["AvB", "Overall", "Cat", "Perfil", "Grades", "Peso", "Dias", "Melhor<br>Split", "Melhor<br>Time", "Média<br>Split", "Média<br>Time", "Tadj", "Métrica", "Recup.", "Conf.", "Chance"]
     st.markdown(tbl(heads, rows, sticky=1, w1=190), unsafe_allow_html=True)
 
 
