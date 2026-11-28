@@ -241,7 +241,7 @@ def cards_avb(lista, badge):
     for it in lista:
         V, D, prob = it[0], it[1], it[2]
         meta = dib.AVB_META.get((V["name"], D["name"])) or ("AVB", 0, False, 1)
-        crit = prob          # 3º item da tupla = nº de critérios cumpridos (de 9)
+        prob = dib.avb_chance(V, D)   # chance do V vencer o D (pontos do Overall)
         fl = meta[4] if len(meta) > 4 else {}
         falhou = [nome for k, nome in dib.AVB_CRIT if not fl.get(k)]
         txt_falha = ("✅ Todos os critérios cumpridos" if not falhou else "Não cumpriu: " + ", ".join(falhou))
@@ -264,12 +264,12 @@ def cards_avb(lista, badge):
             f"<div style='display:flex;justify-content:space-between;align-items:center;gap:10px'>"
             f"<div class='dib-vs'><div class='row'>{badge(V['trap'])}<span>{_e(V['name'])} {_pos(V)}{_marcas(V)}</span></div>"
             f"<div class='row d'>vence {badge(D['trap'])}<span>{_e(D['name'])} {_pos(D)}{_marcas(D)}</span></div></div>"
-            f"<div style='text-align:right'><div class='dib-prob'>{crit}/9</div>"
-            f"<div class='dib-num'><div class='l'>critérios</div></div></div></div>"
-            f"<div class='dib-bar' style='margin-top:10px'><i style='width:{max(4.0, min(100.0, crit / 9.0 * 100.0)):.0f}%;"
+            f"<div style='text-align:right'><div class='dib-prob'>{prob:.0f}%</div>"
+            f"<div class='dib-num'><div class='l'>probabilidade</div></div></div></div>"
+            f"<div class='dib-bar' style='margin-top:10px'><i style='width:{max(4.0, min(100.0, prob)):.0f}%;"
             f"background:linear-gradient(90deg,var(--dib-ok),#5BD68A)'></i></div>"
             f"<details class='dib-det'><summary>Comparar números</summary><table class='dib-mini'><tr><td></td><td>{badge(V['trap'])}<div class='dib-nm'>{_e(V['name'])}</div></td><td>{badge(D['trap'])}<div class='dib-nm'>{_e(D['name'])}</div></td></tr>{''.join(linhas)}</table></details></div>")
-    return secao("AvBs", f"{len(lista)} confronto(s) · mais critérios primeiro") + f"<div class='dib-grid'>{''.join(cards)}</div>"
+    return secao("AvBs", f"{len(lista)} confronto(s) · maior probabilidade primeiro") + f"<div class='dib-grid'>{''.join(cards)}</div>"
 
 
 # ------------------------------------------------------------------ Predictor
