@@ -138,6 +138,7 @@ CFG = {
     "PONTOS": {"max": 10, "sem_dado": 5,
                "tau": 12.0},     # suavidade do softmax pontos -> chance de vitória (menor = favorito mais forte). CALIBRAR com resultados
     "CORPO_S": 0.08,
+    "DIST_CURTA_POS": 320,    # até esta distância (m) não há split: Melhor/Média Split = posição na 1ª curva
 
     # ---- Encolhimento do tempo projetado para o meio do campo (galgo de historico incerto) ----
     "SHRINK": {"ativo": True, "tau_min": 0.10},   # tau_min: dispersao minima (s) de habilidade real entre os galgos do campo
@@ -836,6 +837,13 @@ def analisar_galgo(dog, ctx):
 
     # --- Split: SÓ corridas na distância exata; sem dado = neutro ---
     exatos = [r["split"] for r in R if abs(r["dist"] - D) < 1 and r.get("split") is not None and r["split"] > 0]
+    d["split_pos"] = False
+    if 0 < D <= CFG["DIST_CURTA_POS"]:
+        # Corrida CURTA (sem split): Melhor Split = melhor posição na 1ª curva e Média Split = média das posições na 1ª curva
+        # (corridas válidas na mesma distância). Menor = melhor, igual ao split em segundos.
+        exatos = [float(bends_digits(r["bends"])[0]) for r in R
+                  if abs(r["dist"] - D) < 1 and bends_digits(r["bends"])]
+        d["split_pos"] = True
     d["msplit"] = float(np.mean(exatos)) if exatos else None
     d["split"] = min(exatos) if exatos else None
     d["n_split"] = len(exatos)
@@ -1895,7 +1903,7 @@ def cenario_corrida(rank, avbs, ctx, plano=False):
     fav = eleg[0]
     top3 = [d for d in ativos if d.get("pos") and d["pos"] <= 3]
     rc = lambda d: (f"{d['rec']:+.1f}%" if d.get("rec") is not None else "sem dado")
-    ms = sorted([d for d in ativos if d.get("msplit") is not None], key=lambda x: x["msplit"])
+    ms = sorted([d for d in ativos if d.get("msplit") is not None and not d.get("split_pos")], key=lambda x: x["msplit"])
     if len(ms) < 3: ms = []                           # split so de 1-2 galgos nao descreve a largada
     lider = ms[0] if ms else None
     grupo = [d for d in ms if lider and d["msplit"] - lider["msplit"] <= 0.05]
@@ -2012,7 +2020,7 @@ def cenario_corrida(rank, avbs, ctx, plano=False):
                if r_.get("split") and r_["split"] > 0 and abs((r_.get("dist") or 0) - ctx.get("dist", 0)) < 1]
         if not (len(ref) >= 8 and lider["msplit"] >= float(np.median(ref)) - 0.20):
             N.append(f"⚠️ Alerta de Dados: {R(lider)} tem Média Split ({lider['msplit']:.2f}) muito abaixo do resto do campo. Pode ser erro na base.")
-    sem = [R(d) for d in ativos if d.get("msplit") is None]
+    sem = [R(d) for d in ativos if d.get("msplit") is None and not d.get("split_pos")]
     if sem and len(sem) < len(ativos): N.append(f"ℹ️ Sem Split na distância exata (largada neutra): {', '.join(sem)}.")
     hoje = ctx.get("classe_n")
     def _ult(d):
