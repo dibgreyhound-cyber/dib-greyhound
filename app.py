@@ -1124,6 +1124,8 @@ def gerar_texto_analise(c, p):
     txt.append("")
     txt.append("(Melhor Split/Time = só corridas válidas na distância exata. Média Time, Tadj e Métrica usam corridas convertidas com fator medido; † ignoradas. "
                "* = convertida com fator medido. Sem recência: todas as corridas pesam igual. Desempate na classificação = menor Tadj. 🚫 = confiança < 40% ou sem dados.)")
+    if any(d.get("split_pos") for d in p["ds"]):
+        txt.append("(CORRIDA CURTA, sem split: Melhor Split = melhor posição na 1ª curva e Média Split = média das posições na 1ª curva, nas corridas válidas da mesma distância; menor = melhor.)")
     txt.append("")
 
     classif = " > ".join(f"{d['pos']}º [T{d['trap']}] {d['overall']:.0f}pts" for d in p["rank"])
